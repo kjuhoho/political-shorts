@@ -41,7 +41,9 @@ MIN_W, MIN_H = 340, 340
 MAX_BYTES = 14_000_000
 
 PRESIDENT_NAME = "이재명"          # sitting president — bio page is a standard article
-MAX_PORTRAITS = 3                  # people faces per video (rest are locations)
+MAX_PORTRAITS = 5                  # people faces per video (user wants portraits to
+                                  # dominate; locations are only filler / safe
+                                  # backdrops for cards about no one in particular)
 
 # verified: each Korean-Wikipedia page has a raster lead photo on Commons and no
 # single identifiable person as its subject. Shuffled per story (see
@@ -77,6 +79,7 @@ class ImageAsset:
     kind: str = "photo"          # photo | portrait
     width: int = 0
     height: int = 0
+    is_lead: bool = False        # portrait of the story's subject (pick_actor)
 
     def credit_line(self) -> str:
         return f"{self.title or 'image'} — {self.author or 'Unknown'} ({self.license or 'CC'}) {self.source_url}".strip()
@@ -201,26 +204,36 @@ def collect_images(
 
     h = clean_text(headline)
     # People to try for a portrait, most-relevant first:
-    #   1) the story's lead actor,
-    #   2) the sitting president whenever the piece is president-related,
-    #   3) anyone else named anywhere in the cluster (headline names first).
+    #   1) the story's lead actor (the poster face — only if a real person named
+    #      in the headline; pick_actor falls back to politicians[0] / an
+    #      institution for the on-screen label even when nobody is named, and
+    #      that must never become the poster face),
+    #   2) the sitting president whenever he himself is that headline-named lead,
+    #   3) every other politician named in the HEADLINE (earliest first),
+    #   4) then politicians named only in the cluster BODY — the user wants
+    #      person-centric footage, so related people are fair game for the
+    #      interior cards (video._assign_images still only lays a face under a
+    #      card that names that person, or the subject on the setup cards).
     # Every candidate still has to resolve to a normal Wikipedia biography with a
     # raster photo (`_resolve(..., person=True)`), so a face is never guessed.
     lead = pick_actor(headline, entities, frame)
-    # Only picture PEOPLE the story is actually ABOUT: the lead actor (iff it's a
-    # real person named in the headline — `pick_actor` falls back to
-    # politicians[0] / an institution for the on-screen label even when nobody is
-    # named, and that must never become the poster face), then any other
-    # politician named in the headline (earliest first). The president gets a
-    # portrait only when he himself is that headline-named lead.
+    # Only picture people who are KNOWN political figures — their Korean-Wikipedia
+    # lead image is a proper portrait. Minor names resolved by shape alone tend to
+    # pull an off-topic pre-politics photo (an athlete's medal shot, etc.), so we
+    # deliberately fall back to a location for them rather than show that.
     lead_is_person = bool(lead) and (lead in entities.politicians or lead == PRESIDENT_NAME)
     in_head = sorted((n for n in entities.politicians
                       if n and n in h and n != PRESIDENT_NAME), key=h.find)
+    # politicians named only in the cluster BODY — related people, capped: they
+    # only ever surface on a card that names them (video._assign_images pass 1).
+    in_body = [n for n in entities.politicians
+               if n and n not in in_head and n != PRESIDENT_NAME and n != lead][:2]
     want_pres = (bool(entities.president) and lead == PRESIDENT_NAME
                  and PRESIDENT_NAME in h)
+    subject = lead if (lead_is_person and lead in h) else ""   # the poster face
     names: list[str] = []
-    for n in ([lead] if lead_is_person and lead in h else []) + \
-             ([PRESIDENT_NAME] if want_pres else []) + in_head:
+    for n in ([subject] if subject else []) + \
+             ([PRESIDENT_NAME] if want_pres else []) + in_head + in_body:
         if n and n not in names:
             names.append(n)
 
@@ -245,6 +258,7 @@ def collect_images(
         if info and info["url"] not in used:
             a = _make_asset(info, name, "portrait", cache_dir)
             if a:
+                a.is_lead = (name == subject)
                 assets.append(a)
                 used.add(info["url"])
                 n_portraits += 1

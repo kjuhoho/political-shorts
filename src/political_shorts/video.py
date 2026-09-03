@@ -580,19 +580,41 @@ def _segment_bg(image_path: str | None, frame_kind: str, idx: int,
 def _assign_images(
     segments: list[dict], images: list[dict], topic: str = ""
 ) -> list[str | None]:
-    """One distinct photo per card. A PORTRAIT is only laid under a card that
-    actually names that person (so 이재명's face never sits beneath a "김용범"
-    label); location shots fill everything else. A portrait that matches no card
-    just goes unused. Photos repeat only when there genuinely aren't enough; a
-    card with nothing gets a drawn backdrop."""
+    """Person-centric photo per card. Priority for each card:
+      1) a PORTRAIT of someone actually named on that card's own text (so
+         이재명's face never sits beneath a "김용범" label);
+      2) else, on the setup/closing cards (hook / summary / factcheck / outro),
+         the story's SUBJECT face — but only when the subject is a picturable
+         person (topic matches a collected portrait); it may recur, capped so
+         it isn't every frame;
+      3) else a location shot;
+      4) else a drawn backdrop.
+    Locations are filler, not the default (user: 사진은 되도록 인물 중심).
+    A related person's portrait that matches no card is left unused, never
+    guessed onto a card."""
     portraits = [(im["path"], (im.get("query") or "").strip())
                  for im in images if im.get("path") and im.get("kind") == "portrait"]
     photos = [im["path"] for im in images if im.get("path") and im.get("kind") != "portrait"]
     if not portraits and not photos:
         return [None] * len(segments)
 
+    # subject face = the portrait collect_images tagged as the story's subject
+    # (is_lead). If nothing is tagged, there is NO subject face — a related
+    # person's portrait only ever appears on a card that names them (pass 1),
+    # never as the poster face. This is what stops "한동훈's face on a 김승원
+    # story" when 김승원 has no Wikipedia bio.
+    lead_path = next((im["path"] for im in images
+                      if im.get("kind") == "portrait" and im.get("is_lead")
+                      and im.get("path")), None)
+    # fallback for older callers that don't set is_lead: match topic by name
+    if lead_path is None:
+        _topic = (topic or "").strip()
+        lead_path = next((p for p, who in portraits
+                          if who and _topic and len(_topic) <= 4
+                          and (who == _topic or who in _topic or _topic in who)), None)
+
     out: list[str | None] = []
-    used: set[str] = set()
+    used: set[str] = set()             # portraits/photos already placed once
     fi = 0
 
     def _take_photo(i: int) -> str | None:
@@ -605,21 +627,39 @@ def _assign_images(
                 return cur
         return photos[i % len(photos)]
 
-    def _take_portrait(seg: dict) -> str | None:
-        hay = f"{seg.get('caption', '')} {seg.get('narration', '')} {seg.get('kicker', '')} {topic}"
+    def _named_portrait(seg: dict) -> str | None:
+        # this card's OWN text — the subject on cards that don't name anyone is
+        # handled separately (lead_path on the setup cards) so the subject
+        # portrait isn't silently eaten by the first card here.
+        hay = f"{seg.get('caption', '')} {seg.get('narration', '')} {seg.get('kicker', '')}"
         for path, who in portraits:
             if who and who in hay and path not in used:
                 used.add(path)
                 return path
         return None
 
-    for seg in segments:
+    setup_roles = ("hook", "summary", "factcheck", "outro")
+
+    # pass 1 — a face ONLY where that person is actually named on the card (no
+    # misattribution). A related person's portrait that matches no card is left
+    # unused rather than guessed onto a card.
+    picks: list[str | None] = [_named_portrait(seg) for seg in segments]
+
+    # pass 2 — the story's SUBJECT face on every setup/closing card (only when
+    # the subject is a picturable person); the content cards (what / reaction)
+    # take a location so the video isn't the same still end to end. No photos at
+    # all → subject face everywhere it can go. Nothing → drawn backdrop.
+    for i, seg in enumerate(segments):
+        if picks[i] is not None:
+            continue
         role = seg.get("role")
-        pic = _take_portrait(seg) if role in ("hook", "what", "reaction") else None
+        pic = None
+        if lead_path and (role in setup_roles or not photos):
+            pic = lead_path
         if pic is None:
             pic = _take_photo(fi); fi += 1
-        out.append(pic)
-    return out
+        picks[i] = pic
+    return picks
 
 
 def _segment_clip(
