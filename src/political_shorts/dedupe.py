@@ -15,7 +15,6 @@ pipeline has a uniform unit to work with.
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
@@ -38,29 +37,6 @@ from .textutil import jaccard, normalize_title, tokens
 log = get_logger("dedupe")
 
 SIM_THRESHOLD = 0.42
-
-# "A, B에게 '…공격…'" or he-said-she-said headlines — a personal attack / clash
-# that can't be covered neutrally in 30s. The ranker sends these to the back.
-_ATTACK_QUOTE = ("도망", "받아야", "사퇴하라", "물러나라", "책임져", "거짓말",
-                 "내로남불", "적반하장", "후안무치", "궤변", "말바꾸기", "뒤집",
-                 "겁박", "적폐", "직무유기", "우롱", "해명하라", "사죄하라",
-                 "레임덕", "배은망덕", "자다가 봉창", "몰염치", "무능", "위선")
-_QUOTE_SPAN = re.compile(r"[\"'“‘]([^\"'”’]{3,60})[\"'”’]")
-# starts "이름, …" and then addresses / reacts to another person
-_ATTACK_RE = re.compile(
-    r"^[가-힣]{2,4}\s*,\s*.{0,20}?[가-힣]{2,4}\s*(?:에게|에|을|를|향해|측에|의)?\s*"
-    r"(?:[\"'“”‘’]|발언|주장|글|비판|공세)"
-)
-
-
-def _is_attack_headline(title: str) -> bool:
-    t = (title or "").strip()
-    quotes = _QUOTE_SPAN.findall(t)
-    if any(w in q for q in quotes for w in _ATTACK_QUOTE):
-        return True
-    if _ATTACK_RE.match(t) and (len(quotes) >= 1 or "비판" in t or "공세" in t or "직격" in t):
-        return True
-    return False
 
 
 @dataclass
@@ -155,17 +131,14 @@ def build_clusters(cfg: Settings | None = None, mode: str = "") -> list[int]:
         clusters = _cluster_rows(rows)
 
         def _rank(c: "Cluster") -> tuple:
-            title = c.lead_row["title"] if c.lead_row else ""
-            # 0) DE-PRIORITISE a "one person attacking another" headline — those
-            #    can't be covered neutrally in 30s. Build one only if nothing
-            #    else is left. (neutrality > freshness)
-            not_attack = 0 if _is_attack_headline(title) else 1
-            # 1) BALANCE — a story carried by both a progressive and a
-            #    conservative outlet (plus wire) is the safest to cover neutrally.
+            # Prefer a story carried by BOTH a progressive and a conservative
+            # outlet (plus wire) — easiest to narrate neutrally. Attack /
+            # criticism stories are NOT avoided (neutrality lives in how we
+            # explain them, not in topic selection) — see hook.make_title.
             real = c.leans - {"wire", "center"}
             balanced = 1 if len(real) >= 2 else 0
             weight = c.lead_row["source_weight"] if c.lead_row else 0
-            return (not_attack, balanced, c.size, len(c.leans), weight)
+            return (balanced, c.size, len(c.leans), weight)
 
         clusters.sort(key=_rank, reverse=True)
 

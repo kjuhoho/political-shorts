@@ -30,11 +30,12 @@ def test_single_article_forms_cluster_of_one():
     assert len(clusters) == 1 and clusters[0].size == 1
 
 
-def test_attack_headlines_are_deprioritised():
-    from political_shorts.dedupe import _is_attack_headline as a
-    assert a('한동훈, 김승원에 "해명 않고 도망가...청문회 아닌 특검 받아야"')
-    assert a('정점식, 조국 "공소취소 낭패" 주장에 "李대통령 레임덕 본격화"')
-    assert a('한동훈 "이재명 정부는 무능"...국정운영 직격')
-    assert not a('국회 신속처리안건 심사기간 330일에서 90일로 단축')
-    assert not a('법사위, 이태원참사 특별법 개정안 의결')
-    assert not a('용혜인, 장관 되면서 비례 의원직 유지 논란...여야 반발')
+def test_attack_headline_reframed_neutrally():
+    # 'A, B에게 ...' is NOT skipped — it's reframed around B as a question
+    from political_shorts.hook import attack_target, detect_frame, make_title, detect_entities
+    hl = "한동훈, 김승원에 '해명 않고 도망가...청문회 아닌 특검 받아야'"
+    assert attack_target(hl) == "김승원"
+    f = detect_frame(hl)
+    assert f.kind == "clash"                       # not 'scandal' -> no '한동훈 의혹'
+    title = " ".join(make_title(hl, detect_entities(hl), f))
+    assert "김승원" in title and "한동훈" not in title

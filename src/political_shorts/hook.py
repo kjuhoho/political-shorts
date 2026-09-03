@@ -113,6 +113,10 @@ class Frame:
 
 def detect_frame(*texts: str) -> Frame:
     text = clean_text(" ".join(texts))
+    # "A, B에게 '…'" one-person-attacks-another headline -> always a clash, even
+    # when it contains '의혹' (so make_title doesn't say "A의 의혹").
+    if texts and _ATTACK_RE.match(clean_text(texts[0])):
+        return Frame("clash", ["공방"])
     disputed = bool(_NOT_PERSONNEL.search(text))
     best = Frame()
     best_score = 0
@@ -158,9 +162,9 @@ HOOKS: dict[str, list[str]] = {
         "{a_ui} 교체, 그 배경을 짚어봤습니다.",
     ],
     "clash": [
-        "{party}와 {partyB}가 부딪힌 지점은 딱 하나였습니다.",
+        "{a_reul} 둘러싼 공방, 무엇이 쟁점인지 짚어봤습니다.",
         "쟁점은 '{issue}'. 양쪽 말이 이렇게 갈립니다.",
-        "{a_ui} 한마디에서 시작된 공방, 핵심만 짚어봤습니다.",
+        "{party}와 {partyB}의 입장이 이렇게 갈립니다.",
     ],
     "scandal": [
         "'{issue}', 지금 어디까지가 사실일까요?",
@@ -206,6 +210,37 @@ def _lead_quote(*texts: str) -> str:
                 return q
     return ""
 
+
+# "A, B에게/B 발언에 '…'" — one figure criticising another. We DON'T skip these
+# (see NEUTRALITY.md — balance is in the narration, not topic choice); we just
+# frame the title around the person under scrutiny, neutrally, as a question.
+_ATTACK_RE = re.compile(
+    r"^([가-힣]{2,4})\s*,\s*(?:.{0,14}?\b)?([가-힣]{2,4})\s*"
+    r"(?:에게|에|을|를|향해|겨냥|측|의)?\s*(?:[\"'“”‘’]|발언|주장|글|비판|공세|저격|직격)"
+)
+_ISSUE_WORD = ("청탁", "특혜", "의혹", "비자금", "뇌물", "탈세", "탈루", "겸직", "위증",
+               "거짓말", "위장전입", "표절", "음주", "막말", "실언", "이해충돌",
+               "레임덕", "내로남불", "책임론", "발언", "논란")
+
+
+def attack_target(headline: str) -> str:
+    """For 'A, B …공격…' return B (the person the story is really scrutinising);
+    '' if the headline isn't that shape."""
+    m = _ATTACK_RE.match(clean_text(headline))
+    if not m:
+        return ""
+    b = re.sub(r"(에게|에|을|를|측|의|이|가|은|는|께)$", "", m.group(2))
+    return b if 2 <= len(b) <= 4 else m.group(2)
+
+
+def issue_word(headline: str, *more: str) -> str:
+    """A short noun for what the dispute is ABOUT (goes in the neutral title)."""
+    blob = clean_text(" ".join((headline, *more)))
+    for w in _ISSUE_WORD:
+        if w in blob:
+            return w
+    return "논란"
+
 _TITLE_RE = re.compile(
     r"([가-힣]{2,4})\s*(?:청와대|대통령실|신임|전|前)?\s*"
     r"(대통령|국무총리|부총리|장관|차관|정책실장|비서실장|안보실장|수석|대변인|"
@@ -240,6 +275,11 @@ def pick_actor(headline: str, entities: Entities, frame: Frame) -> str:
     named in the headline next to a job title, NOT just the first politician
     mentioned anywhere (which is often the president being referenced)."""
     h = clean_text(headline)
+    # "A, B에게 '…공격…'" -> the story is really ABOUT B (the person under
+    # scrutiny); we explain the claim + B's response neutrally.
+    tgt = attack_target(headline)
+    if tgt:
+        return tgt
     if frame.kind in ("personnel", "remark", "clash"):
         m = _TITLE_RE.search(h)
         if m:
@@ -293,9 +333,12 @@ _TITLE_TMPL = {
     "personnel": [("{actor} 사퇴", "무슨 일인가"),
                   ("{actor} 왜 물러났나", "배경 정리"),
                   ("{actor} 교체", "그 이유는")],
-    "clash": [("{party} vs {partyB}", "무엇이 쟁점인가"),
-              ("'{issue}' 공방", "양쪽 입장은"),
-              ("{actor} 발언 파장", "짚어봤습니다")],
+    # every clash line is anchored on {actor} (the person under scrutiny) so an
+    # "A criticises B" headline can never leak A's name into the title via the
+    # free-text {issue} slot — see test_attack_headline_reframed_neutrally.
+    "clash": [("{actor} '{issueword}'", "사실은?"),
+              ("{actor} 둘러싼 공방", "쟁점 정리"),
+              ("{actor} 관련 공방", "양쪽 입장은")],
     "scandal": [("'{issue}' 논란", "어디까지 사실인가"),
                 ("{actor} 의혹", "쟁점 정리"),
                 ("'{issue}'", "핵심만 정리")],
@@ -312,12 +355,15 @@ _TITLE_TMPL = {
 
 
 def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
-    """1-2 short punchy lines for the persistent on-screen title."""
+    """1-2 short NEUTRAL lines for the persistent on-screen title. For an
+    'A criticises B' story this frames around B + the issue as a question
+    ("김승원 '청탁' 논란 / 사실은?"), never "A의 의혹"."""
     actor = pick_actor(headline, entities, frame)
     parties = entities.parties + ["", ""]
     slots = {
         "actor": actor, "party": parties[0] or "여당", "partyB": parties[1] or "야당",
         "issue": _issue_phrase(headline, frame), "result": _result_word(frame),
+        "issueword": issue_word(headline),
     }
     l1, l2 = random.choice(_TITLE_TMPL.get(frame.kind) or _TITLE_TMPL["generic"])
     out = [truncate(l1.format(**slots), 14), truncate(l2.format(**slots), 14)]

@@ -31,14 +31,11 @@ from .tts import Narration, estimate_caption_seconds, synthesize_segments
 
 log = get_logger("video")
 
-ROLE_ACCENT = {
-    "hook": (239, 68, 68),
-    "summary": (37, 99, 235),
-    "what": (22, 163, 74),
-    "reaction": (202, 138, 4),
-    "factcheck": (139, 92, 246),
-    "outro": (100, 116, 139),
-}
+# One neutral accent for every card — NO party colours (see NEUTRALITY.md).
+# Same news-caption yellow as the thumbnail / persistent title.
+_ACCENT = (245, 202, 66)
+ROLE_ACCENT = {k: _ACCENT for k in
+              ("hook", "summary", "what", "reaction", "factcheck", "outro")}
 ROLE_LABEL = {
     "hook": "오늘의 이슈", "summary": "한 줄 요약", "what": "무슨 일이냐면",
     "reaction": "양쪽 반응", "factcheck": "팩트체크", "outro": "",
@@ -47,9 +44,11 @@ FG = (245, 246, 248)
 SUBTLE = (200, 208, 220)
 BG_TOP = (17, 24, 39)
 BG_BOTTOM = (2, 6, 23)
+# fact-check pill colours = a neutral legend (사실 / 주장 / 해석 / 확인),
+# muted so nothing reads as an alarm or a party colour.
 TONE_COL = {
-    "ok": (34, 197, 94), "claim": (234, 179, 8),
-    "warn": (248, 113, 113), "info": (96, 165, 250),
+    "ok": (46, 160, 90), "claim": (206, 158, 40),
+    "warn": (120, 130, 148), "info": (74, 120, 176),
 }
 
 
@@ -207,18 +206,19 @@ def _overlay_png(
         _text_stroke(draw, (margin, y), t, f_title, (*TITLE_YELLOW, 255), 4, (*STROKE_DARK, 255))
         y += line_h
 
-    # ---- 2) BIG NUMBERED SECTION LABEL (just under the title) --------------
+    # ---- 2) small numbered section chip (just under the title) ------------
     num = seg.get("num")
     topic = script.get("topic") or ""
-    label = f"{num}. {topic}".strip(" .") if num else (topic or seg.get("kicker", ""))
+    label = f"{num}  {topic}".strip() if num else (topic or seg.get("kicker", ""))
     if label:
-        ly = ty + tblock + 44
-        _text_stroke(draw, (margin, ly), label, f_num, (255, 255, 255, 255), 6, (*STROKE_DARK, 255))
-        lw = draw.textlength(label, font=f_num)
-        draw.rectangle([margin, ly + f_num.size + 10, margin + min(lw, max_w), ly + f_num.size + 20],
-                       fill=(*accent, 255))
+        fc = _font(cfg.font_label or cfg.font_bold_path, 40)
+        ly = ty + tblock + 30
+        cw = draw.textlength(label, font=fc)
+        _round_rect(draw, [margin - 12, ly - 8, margin + cw + 20, ly + fc.size + 14], 10,
+                    (*accent, 235))
+        draw.text((margin + 4, ly + 2), label, font=fc, fill=(12, 14, 20, 255))
 
-    # ---- 3) BODY / CAPTION (lower area) ------------------------------------
+    # ---- 3) BODY / CAPTION ------------------------------------------------
     if role == "factcheck" and seg.get("rows"):
         rows = seg["rows"][:4]
         y = int(h * 0.42)
@@ -232,18 +232,29 @@ def _overlay_png(
                 _text_stroke(draw, (tx, y + 2 + k * 52), ln, f_row, (*FG, 255), 3, (*STROKE_DARK, 220))
             y += 70 + 52 * len(wrapped)
     else:
+        # Big, CENTERED caption on a rounded dark plate — the look of
+        # high-view Korean news/issue shorts (auto-caption style).
         cap = seg.get("caption", "")
         clen = len(cap)
-        bsize = 74 if clen <= 22 else 64 if clen <= 34 else 56 if clen <= 46 else 48
+        bsize = 84 if clen <= 18 else 76 if clen <= 30 else 64 if clen <= 44 else 54
         f_body = _font(cfg.font_body or cfg.font_bold_path, bsize)
-        lines = _wrap(draw, cap, f_body, max_w)[:6]
-        lh = int(bsize * 1.36)
+        lines = _wrap(draw, cap, f_body, int(w * 0.86))[:4]
+        lh = int(bsize * 1.32)
         block = lh * len(lines)
-        y = min(int(h * 0.56), h - 250 - block)
-        _round_rect(draw, [margin - 18, y + 6, margin - 8, y + block], 5, (*accent, 255))
+        y0 = int(h * 0.47) - block // 2
+        widest = max((draw.textlength(ln, font=f_body) for ln in lines), default=0)
+        pad_x, pad_y = 40, 30
+        px0 = max(24, int(w / 2 - widest / 2) - pad_x)
+        _round_rect(draw, [px0, y0 - pad_y, w - px0, y0 + block + pad_y - int(lh - bsize)],
+                    30, (8, 10, 16, 214))
+        # a short accent tab centred above the plate
+        draw.rectangle([int(w / 2 - 46), y0 - pad_y - 12, int(w / 2 + 46), y0 - pad_y - 4],
+                       fill=(*accent, 255))
+        yy = y0
         for ln in lines:
-            _text_stroke(draw, (margin, y), ln, f_body, (*FG, 255), 4, (*STROKE_DARK, 235))
-            y += lh
+            _text_stroke(draw, (int(w / 2), yy), ln, f_body, (*FG, 255), 5,
+                         (*STROKE_DARK, 245), anchor="ma")
+            yy += lh
 
     # ---- 4) FOOTER ------------------------------------------------------
     srcs = [s["name"] for s in script.get("sources", [])[:3]]
@@ -618,16 +629,19 @@ def _segment_clip(
     w, h, fps = cfg.video_width, cfg.video_height, cfg.video_fps
 
     if cfg.ken_burns:
-        # Cheap Ken-Burns: scale ~1.18x then crop-pan with a cosine ease.
-        # zoompan is O(frame) heavy; a moving crop is basically free.
+        # Cheap Ken-Burns: over-scale, then crop-pan with a cosine ease PLUS a
+        # quick punch-in on the cut. The punch-in is baked into a per-frame
+        # `scale` (eval=frame) so there's no second dynamic crop to choke on;
+        # zoompan is far too slow.
         over = 1.18 if is_photo else 1.12
         sw, sh = int(w * over), int(h * over)
         prog = f"(0.5-0.5*cos(PI*min(t/{duration:.2f}\\,1)))"
-        if idx % 2 == 0:
-            x, y = f"(iw-{w})*{prog}", f"(ih-{h})*0.5"
-        else:
-            x, y = f"(iw-{w})*(1-{prog})", f"(ih-{h})*0.32"
-        vbg = f"[0:v]scale={sw}:{sh},crop={w}:{h}:x='{x}':y='{y}',setsar=1,fps={fps}[bg]"
+        yb = 0.5 if idx % 2 == 0 else 0.32
+        px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
+        pz = "(1+0.05*exp(-t*6))"                    # +5% at the cut, gone ~0.5s
+        vbg = (f"[0:v]scale=w='{sw}*{pz}':h='{sh}*{pz}':eval=frame,"
+               f"crop={w}:{h}:x='{px}':y='(ih-{h})*{yb}',"
+               f"setsar=1,fps={fps}[bg]")
     else:
         vbg = f"[0:v]scale={w}:{h},setsar=1,fps={fps}[bg]"
 

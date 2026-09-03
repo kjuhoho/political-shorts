@@ -12,11 +12,14 @@ venv/
 .pytest_cache/
 
 # Runtime data & artifacts
+# keep data/topic_history.json (the dedup history — GitHub Actions needs it),
+# ignore everything else under data/
 data/*
-!data/topic_history.json        # keep the dedup history — GitHub Actions needs it
+!data/topic_history.json
 output/
 logs/
-assets/cache/                   # downloaded image / trends cache — regenerated
+# downloaded image / trends cache — regenerated on every run
+assets/cache/
 *.sqlite3
 *.db
 

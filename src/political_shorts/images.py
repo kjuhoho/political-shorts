@@ -43,13 +43,23 @@ MAX_BYTES = 14_000_000
 PRESIDENT_NAME = "이재명"          # sitting president — bio page is a standard article
 MAX_PORTRAITS = 3                  # people faces per video (rest are locations)
 
-# verified: each has a raster lead photo, no single-person subject
-LOCATION_POOL = ["대한민국 국회의사당", "여의도", "광화문광장", "여의도공원"]
-# a couple of frame-specific establishing shots slotted in first when relevant
+# verified: each Korean-Wikipedia page has a raster lead photo on Commons and no
+# single identifiable person as its subject. Shuffled per story (see
+# collect_images) so consecutive videos don't reuse the same 4 shots.
+LOCATION_POOL = [
+    "대한민국 국회의사당", "국회의사당역", "여의도", "여의도공원",
+    "광화문광장", "서울광장", "청계천", "대법원", "헌법재판소",
+    "서울특별시청", "경복궁", "숭례문", "국립중앙박물관", "북악산",
+    "한강", "서울역",
+]
+# frame-relevant establishing shots, tried before the shuffled general pool
 _FRAME_LOCATION = {
-    "scandal": ["광화문광장", "대한민국 국회의사당"],
-    "vote": ["대한민국 국회의사당", "여의도"],
-    "clash": ["대한민국 국회의사당", "광화문광장"],
+    "scandal": ["대법원", "헌법재판소", "광화문광장"],
+    "vote": ["대한민국 국회의사당", "국회의사당역", "서울광장"],
+    "clash": ["대한민국 국회의사당", "광화문광장", "서울특별시청"],
+    "personnel": ["대한민국 국회의사당", "서울특별시청"],
+    "poll": ["서울광장", "광화문광장"],
+    "remark": ["대한민국 국회의사당", "광화문광장"],
 }
 
 _S = requests.Session()
@@ -214,9 +224,13 @@ def collect_images(
         if n and n not in names:
             names.append(n)
 
-    # location titles: frame-specific first, then the general pool
+    # location titles: frame-specific first, then the general pool SHUFFLED with
+    # a per-story seed so back-to-back videos don't show the same 4 photos.
+    import random as _rnd
+    pool = list(LOCATION_POOL)
+    _rnd.Random(clean_text(headline)).shuffle(pool)
     locs: list[str] = []
-    for t in _FRAME_LOCATION.get(frame.kind, []) + LOCATION_POOL:
+    for t in _FRAME_LOCATION.get(frame.kind, []) + pool:
         if t not in locs:
             locs.append(t)
 
