@@ -55,11 +55,16 @@ def _resolve(path_str: str) -> str:
     """Make a possibly-relative path absolute against the project root.
 
     Scheduled tasks run with cwd = C:\\Windows\\System32, so any relative path
-    from .env (secrets\\..., assets\\bgm\\...) must be anchored to ROOT.
+    from .env (secrets\\..., assets\\bgm\\...) must be anchored to ROOT. Also
+    normalise Windows backslashes -> "/" so the same .env works on Linux
+    (GitHub Actions): "secrets\\x.json" would otherwise be one weird filename.
     """
     if not path_str:
         return path_str
-    p = Path(path_str.strip().strip('"'))
+    raw = path_str.strip().strip('"')
+    if os.sep == "/":                      # POSIX: turn any '\' into '/'
+        raw = raw.replace("\\", "/")
+    p = Path(raw)
     return str(p if p.is_absolute() else (ROOT / p))
 
 

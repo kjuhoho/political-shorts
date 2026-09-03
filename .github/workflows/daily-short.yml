@@ -52,12 +52,15 @@ jobs:
           echo "$PS_ENV_B64"        | base64 -d > .env
           echo "$PS_YT_CLIENT_B64"  | base64 -d > secrets/client_secret_youtube.json
           echo "$PS_YT_TOKEN_B64"   | base64 -d > secrets/token_youtube.json
-          # Linux paths for fonts (Win paths in .env don't exist here)
+          # Override the Windows-specific values from .env for this Linux runner.
+          # (config._resolve() also converts '\' -> '/', but be explicit.)
           {
             echo ""
             echo "FONT_PATH=/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
             echo "FONT_BOLD_PATH=/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"
             echo "FFMPEG_PATH=ffmpeg"
+            echo "YOUTUBE_CLIENT_SECRET_FILE=secrets/client_secret_youtube.json"
+            echo "YOUTUBE_TOKEN_FILE=secrets/token_youtube.json"
           } >> .env
 
       - name: seed dedup history from the repo
