@@ -73,13 +73,18 @@ jobs:
 
       - name: persist dedup history (commit topic_history.json back)
         if: always()
+        continue-on-error: true          # housekeeping — must never fail the run
         run: |
-          python scripts/sync_topics.py export
+          python scripts/sync_topics.py export || true
           git config user.name  "political-shorts bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/topic_history.json
-          git diff --cached --quiet || git commit -m "run: update topic history [skip ci]"
-          git push || true
+          git add -f data/topic_history.json || true
+          if ! git diff --cached --quiet; then
+            git commit -m "run: update topic history [skip ci]"
+            git push
+          else
+            echo "topic_history.json unchanged — nothing to commit"
+          fi
 
       - name: upload the video as an artifact
         if: always()

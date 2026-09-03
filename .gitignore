@@ -12,7 +12,7 @@ venv/
 .pytest_cache/
 
 # Runtime data & artifacts
-data/
+data/*
 !data/topic_history.json        # keep the dedup history — GitHub Actions needs it
 output/
 logs/
