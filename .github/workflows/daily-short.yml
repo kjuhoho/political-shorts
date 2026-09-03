@@ -1,0 +1,93 @@
+name: daily political short
+
+# Runs on GitHub's servers, so it works even when your PC is off.
+on:
+  schedule:
+    - cron: "0 22 * * *"     # 22:00 UTC = 07:00 KST, every day
+    - cron: "0 8 * * *"      # 08:00 UTC = 17:00 KST, every day
+  workflow_dispatch:          # lets you run it by hand from the Actions tab
+    inputs:
+      publish:
+        description: "actually publish (false = build only)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: daily-short
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write          # to commit the updated DB back
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: system deps (ffmpeg + Korean fonts)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-nanum
+          sudo fc-cache -f
+
+      - name: python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements-publish.txt
+
+      - name: restore config + credentials from secrets
+        env:
+          PS_ENV_B64: ${{ secrets.PS_ENV_B64 }}
+          PS_YT_CLIENT_B64: ${{ secrets.PS_YT_CLIENT_B64 }}
+          PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}
+        run: |
+          mkdir -p secrets
+          echo "$PS_ENV_B64"        | base64 -d > .env
+          echo "$PS_YT_CLIENT_B64"  | base64 -d > secrets/client_secret_youtube.json
+          echo "$PS_YT_TOKEN_B64"   | base64 -d > secrets/token_youtube.json
+          # Linux paths for fonts (Win paths in .env don't exist here)
+          {
+            echo ""
+            echo "FONT_PATH=/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
+            echo "FONT_BOLD_PATH=/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"
+            echo "FFMPEG_PATH=ffmpeg"
+          } >> .env
+
+      - name: seed dedup history from the repo
+        run: python scripts/sync_topics.py import
+
+      - name: run pipeline
+        run: |
+          PUB="--publish"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "false" ]; then
+            PUB="--no-publish"
+          fi
+          python -m political_shorts run $PUB --max 1
+
+      - name: persist dedup history (commit topic_history.json back)
+        if: always()
+        run: |
+          python scripts/sync_topics.py export
+          git config user.name  "political-shorts bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/topic_history.json
+          git diff --cached --quiet || git commit -m "run: update topic history [skip ci]"
+          git push || true
+
+      - name: upload the video as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: short-${{ github.run_number }}
+          path: |
+            output/*.mp4
+            output/*.meta.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,99 @@
+# RSS sources for domestic Korean politics.
+#
+# `lean` is a coarse editorial-orientation label used ONLY by the fairness
+# balancer to make sure a story is not built from one side of the spectrum
+# alone. Values: left | center | right | wire  (wire = news agency / broadcast).
+#
+# `weight` (0..1) nudges which outlet is treated as the "primary" phrasing
+# source when several outlets cover the same story (wires score highest).
+
+feeds:
+  - name: 연합뉴스 정치
+    url: https://www.yna.co.kr/rss/politics.xml
+    lean: wire
+    weight: 1.0
+
+  - name: 뉴시스 정치
+    url: https://www.newsis.com/RSS/politics.xml
+    lean: wire
+    weight: 0.9
+
+  - name: SBS 뉴스 정치
+    url: https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER
+    lean: wire
+    weight: 0.85
+
+  - name: 한겨레 정치
+    url: https://www.hani.co.kr/rss/politics/
+    lean: left
+    weight: 0.7
+
+  - name: 경향신문 정치
+    url: https://www.khan.co.kr/rss/rssdata/politic_news.xml
+    lean: left
+    weight: 0.7
+
+  - name: 오마이뉴스 정치
+    url: http://rss.ohmynews.com/rss/politics.xml
+    lean: left
+    weight: 0.6
+
+  - name: 조선일보 정치
+    url: https://www.chosun.com/arc/outboundfeeds/rss/category/politics/?outputType=xml
+    lean: right
+    weight: 0.7
+
+  - name: 동아일보 정치
+    url: https://rss.donga.com/politics.xml
+    lean: right
+    weight: 0.7
+
+  - name: 국민일보 정치
+    url: https://www.kmib.co.kr/rss/data/kmibPolRss.xml
+    lean: right
+    weight: 0.6
+
+# Fallback feeds — general (apolitical) hard news. Only used when there is NO
+# fresh, non-duplicate domestic-politics story to build. Kept wire-heavy and
+# balanced so the fallback stays neutral too.
+fallback_feeds:
+  - name: 연합뉴스 사회
+    url: https://www.yna.co.kr/rss/society.xml
+    lean: wire
+    weight: 1.0
+  - name: 연합뉴스 산업
+    url: https://www.yna.co.kr/rss/industry.xml
+    lean: wire
+    weight: 0.95
+  - name: 연합뉴스 건강
+    url: https://www.yna.co.kr/rss/health.xml
+    lean: wire
+    weight: 0.9
+  - name: SBS 뉴스 사회
+    url: https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=03&plink=RSSREADER
+    lean: wire
+    weight: 0.85
+  - name: 한겨레 사회
+    url: https://www.hani.co.kr/rss/society/
+    lean: left
+    weight: 0.6
+  - name: 동아일보 사회
+    url: https://rss.donga.com/national.xml
+    lean: right
+    weight: 0.6
+
+# Keyword hints for the domestic-politics classifier. These are additive to the
+# built-in lexicon in src/political_shorts/classify.py.
+extra_keywords:
+  - 국회
+  - 본회의
+  - 상임위
+  - 대통령실
+  - 여야
+  - 원내대표
+  - 개헌
+  - 탄핵
+  - 특검
+  - 국정감사
+  - 예산안
+  - 대정부질문

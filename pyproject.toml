@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "political-shorts"
+version = "1.0.0"
+description = "Personal pipeline: domestic Korean political news -> neutral vertical shorts"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "feedparser>=6.0.11",
+    "requests>=2.31.0",
+    "PyYAML>=6.0.1",
+    "python-dotenv>=1.0.1",
+    "Flask>=3.0.3",
+    "Pillow>=10.3.0",
+    "pyttsx3>=2.90",
+    "rapidfuzz>=3.9.0",
+    "edge-tts>=6.1.10",
+    "tzdata>=2025.1 ; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+publish = [
+    "google-api-python-client>=2.130.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth-httplib2>=0.2.0",
+]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+political-shorts = "political_shorts.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

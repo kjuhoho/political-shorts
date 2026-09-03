@@ -1,0 +1,26 @@
+# Secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime data & artifacts
+data/
+!data/topic_history.json        # keep the dedup history — GitHub Actions needs it
+output/
+logs/
+assets/cache/                   # downloaded image / trends cache — regenerated
+*.sqlite3
+*.db
+
+# OAuth tokens
+secrets/
+token_*.json
+client_secret*.json
