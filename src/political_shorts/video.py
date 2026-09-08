@@ -748,6 +748,63 @@ def _segment_video_clip(
     _run(cmd)
 
 
+XFADE_SECONDS = 0.22
+
+
+def _concat(ffmpeg: str, clips: list[Path], out_mp4: Path, fps: int) -> None:
+    lst = out_mp4.parent / "concat.txt"
+    lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in clips), encoding="utf-8")
+    _run([
+        ffmpeg, "-y", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", str(lst),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps),
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_mp4),
+    ])
+
+
+def _assemble(ffmpeg: str, clips: list[Path], durs: list[float],
+              out_mp4: Path, cfg: Settings) -> float:
+    """Join the per-card clips. With video_xfade on, cross-dissolve video +
+    cross-fade audio between every card so cuts don't feel abrupt; otherwise a
+    plain concat. Returns the seconds removed by the xfade overlaps (0 on
+    concat) so the caller can keep the BGM timing in sync. Falls back to concat
+    on any ffmpeg error."""
+    fps = cfg.video_fps
+    n = len(clips)
+    if not getattr(cfg, "video_xfade", True) or n < 2:
+        _concat(ffmpeg, clips, out_mp4, fps)
+        return 0.0
+
+    t = min(XFADE_SECONDS, max(0.08, min(durs) * 0.45))
+    ins: list[str] = []
+    for c in clips:
+        ins += ["-i", str(c)]
+    vparts, aparts = [], []
+    vprev, aprev = "[0:v]", "[0:a]"
+    acc = durs[0]
+    for k in range(1, n):
+        vout, aout = f"[v{k}]", f"[a{k}]"
+        off = acc - t
+        vparts.append(f"{vprev}[{k}:v]xfade=transition=fade:duration={t:.3f}:offset={off:.3f}{vout}")
+        aparts.append(f"{aprev}[{k}:a]acrossfade=d={t:.3f}:c1=tri:c2=tri{aout}")
+        vprev, aprev = vout, aout
+        acc += durs[k] - t
+    filt = ";".join(vparts + aparts)
+    cmd = [
+        ffmpeg, "-y", "-loglevel", "error", *ins,
+        "-filter_complex", filt, "-map", vprev, "-map", aprev,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps),
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_mp4),
+    ]
+    try:
+        _run(cmd)
+        return t * (n - 1)
+    except Exception as exc:
+        log.warning("xfade assemble failed (%s); plain concat", exc)
+        _concat(ffmpeg, clips, out_mp4, fps)
+        return 0.0
+
+
 def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = None) -> RenderResult:
     cfg = cfg or settings
     ffmpeg = _ffmpeg(cfg)
@@ -765,6 +822,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
 
         frame_kind = script.get("frame", "generic")
         clip_paths: list[Path] = []
+        clip_durs: list[float] = []
         total_dur = 0.0
 
         # ---- designed opening frame (the Shorts poster) --------------------
@@ -783,6 +841,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                 tclip = workdir / "clip_thumb.mp4"
                 _thumb_clip(ffmpeg, thumb_jpg, tclip, cfg, hold)
                 clip_paths.append(tclip)
+                clip_durs.append(hold)
                 total_dur += hold
             except Exception as exc:  # never let the poster break a render
                 log.warning("thumbnail frame skipped: %s", exc)
@@ -818,17 +877,11 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                                              cfg.video_height, workdir)
                 _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i)
             clip_paths.append(clip)
+            clip_durs.append(duration)
 
-        concat_txt = workdir / "concat.txt"
-        concat_txt.write_text("".join(f"file '{p.as_posix()}'\n" for p in clip_paths), encoding="utf-8")
         narration_mp4 = workdir / "narration.mp4"
-        _run([
-            ffmpeg, "-y", "-loglevel", "error",
-            "-f", "concat", "-safe", "0", "-i", str(concat_txt),
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(cfg.video_fps),
-            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
-            str(narration_mp4),
-        ])
+        xf = _assemble(ffmpeg, clip_paths, clip_durs, narration_mp4, cfg)
+        total_dur -= xf                       # xfade overlaps shorten the whole
 
         n_imgs = sum(1 for p in seg_images if p)
         media_desc = f"{n_imgs} imgs" + (f", {n_broll} b-roll" if n_broll else "")

@@ -115,6 +115,7 @@ class Settings:
     font_body: str = ""              # -> assets/fonts/Jua-Regular.ttf
     ffmpeg_path: str = "ffmpeg"
     ken_burns: bool = True             # slow zoom/pan on still images
+    video_xfade: bool = True           # cross-dissolve between cards (vs hard cut)
     thumb_enabled: bool = True         # designed opening frame (the Shorts poster)
     thumb_hold_seconds: float = 1.3
 
@@ -148,11 +149,14 @@ class Settings:
     bgm_duck: bool = True
     bgm_fade_seconds: float = 2.0
 
-    # llm (optional)
-    llm_provider: str = ""
+    # llm (optional) — used ONLY to rewrite the narration into natural,
+    # lay-friendly explanation; every fact still traces to the source and the
+    # result passes safety.review_script or the template output is kept.
+    llm_provider: str = ""            # "" | gemini | anthropic | openai
+    gemini_api_key: str = ""          # free tier: aistudio.google.com/apikey
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    llm_model: str = ""
+    llm_model: str = ""               # blank -> per-provider default
 
     # dashboard
     dashboard_host: str = "127.0.0.1"
@@ -253,6 +257,7 @@ def load_settings() -> Settings:
         font_body=_resolve(_get("FONT_BODY", "") or "assets/fonts/Jua-Regular.ttf"),
         ffmpeg_path=_get("FFMPEG_PATH", "ffmpeg"),
         ken_burns=_get_bool("KEN_BURNS", True),
+        video_xfade=_get_bool("VIDEO_XFADE", True),
         headline_style=_get("HEADLINE_STYLE", "punchy").lower(),
         factcheck_segment=_get_bool("FACTCHECK_SEGMENT", True),
         image_enabled=_get_bool("IMAGE_ENABLED", True),
@@ -273,6 +278,7 @@ def load_settings() -> Settings:
         bgm_duck=_get_bool("BGM_DUCK", True),
         bgm_fade_seconds=_get_float("BGM_FADE_SECONDS", 2.0),
         llm_provider=_get("LLM_PROVIDER", "").lower(),
+        gemini_api_key=_get("GEMINI_API_KEY", ""),
         anthropic_api_key=_get("ANTHROPIC_API_KEY", ""),
         openai_api_key=_get("OPENAI_API_KEY", ""),
         llm_model=_get("LLM_MODEL", ""),

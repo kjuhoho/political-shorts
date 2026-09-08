@@ -37,11 +37,16 @@ MAX_WHAT = 1
 # Top-performing news shorts run tight — 20-38s. Aim ~30-36s: hook opens a
 # loop, the summary card is dropped, 4-5 fast cards.
 MAX_VIDEO_SECONDS = 38.0
+# with an LLM writing connected explanation, allow a little more room so it can
+# actually explain (still well under the 60s Shorts limit).
+MAX_VIDEO_SECONDS_LLM = 52.0
 _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
              "factcheck": 74, "outro": 0}
+_NARR_CAP_LLM = {"hook": 58, "summary": 62, "what": 100, "reaction": 96,
+                 "factcheck": 84, "outro": 50}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -74,13 +79,16 @@ def _seg_seconds(seg: dict[str, Any]) -> float:
     return len(n) / _KR_CHARS_PER_SEC + _CARD_PAD_SECONDS
 
 
-def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECONDS) -> list[dict[str, Any]]:
+def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECONDS,
+                  caps: dict[str, int] | None = None) -> list[dict[str, Any]]:
+    caps = caps or _NARR_CAP
+
     def total() -> float:
         return sum(_seg_seconds(s) for s in segments)
 
     # 1) hard per-role caps — trim to a clean boundary, never mid-word/mid-sentence
     for s in segments:
-        cap = _NARR_CAP.get(s["role"])
+        cap = caps.get(s["role"])
         if cap == 0:
             s["narration"] = ""
         elif cap and len(s.get("narration", "")) > cap:
@@ -300,7 +308,45 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                      "caption": "여러분 생각은 어떤가요? 댓글로 알려주세요",
                      "narration": f"{lean_note} 자세한 내용과 원문 링크는 더보기란에 있습니다."})
 
-    segments = _fit_duration(segments)
+    # 6b) optional — let a (free) LLM rewrite the narration into a natural,
+    #     lay-friendly explanation that flows card to card. Falls back silently
+    #     to the templated lines on any problem; every fact still traces to the
+    #     source and the result must pass safety.review_script.
+    llm_on = bool((getattr(cfg, "llm_provider", "") or "").strip())
+    if llm_on:
+        try:
+            from .hook import pick_actor as _pick_actor
+            from .script_llm import rewrite_segments
+
+            meta = {
+                "source_text": f"{titles}\n{summaries}",
+                "facts": [f.text for f in analysis.facts],
+                "claims": [c.text for c in analysis.claims],
+                "interps": [i.text for i in analysis.interpretations],
+                "entities": {"president": entities.president,
+                             "politicians": entities.politicians,
+                             "parties": entities.parties},
+                "topic": _pick_actor(headline, entities, frame),
+            }
+            segments = rewrite_segments(
+                segments, meta, cfg,
+                base_script={
+                    "headline": headline, "frame": frame.kind,
+                    "n_sources": n_sources, "sources": _sources_from_rows(rows),
+                    "entities": {"president": entities.president,
+                                 "politicians": entities.politicians,
+                                 "parties": entities.parties,
+                                 "institutions": entities.institutions},
+                },
+            ) or segments
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("llm rewrite errored, using template: %s", exc)
+
+    segments = _fit_duration(
+        segments,
+        budget=MAX_VIDEO_SECONDS_LLM if llm_on else MAX_VIDEO_SECONDS,
+        caps=_NARR_CAP_LLM if llm_on else _NARR_CAP,
+    )
 
     # --- align the on-screen caption with what's actually being said, and
     #     number the content cards so the viewer can follow ("1." "2." ...) ---
