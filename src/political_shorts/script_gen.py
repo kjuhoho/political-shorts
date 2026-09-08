@@ -39,7 +39,7 @@ MAX_WHAT = 1
 MAX_VIDEO_SECONDS = 38.0
 # with an LLM writing connected explanation, allow a little more room so it can
 # actually explain (still well under the 60s Shorts limit).
-MAX_VIDEO_SECONDS_LLM = 52.0
+MAX_VIDEO_SECONDS_LLM = 56.0
 _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
@@ -140,8 +140,12 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
         if len(sents) > 1:
             longest["narration"] = " ".join(sents[:-1])
         else:
-            longest["narration"] = clip_sentence(longest["narration"],
-                                                 int(len(longest["narration"]) * 0.85))
+            # one long sentence — drop its last clause at a comma / connective,
+            # never mid-phrase ("…참여한 곳이" -> keep up to "…21건 가운데")
+            t = longest["narration"]
+            parts = re.split(r"(?<=[,·])\s+|(?<=[가-힣])(?:는데|지만|면서|고서|며)\s+", t)
+            longest["narration"] = (" ".join(parts[:-1]).rstrip(" ,·") if len(parts) > 1
+                                    else clip_sentence(t, int(len(t) * 0.8)))
 
     # 4) final polish: every spoken line is a clean, complete sentence
     for s in segments:

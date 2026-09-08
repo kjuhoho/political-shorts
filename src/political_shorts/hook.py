@@ -92,7 +92,10 @@ FRAMES: dict[str, list[str]] = {
                 "겸직", "버티기", "부적격", "위법", "특혜", "자격 시비", "고발", "리스크"],
     "vote": ["통과", "부결", "가결", "처리", "상정", "표결", "의결", "부의", "거부권", "재의요구", "필리버스터", "본회의 통과"],
     "remark": ["발언", "주장", "밝혔", "경고", "촉구", "비판", "일갈", "작심", "쓴소리"],
-    "poll": ["지지율", "여론조사", "골든크로스", "데드크로스", "하락", "반등", "%"],
+    # real polling vocabulary only — "하락"/"반등"/"%" match house prices, stock
+    # indices, budget ratios… and dragged non-poll stories into the poll frame.
+    "poll": ["지지율", "지지도", "여론조사", "골든크로스", "데드크로스",
+             "응답률", "응답자", "설문", "조사에서", "조사 결과", "지지 후보"],
 }
 FRAME_ORDER = ["scandal", "personnel", "vote", "clash", "poll", "remark"]
 
@@ -383,8 +386,13 @@ def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
     if actor in _NOT_TARGET or not (2 <= len(actor) <= 6) or actor in {"여야", "여당", "야당"}:
         return ["오늘의 정치 이슈", "핵심만"]
     tmpls = _TITLE_TMPL.get(frame.kind) or _TITLE_TMPL["generic"]
+    h = clean_text(headline)
     if frame.kind == "clash" and iw == "논란":
         tmpls = [t for t in tmpls if "{issueword}" not in t[0]] or tmpls
+    if frame.kind == "poll" and not re.search(r"지지율|지지도|여론|설문|조사", h):
+        tmpls = _TITLE_TMPL["generic"]            # not really a polling story
+    if frame.kind == "remark" and not re.search(r"발언|한마디|말|주장|밝혀|경고|촉구", h):
+        tmpls = _TITLE_TMPL["generic"]
     parties = entities.parties + ["", ""]
     slots = {
         "actor": actor, "party": parties[0] or "여당", "partyB": parties[1] or "야당",
