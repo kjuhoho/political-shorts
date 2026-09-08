@@ -24,12 +24,19 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
     raise RuntimeError(f"no usable LLM provider configured (LLM_PROVIDER={provider!r})")
 
 
+# tried in order when LLM_MODEL is unset — Google renames/retires these often,
+# and which ones a given free key can see varies, so we walk the list on 404.
+_GEMINI_MODELS = [
+    "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest",
+    "gemini-2.0-flash-001", "gemini-1.5-flash",
+]
+
+
 def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
     """Google Gemini via the REST API — free tier, no SDK (just requests)."""
     key = (getattr(cfg, "gemini_api_key", "") or "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY not set")
-    model = cfg.llm_model or "gemini-2.0-flash"
     body: dict = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -40,15 +47,26 @@ def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
     }
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": key}, json=body, timeout=40,
-    )
-    r.raise_for_status()
-    data = r.json()
-    cand = (data.get("candidates") or [{}])[0]
-    parts = (cand.get("content") or {}).get("parts") or [{}]
-    return "".join(p.get("text", "") for p in parts)
+
+    models = [cfg.llm_model] if cfg.llm_model else list(_GEMINI_MODELS)
+    last_404: Exception | None = None
+    for model in models:
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            params={"key": key}, json=body, timeout=40,
+        )
+        if r.status_code == 404:                 # model name not available on this key
+            last_404 = requests.HTTPError(f"{model}: 404", response=r)
+            continue
+        r.raise_for_status()
+        data = r.json()
+        cand = (data.get("candidates") or [{}])[0]
+        parts = (cand.get("content") or {}).get("parts") or [{}]
+        text = "".join(p.get("text", "") for p in parts)
+        if len(models) > 1 and model != models[0]:
+            log.info("gemini: using model %s", model)
+        return text
+    raise last_404 or RuntimeError("gemini: no model responded")
 
 
 def _anthropic(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
