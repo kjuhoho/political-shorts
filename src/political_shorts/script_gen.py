@@ -322,7 +322,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     from .hook import pick_actor as _pa
     topic = _pa(headline, entities, frame)
 
-    # 7) images (keyless CC) --------------------------------------
+    # 7) images (keyless CC) + optional b-roll video -------------
     images: list[dict[str, Any]] = []
     try:
         from .images import collect_images
@@ -330,6 +330,13 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         images = [a.__dict__ for a in collect_images(entities, frame, headline, cfg)]
     except Exception as exc:  # pragma: no cover - network dependent
         log.warning("image collection failed: %s", exc)
+    if getattr(cfg, "broll_enabled", False):
+        try:
+            from .footage import collect_footage
+
+            images += [a.__dict__ for a in collect_footage(entities, frame, headline, cfg)]
+        except Exception as exc:  # pragma: no cover - network dependent
+            log.warning("b-roll collection failed: %s", exc)
 
     script: dict[str, Any] = {
         "cluster_id": cluster_id,

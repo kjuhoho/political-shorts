@@ -594,8 +594,12 @@ def _assign_images(
     guessed onto a card."""
     portraits = [(im["path"], (im.get("query") or "").strip())
                  for im in images if im.get("path") and im.get("kind") == "portrait"]
-    photos = [im["path"] for im in images if im.get("path") and im.get("kind") != "portrait"]
-    if not portraits and not photos:
+    # context media for the non-person cards: b-roll VIDEO clips first (when
+    # collect_footage found any), then still location photos.
+    videos = [im["path"] for im in images if im.get("path") and im.get("kind") == "video"]
+    photos = [im["path"] for im in images if im.get("path") and im.get("kind") == "photo"]
+    context = videos + photos
+    if not portraits and not context:
         return [None] * len(segments)
 
     # subject face = the portrait collect_images tagged as the story's subject
@@ -614,18 +618,18 @@ def _assign_images(
                           and (who == _topic or who in _topic or _topic in who)), None)
 
     out: list[str | None] = []
-    used: set[str] = set()             # portraits/photos already placed once
+    used: set[str] = set()             # media already placed once
     fi = 0
 
     def _take_photo(i: int) -> str | None:
-        if not photos:
+        if not context:
             return None
-        for k in range(len(photos)):
-            cur = photos[(i + k) % len(photos)]
+        for k in range(len(context)):
+            cur = context[(i + k) % len(context)]
             if cur not in used:
                 used.add(cur)
                 return cur
-        return photos[i % len(photos)]
+        return context[i % len(context)]
 
     def _named_portrait(seg: dict) -> str | None:
         # this card's OWN text — the subject on cards that don't name anyone is
@@ -647,14 +651,15 @@ def _assign_images(
 
     # pass 2 — the story's SUBJECT face on every setup/closing card (only when
     # the subject is a picturable person); the content cards (what / reaction)
-    # take a location so the video isn't the same still end to end. No photos at
-    # all → subject face everywhere it can go. Nothing → drawn backdrop.
+    # take a context clip/photo so the video isn't the same still end to end.
+    # No context media at all → subject face everywhere it can go. Nothing →
+    # drawn backdrop.
     for i, seg in enumerate(segments):
         if picks[i] is not None:
             continue
         role = seg.get("role")
         pic = None
-        if lead_path and (role in setup_roles or not photos):
+        if lead_path and (role in setup_roles or not context):
             pic = lead_path
         if pic is None:
             pic = _take_photo(fi); fi += 1
@@ -706,6 +711,43 @@ def _segment_clip(
     _run(cmd)
 
 
+def _segment_video_clip(
+    ffmpeg: str, broll: Path, overlay: Path, nar: Narration,
+    duration: float, out_mp4: Path, cfg: Settings, idx: int
+) -> None:
+    """One card backed by a b-roll VIDEO clip (context cards only). The source
+    is scaled to cover 1080x1920, cropped with a slow pan, its own audio
+    dropped; the caption PNG is overlaid and the narration is the only audio.
+    The clip is looped if shorter than the card."""
+    w, h, fps = cfg.video_width, cfg.video_height, cfg.video_fps
+    over = 1.08
+    sw, sh = int(w * over), int(h * over)
+    prog = f"(0.5-0.5*cos(PI*min(t/{max(duration,0.1):.2f}\\,1)))"
+    px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
+    vbg = (f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=increase,"
+           f"crop={w}:{h}:x='{px}':y='(ih-{h})/2',setsar=1,fps={fps}[bg]")
+    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v]"
+
+    cmd = [
+        ffmpeg, "-y", "-loglevel", "error",
+        "-stream_loop", "-1", "-i", str(broll),
+        "-loop", "1", "-i", str(overlay),
+    ]
+    if nar.wav_path:
+        cmd += ["-i", str(nar.wav_path)]
+        amap = ["-map", "2:a", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
+    else:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+        amap = ["-map", "2:a", "-c:a", "aac", "-b:a", "160k"]
+    cmd += [
+        "-filter_complex", filt, "-map", "[v]", *amap,
+        "-t", f"{duration:.3f}", "-r", str(fps),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+        str(out_mp4),
+    ]
+    _run(cmd)
+
+
 def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = None) -> RenderResult:
     cfg = cfg or settings
     ffmpeg = _ffmpeg(cfg)
@@ -718,6 +760,8 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
     try:
         narrations = synthesize_segments([s["narration"] for s in segments], workdir / "audio", cfg)
         seg_images = _assign_images(segments, script.get("images", []), script.get("topic", ""))
+        video_set = {im["path"] for im in script.get("images", [])
+                     if im.get("kind") == "video" and im.get("path")}
 
         frame_kind = script.get("frame", "generic")
         clip_paths: list[Path] = []
@@ -730,7 +774,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                              if im.get("kind") == "portrait" and im.get("path")
                              and Path(im["path"]).exists()), None)
             scene = next((im["path"] for im in imgs
-                          if im.get("kind") != "portrait" and im.get("path")
+                          if im.get("kind") == "photo" and im.get("path")
                           and Path(im["path"]).exists()), None) or portrait
             thumb_jpg = workdir / "thumb.jpg"
             try:
@@ -743,11 +787,13 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             except Exception as exc:  # never let the poster break a render
                 log.warning("thumbnail frame skipped: %s", exc)
 
+        n_broll = 0
         for i, seg in enumerate(segments):
             overlay = workdir / f"ov_{i:02d}.png"
             _overlay_png(seg, i, total, script, overlay, cfg)
-            base, is_photo = _segment_bg(seg_images[i], frame_kind, i,
-                                         cfg.video_width, cfg.video_height, workdir)
+
+            media = seg_images[i]
+            is_broll = bool(media) and media in video_set and Path(media).exists()
 
             nar = narrations[i]
             if nar.wav_path and nar.duration_s > 0.3:
@@ -759,7 +805,18 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             total_dur += duration
 
             clip = workdir / f"clip_{i:02d}.mp4"
-            _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i)
+            if is_broll:
+                try:
+                    _segment_video_clip(ffmpeg, Path(media), overlay, nar, duration, clip, cfg, i)
+                    n_broll += 1
+                except Exception as exc:            # fall back to a still backdrop
+                    log.warning("b-roll clip %d failed (%s); using still", i, exc)
+                    is_broll = False
+            if not is_broll:
+                base, is_photo = _segment_bg(media if media not in video_set else None,
+                                             frame_kind, i, cfg.video_width,
+                                             cfg.video_height, workdir)
+                _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i)
             clip_paths.append(clip)
 
         concat_txt = workdir / "concat.txt"
@@ -774,14 +831,15 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
         ])
 
         n_imgs = sum(1 for p in seg_images if p)
+        media_desc = f"{n_imgs} imgs" + (f", {n_broll} b-roll" if n_broll else "")
         if _bgm_usable(cfg):
             _mix_bgm(ffmpeg, narration_mp4, Path(cfg.bgm_path), total_dur, out_path, cfg)
-            log.info("video rendered %s (%.1fs, %d segs, %d imgs, +bgm)",
-                     out_path.name, total_dur, total, n_imgs)
+            log.info("video rendered %s (%.1fs, %d segs, %s, +bgm)",
+                     out_path.name, total_dur, total, media_desc)
         else:
             shutil.move(str(narration_mp4), str(out_path))
-            log.info("video rendered %s (%.1fs, %d segs, %d imgs)",
-                     out_path.name, total_dur, total, n_imgs)
+            log.info("video rendered %s (%.1fs, %d segs, %s)",
+                     out_path.name, total_dur, total, media_desc)
 
         return RenderResult(out_path, round(total_dur, 2), total)
     finally:

@@ -129,6 +129,17 @@ class Settings:
     image_providers: str = "wikimedia"   # openverse stock tends to be off-topic
     image_cache_dir: str = ""          # resolved to ROOT/assets/cache/images if blank
 
+    # b-roll VIDEO on the context/location cards (person cards stay stills).
+    # Wikimedia Commons is keyless + CC; Pexels needs a free API key (no per-use
+    # cost) and only adds generic stock (flags, assembly, city, ballots).
+    # OFF by default — enable once validated so it can't destabilise the live run.
+    broll_enabled: bool = False
+    broll_max_count: int = 3
+    broll_max_mb: int = 40            # skip anything larger (GHA transcode cost)
+    broll_cache_dir: str = ""         # resolved to ROOT/assets/cache/footage if blank
+    pexels_api_key: str = ""          # free key; Pexels is the primary b-roll source
+    broll_allow_commons: bool = False  # opt-in; Commons KR-politics video is charged
+
     # background music (optional)
     bgm_enabled: bool = False
     bgm_path: str = ""
@@ -249,6 +260,12 @@ def load_settings() -> Settings:
         image_max_count=_get_int("IMAGE_MAX_COUNT", 6),
         image_providers=_get("IMAGE_PROVIDERS", "wikimedia"),
         image_cache_dir=_resolve(_get("IMAGE_CACHE_DIR", "") or "assets/cache/images"),
+        broll_enabled=_get_bool("BROLL_ENABLED", False),
+        broll_max_count=_get_int("BROLL_MAX_COUNT", 3),
+        broll_max_mb=_get_int("BROLL_MAX_MB", 40),
+        broll_cache_dir=_resolve(_get("BROLL_CACHE_DIR", "") or "assets/cache/footage"),
+        pexels_api_key=_get("PEXELS_API_KEY", ""),
+        broll_allow_commons=_get_bool("BROLL_ALLOW_COMMONS", False),
         bgm_enabled=_get_bool("BGM_ENABLED", False),
         bgm_path=_resolve(_get("BGM_PATH", "")),
         bgm_credit=_get("BGM_CREDIT", ""),

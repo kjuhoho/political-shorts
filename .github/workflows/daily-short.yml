@@ -47,6 +47,7 @@ jobs:
           PS_ENV_B64: ${{ secrets.PS_ENV_B64 }}
           PS_YT_CLIENT_B64: ${{ secrets.PS_YT_CLIENT_B64 }}
           PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}
+          PS_PEXELS_KEY: ${{ secrets.PS_PEXELS_KEY }}
         run: |
           mkdir -p secrets
           echo "$PS_ENV_B64"        | base64 -d > .env
@@ -62,6 +63,11 @@ jobs:
             echo "YOUTUBE_CLIENT_SECRET_FILE=secrets/client_secret_youtube.json"
             echo "YOUTUBE_TOKEN_FILE=secrets/token_youtube.json"
           } >> .env
+          # Optional b-roll video: only active if BOTH the PS_PEXELS_KEY secret
+          # is set AND .env has BROLL_ENABLED=true. No secret -> unchanged.
+          if [ -n "$PS_PEXELS_KEY" ]; then
+            echo "PEXELS_API_KEY=$PS_PEXELS_KEY" >> .env
+          fi
 
       - name: seed dedup history from the repo
         run: python scripts/sync_topics.py import
