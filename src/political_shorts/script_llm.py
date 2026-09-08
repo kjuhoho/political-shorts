@@ -43,7 +43,8 @@ _SYSTEM = (
     "7) 각 카드는 주어진 글자 수(limit) 이내. 한 문장은 40자 안팎에서 끊어 1~2문장으로 "
     "쓰고, 모든 문장을 '~습니다 / ~합니다 / ~됩니다'처럼 완결형 종결어미로 끝낼 것. "
     "절대 조사·연결어미('…에 따르면 / …라며 / …했지만 / …곳이 / …가운데')로 끝내지 말 것.\n"
-    "8) 출력은 JSON 객체 하나만. 키는 카드 role, 값은 새 내레이션 문자열."
+    "8) 출력은 JSON 객체 하나만. 키는 카드 role, 값은 새 내레이션 문자열. "
+    "문자열 안에서 인용이 필요하면 반드시 홑따옴표(')만 쓸 것(겹따옴표 금지)."
 )
 
 
@@ -88,8 +89,16 @@ def _parse(raw: str) -> dict[str, str]:
     txt = raw.strip()
     if txt.startswith("```"):
         txt = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", txt).strip()
+    inner = (re.search(r"\{.*\}", txt, re.S) or [None])[0]
+
+    def _repair(s: str) -> str:
+        s = s.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+        s = re.sub(r",\s*([}\]])", r"\1", s)          # trailing commas
+        s = re.sub(r"[\x00-\x1f]+", " ", s)           # raw control chars / newlines
+        return s
+
     obj = None
-    for cand in (txt, (re.search(r"[\{\[].*[\}\]]", txt, re.S) or [None])[0]):
+    for cand in (txt, inner, _repair(txt), _repair(inner or "")):
         if not cand:
             continue
         try:
@@ -141,14 +150,19 @@ def rewrite_segments(
     if not spoken:
         return segments
 
-    try:
-        from .llm import complete
-        raw = complete(_payload(meta, spoken), cfg, max_tokens=900, system=_SYSTEM)
-    except Exception as exc:  # pragma: no cover - network dependent
-        log.warning("llm narration rewrite skipped: %s", exc)
-        return segments
-
-    new = _parse(raw)
+    from .llm import complete
+    payload = _payload(meta, spoken)
+    new: dict[str, str] = {}
+    for attempt in range(2):                 # one retry — a re-gen usually parses
+        try:
+            raw = complete(payload, cfg, max_tokens=1400, system=_SYSTEM)
+        except Exception as exc:  # pragma: no cover - network dependent
+            log.warning("llm narration rewrite skipped: %s", exc)
+            return segments
+        new = _parse(raw)
+        if new:
+            break
+        log.info("llm rewrite: response %d unparseable, retrying", attempt + 1)
     if not new:
         log.warning("llm rewrite: unparseable response, keeping template")
         return segments

@@ -98,6 +98,13 @@ FRAMES: dict[str, list[str]] = {
              "응답률", "응답자", "설문", "조사에서", "조사 결과", "지지 후보"],
 }
 FRAME_ORDER = ["scandal", "personnel", "vote", "clash", "poll", "remark"]
+# vote/poll/remark misfire on stray keywords ("처리"/"밝혔"/"조사"); only accept
+# them on a distinctive cue, or on 2+ hits.
+_STRONG = {
+    "vote": ("가결", "부결", "의결", "표결", "본회의 통과", "필리버스터", "재의요구"),
+    "poll": ("지지율", "지지도", "여론조사"),
+    "remark": ("작심", "쓴소리", "일갈", "직격"),
+}
 
 # "사퇴/지명" next to these is a *dispute about* stepping down / being named,
 # not the act itself — don't let it drag a controversy into the personnel frame.
@@ -127,6 +134,8 @@ def detect_frame(*texts: str) -> Frame:
         hits = [k for k in FRAMES[kind] if k in text]
         if disputed and kind == "personnel":
             hits = [k for k in hits if k not in ("사퇴", "지명", "후보자", "물러")]
+        if kind in _STRONG and len(hits) < 2 and not any(s in text for s in _STRONG[kind]):
+            hits = []                       # weak single hit -> not this frame
         if len(hits) > best_score:
             best_score = len(hits)
             best = Frame(kind, hits)
@@ -456,10 +465,10 @@ def make_factcheck(analysis, n_sources: int) -> list[dict]:
                      "text": clip_sentence(simplify(analysis.facts[0].text, limit=46), 46, ell="..")})
     if analysis.claims:
         rows.append({"tag": "주장", "tone": "claim",
-                     "text": "한쪽 주장: " + clip_sentence(analysis.claims[0].text, 32, ell="..")})
+                     "text": clip_sentence(analysis.claims[0].text, 34, ell="..")})
     if analysis.interpretations and analysis.interpretations[0].score > 0:
-        rows.append({"tag": "해석", "tone": "warn",
-                     "text": "아직 전망: " + clip_sentence(analysis.interpretations[0].text, 32, ell="..")})
+        rows.append({"tag": "전망", "tone": "warn",
+                     "text": clip_sentence(analysis.interpretations[0].text, 34, ell="..")})
     rows.append({"tag": "확인", "tone": "info",
                  "text": f"{n_sources}개 매체 종합, 원문은 더보기란"})
     return rows[:4]
