@@ -63,10 +63,12 @@ jobs:
             echo "YOUTUBE_CLIENT_SECRET_FILE=secrets/client_secret_youtube.json"
             echo "YOUTUBE_TOKEN_FILE=secrets/token_youtube.json"
           } >> .env
-          # Optional b-roll video: only active if BOTH the PS_PEXELS_KEY secret
-          # is set AND .env has BROLL_ENABLED=true. No secret -> unchanged.
+          # Optional b-roll video: turns ON automatically when the PS_PEXELS_KEY
+          # secret exists (these lines are appended last, so they override the
+          # packed .env). No secret -> b-roll stays off, nothing changes.
           if [ -n "$PS_PEXELS_KEY" ]; then
             echo "PEXELS_API_KEY=$PS_PEXELS_KEY" >> .env
+            echo "BROLL_ENABLED=true" >> .env
           fi
 
       - name: seed dedup history from the repo

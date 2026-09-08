@@ -74,14 +74,21 @@ def build_metadata(
         lines.append(f"- {s['name']} {lean}: {s['url']}")
 
     images = script.get("images", [])
+    has_video = any(im.get("kind") == "video" for im in images)
+    has_pexels = any((im.get("license", "") == "Pexels") for im in images)
     if images or (cfg.bgm_enabled and cfg.bgm_credit):
         lines.append("")
-        lines.append("■ 이미지·음악 출처 (Creative Commons / 공용)")
+        head = "■ 영상·이미지·음악 출처" if has_video else "■ 이미지·음악 출처"
+        lines.append(f"{head} (Creative Commons / 공용 / Pexels)")
         for im in images:
             who = clean_text(im.get("author", "")) or "Unknown"
             lic = im.get("license", "") or "CC"
             ttl = truncate(clean_text(im.get("title", "")), 50) or "image"
-            lines.append(f"- {ttl} — {who} ({lic}) {im.get('source_url', '')}")
+            kind = "영상" if im.get("kind") == "video" else "이미지"
+            lines.append(f"- [{kind}] {ttl} — {who} ({lic}) {im.get('source_url', '')}")
+        if has_pexels:
+            # Pexels API guidelines: show a prominent link to Pexels.
+            lines.append("- 영상 클립 제공: Pexels — https://www.pexels.com")
         if cfg.bgm_enabled and cfg.bgm_credit:
             lines.append(f"- {cfg.bgm_credit}")
 
