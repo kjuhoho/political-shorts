@@ -5,6 +5,8 @@ heuristic output, never to be the sole author of a claim.
 """
 from __future__ import annotations
 
+import time
+
 import requests
 
 from .config import Settings
@@ -24,16 +26,18 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
     raise RuntimeError(f"no usable LLM provider configured (LLM_PROVIDER={provider!r})")
 
 
-# tried in order when LLM_MODEL is unset — Google renames/retires these often,
-# and which ones a given free key can see varies, so we walk the list on 404.
+# tried in order when LLM_MODEL is unset. `gemini-flash-latest` is an alias
+# Google keeps pointed at the current flash model, so it's the most portable;
+# the pinned ids are fallbacks in case the alias isn't visible to a given key.
 _GEMINI_MODELS = [
-    "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest",
+    "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash",
     "gemini-2.0-flash-001", "gemini-1.5-flash",
 ]
 
 
 def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
-    """Google Gemini via the REST API — free tier, no SDK (just requests)."""
+    """Google Gemini via the REST API — free tier, no SDK (just requests).
+    Walks a model list on 404; retries once on a transient 429/5xx/UNAVAILABLE."""
     key = (getattr(cfg, "gemini_api_key", "") or "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY not set")
@@ -51,26 +55,31 @@ def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
     models = [cfg.llm_model] if cfg.llm_model else list(_GEMINI_MODELS)
     last_err = ""
     for model in models:
-        r = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            params={"key": key}, json=body, timeout=40,
-        )
-        if r.status_code == 200:
-            data = r.json()
-            cand = (data.get("candidates") or [{}])[0]
-            parts = (cand.get("content") or {}).get("parts") or [{}]
-            if len(models) > 1 and model != models[0]:
-                log.info("gemini: using model %s", model)
-            return "".join(p.get("text", "") for p in parts)
-        # surface Google's own reason (SERVICE_DISABLED, API_KEY_*_BLOCKED, ...)
-        try:
-            err = (r.json().get("error") or {})
-            detail = f"{err.get('status', r.status_code)}: {err.get('message', '')}".strip()
-        except Exception:
-            detail = f"HTTP {r.status_code}"
-        last_err = f"{model} -> {detail}"
-        if r.status_code != 404:      # 403/400 etc. are key/permission issues, not model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        status = None
+        for attempt in range(2):
+            r = requests.post(url, params={"key": key}, json=body, timeout=40)
+            status = r.status_code
+            if status == 200:
+                data = r.json()
+                cand = (data.get("candidates") or [{}])[0]
+                parts = (cand.get("content") or {}).get("parts") or [{}]
+                if len(models) > 1 and model != models[0]:
+                    log.info("gemini: using model %s", model)
+                return "".join(p.get("text", "") for p in parts)
+            try:
+                err = r.json().get("error") or {}
+                detail = f"{err.get('status', status)}: {err.get('message', '')}".strip()
+            except Exception:
+                detail = f"HTTP {status}"
+            last_err = f"{model} -> {detail}"
+            if status in (429, 500, 503) and attempt == 0:
+                time.sleep(3.0)               # transient capacity blip — one retry
+                continue
             break
+        if status == 404:
+            continue                          # model not visible to this key — try next
+        break                                # 403 / 400 / persistent 5xx -> stop
     raise RuntimeError(f"gemini call failed ({last_err})")
 
 
