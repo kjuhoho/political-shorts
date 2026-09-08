@@ -31,8 +31,8 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
 # before the in-demand full flash models — on a 404 (not visible to this key)
 # OR a sustained 503/"high demand" we just move to the next one.
 _GEMINI_MODELS = [
-    "gemini-flash-latest", "gemini-2.0-flash", "gemini-2.5-flash-lite",
-    "gemini-2.0-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash",
+    "gemini-flash-latest", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite",
+    "gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-lite-latest",
 ]
 
 
