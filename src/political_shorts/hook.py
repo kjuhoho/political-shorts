@@ -231,14 +231,24 @@ _ISSUE_WORD = ("청탁", "특혜", "의혹", "비자금", "뇌물", "탈세", "�
                "레임덕", "내로남불", "책임론", "발언", "논란")
 
 
+# common nouns the "A, B …" regex can grab that are NOT the person under
+# scrutiny ("홍익표, '이 대통령 연임 논란'에…" must not yield actor="논란")
+_NOT_TARGET = {
+    "논란", "의혹", "발언", "공방", "파장", "사태", "비판", "해명", "반박", "주장",
+    "입장", "공세", "맹공", "저격", "직격", "경고", "일침", "후폭풍", "책임론",
+    "언급", "지적", "질문", "폭로", "녹취", "녹취록", "기자회견", "글", "댓글",
+}
+
+
 def attack_target(headline: str) -> str:
     """For 'A, B …공격…' return B (the person the story is really scrutinising);
-    '' if the headline isn't that shape."""
+    '' if the headline isn't that shape or B is a bare topic noun."""
     m = _ATTACK_RE.match(clean_text(headline))
     if not m:
         return ""
     b = re.sub(r"(에게|에|을|를|측|의|이|가|은|는|께)$", "", m.group(2))
-    return b if 2 <= len(b) <= 4 else m.group(2)
+    b = b if 2 <= len(b) <= 4 else m.group(2)
+    return "" if b in _NOT_TARGET else b
 
 
 def issue_word(headline: str, *more: str) -> str:
@@ -344,9 +354,9 @@ _TITLE_TMPL = {
     # every clash line is anchored on {actor} (the person under scrutiny) so an
     # "A criticises B" headline can never leak A's name into the title via the
     # free-text {issue} slot — see test_attack_headline_reframed_neutrally.
-    "clash": [("{actor} '{issueword}'", "사실은?"),
+    "clash": [("{actor} 관련 공방", "무엇이 쟁점인가"),
               ("{actor} 둘러싼 공방", "쟁점 정리"),
-              ("{actor} 관련 공방", "양쪽 입장은")],
+              ("{actor} '{issueword}' 논란", "사실은?")],
     "scandal": [("'{issue}' 논란", "어디까지 사실인가"),
                 ("{actor} 의혹", "쟁점 정리"),
                 ("'{issue}'", "핵심만 정리")],
@@ -367,13 +377,21 @@ def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
     'A criticises B' story this frames around B + the issue as a question
     ("김승원 '청탁' 논란 / 사실은?"), never "A의 의혹"."""
     actor = pick_actor(headline, entities, frame)
+    iw = issue_word(headline)
+    # a bare-noun actor ("논란", "여야") or a generic issue word makes templates
+    # like "논란 '논란'" — fall back to a plain, always-sensible pair.
+    if actor in _NOT_TARGET or not (2 <= len(actor) <= 6) or actor in {"여야", "여당", "야당"}:
+        return ["오늘의 정치 이슈", "핵심만"]
+    tmpls = _TITLE_TMPL.get(frame.kind) or _TITLE_TMPL["generic"]
+    if frame.kind == "clash" and iw == "논란":
+        tmpls = [t for t in tmpls if "{issueword}" not in t[0]] or tmpls
     parties = entities.parties + ["", ""]
     slots = {
         "actor": actor, "party": parties[0] or "여당", "partyB": parties[1] or "야당",
         "issue": _issue_phrase(headline, frame), "result": _result_word(frame),
-        "issueword": issue_word(headline),
+        "issueword": iw,
     }
-    l1, l2 = random.choice(_TITLE_TMPL.get(frame.kind) or _TITLE_TMPL["generic"])
+    l1, l2 = random.choice(tmpls)
     out = [truncate(l1.format(**slots), 14), truncate(l2.format(**slots), 14)]
     return [x for x in out if x]
 
