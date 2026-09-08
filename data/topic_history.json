@@ -133,5 +133,23 @@
   "frame": "clash",
   "remote_id": "bIOXza6m2WQ",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1788846771,
+  "signature": "공개 녹취록 대화냐 우연히 재반박 최재성에 한동훈",
+  "actor": "한동훈",
+  "headline": "한동훈, 최재성에 재반박 녹취록 공개...\"우연히 할 대화냐\"",
+  "frame": "clash",
+  "remote_id": "BLOCKED_manual",
+  "platform": "block"
+ },
+ {
+  "published_ts": 1788846771,
+  "signature": "공개 녹취록 로비 브로커 인사 최재성 한동훈",
+  "actor": "한동훈",
+  "headline": "한동훈, 최재성 브로커 녹취록 공개...인사 로비 의혹",
+  "frame": "scandal",
+  "remote_id": "BLOCKED_manual",
+  "platform": "block"
  }
 ]
