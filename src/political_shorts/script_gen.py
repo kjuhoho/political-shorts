@@ -87,10 +87,17 @@ _CAP_TAIL = re.compile(
 )
 
 
+def _glyph_safe(s: str) -> str:
+    """The bundled caption fonts have no ·/…/— glyph (they render as tofu)."""
+    return (s.replace("·", ", ").replace("ㆍ", ", ").replace("…", " ")
+             .replace("—", "-").replace("–", "-").replace("~", "-"))
+
+
 def _tidy_caption(narration: str, limit: int) -> str:
     """A short on-screen caption from the (possibly long) spoken line that
     ALWAYS ends cleanly — on a sentence end or a noun, never on '…따르면'."""
-    cap = clip_sentence(narration, limit, ell="").rstrip(" ,·.")
+    cap = _glyph_safe(clip_sentence(narration, limit, ell="")).rstrip(" ,·.")
+    cap = re.sub(r"\s+", " ", cap)
     for _ in range(4):
         if not cap or cap[-1] in "다요죠까네군!?.":
             break
@@ -456,17 +463,18 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             # the now-stale templated caption
             s["caption"] = _tidy_caption(s["narration"], 46)
         elif s["role"] in ("hook", "outro"):
-            s["caption"] = clip_sentence(s.get("caption", ""), 46, ell="..")
+            s["caption"] = _glyph_safe(clip_sentence(s.get("caption", ""), 46, ell=".."))
         elif s.get("narration"):
             # caption mirrors the voice line; must END CLEANLY — never on a
             # dangling connective ("…에 따르면", "…안다며", "…했지만")
             s["caption"] = _tidy_caption(s["narration"], cap_limit)
+        s["narration"] = _glyph_safe(s.get("narration", ""))
         if s["role"] not in ("outro",):
             n += 1
             s["num"] = n
 
     est_seconds = round(sum(_seg_seconds(s) for s in segments), 1)
-    title = make_title(headline, entities, frame)
+    title = [_glyph_safe(t) for t in make_title(headline, entities, frame)]
     from .hook import pick_actor as _pa
     topic = _pa(headline, entities, frame)
 

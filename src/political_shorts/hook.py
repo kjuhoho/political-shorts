@@ -456,19 +456,42 @@ def simplify(sentence: str, add_lead: bool = False, limit: int = 72) -> str:
 # --------------------------------------------------------------------------- #
 # fact-check block
 # --------------------------------------------------------------------------- #
+# a wire byline stuck to the front of a sentence with no space ("연합뉴스한성숙…")
+_FC_BYLINE = re.compile(
+    r"^(?:\[[^\]]*\]\s*)?(?:연합뉴스|뉴시스|뉴스1|SBS|KBS|MBC|YTN|JTBC|채널A|"
+    r"경향신문|서울신문|한겨레|동아일보|조선일보|중앙일보|국민일보|세계일보|오마이뉴스)\s*")
+
+
+def _fc_text(s: str, limit: int = 44) -> str:
+    """Fact-check row text safe for the caption font: no byline, no '·…—' (the
+    bundled fonts render them as tofu), ends cleanly."""
+    s = _FC_BYLINE.sub("", clean_text(s))
+    s = s.replace("·", ", ").replace("…", " ").replace("ㆍ", ", ").replace("—", "-").replace("~", "-")
+    s = re.sub(r"\s+", " ", s).strip(" ,")
+    return clip_sentence(s, limit, ell="..").rstrip(" ,·.")
+
+
+def _fc_dup(a: str, b: str) -> bool:
+    ta = set(re.findall(r"[가-힣]{2,}", a))
+    tb = set(re.findall(r"[가-힣]{2,}", b))
+    return bool(ta) and len(ta & tb) / len(ta) >= 0.6
+
+
 def make_factcheck(analysis, n_sources: int) -> list[dict]:
     """Rows for the fact-check card. `tag` = a short Hangul marker (emoji fonts
     aren't reliable in the caption font); `tone` picks the row colour."""
     rows: list[dict] = []
-    if analysis.facts:
-        rows.append({"tag": "사실", "tone": "ok",
-                     "text": clip_sentence(simplify(analysis.facts[0].text, limit=46), 46, ell="..")})
+    fact_t = _fc_text(simplify(analysis.facts[0].text, limit=54)) if analysis.facts else ""
+    if fact_t:
+        rows.append({"tag": "사실", "tone": "ok", "text": fact_t})
     if analysis.claims:
-        rows.append({"tag": "주장", "tone": "claim",
-                     "text": clip_sentence(analysis.claims[0].text, 34, ell="..")})
+        ct = _fc_text(analysis.claims[0].text)
+        if len(ct) >= 8 and not _fc_dup(ct, fact_t):
+            rows.append({"tag": "주장", "tone": "claim", "text": ct})
     if analysis.interpretations and analysis.interpretations[0].score > 0:
-        rows.append({"tag": "전망", "tone": "warn",
-                     "text": clip_sentence(analysis.interpretations[0].text, 34, ell="..")})
+        it = _fc_text(analysis.interpretations[0].text)
+        if len(it) >= 8 and not _fc_dup(it, fact_t):
+            rows.append({"tag": "전망", "tone": "warn", "text": it})
     rows.append({"tag": "확인", "tone": "info",
                  "text": f"{n_sources}개 매체 종합, 원문은 더보기란"})
     return rows[:4]
