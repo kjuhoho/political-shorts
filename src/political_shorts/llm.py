@@ -26,12 +26,13 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
     raise RuntimeError(f"no usable LLM provider configured (LLM_PROVIDER={provider!r})")
 
 
-# tried in order when LLM_MODEL is unset. `gemini-flash-latest` is an alias
-# Google keeps pointed at the current flash model, so it's the most portable;
-# the pinned ids are fallbacks in case the alias isn't visible to a given key.
+# tried in order when LLM_MODEL is unset. `gemini-flash-latest` is a portable
+# alias; the "lite" models carry far more free-tier capacity, so they come
+# before the in-demand full flash models — on a 404 (not visible to this key)
+# OR a sustained 503/"high demand" we just move to the next one.
 _GEMINI_MODELS = [
-    "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash",
-    "gemini-2.0-flash-001", "gemini-1.5-flash",
+    "gemini-flash-latest", "gemini-2.0-flash", "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash",
 ]
 
 
@@ -77,9 +78,9 @@ def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
                 time.sleep(3.0)               # transient capacity blip — one retry
                 continue
             break
-        if status == 404:
-            continue                          # model not visible to this key — try next
-        break                                # 403 / 400 / persistent 5xx -> stop
+        if status in (404, 429, 500, 503):
+            continue          # not visible / overloaded on this model — try the next
+        break                 # 403 / 400 -> key or request problem, stop
     raise RuntimeError(f"gemini call failed ({last_err})")
 
 
