@@ -66,6 +66,28 @@ def _spoken(text: str) -> str:
         t = (t[: cut + 1] if cut > len(t) * 0.4 else t).rstrip(" ,·") + "."
     return t
 
+
+# connective / particle tails that must not be the last thing on a caption card
+_CAP_TAIL = re.compile(
+    r"\s*[가-힣]{0,6}?(따르면|밝히며|말하며|라며|이라며|하며|면서|는데|지만|라고|"
+    r"이라고|대해|위해|통해|관련|둘러싸고|며|면|고|은|는|이|가|을|를|에|의|와|과|도|만|께|"
+    r"에서|으로|에게)$"
+)
+
+
+def _tidy_caption(narration: str, limit: int) -> str:
+    """A short on-screen caption from the (possibly long) spoken line that
+    ALWAYS ends cleanly — on a sentence end or a noun, never on '…따르면'."""
+    cap = clip_sentence(narration, limit, ell="").rstrip(" ,·.")
+    for _ in range(4):
+        if not cap or cap[-1] in "다요죠까네군!?.":
+            break
+        t = _CAP_TAIL.sub("", cap).rstrip(" ,·")
+        if t == cap or len(t) < max(6, limit * 0.35):
+            break
+        cap = t
+    return cap or clip_sentence(narration, limit, ell="")
+
 DISCLAIMER = (
     "이 영상은 공개된 언론 보도를 쉽게 풀어 정리한 개인 제작물입니다. "
     "인용·수치는 원문 확인이 필요하고, 해석·전망은 제작자 견해가 아니라 보도 내용을 옮긴 것입니다."
@@ -351,14 +373,16 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     # --- align the on-screen caption with what's actually being said, and
     #     number the content cards so the viewer can follow ("1." "2." ...) ---
     n = 0
+    cap_limit = 66 if llm_on else 48     # LLM lines are fuller; let the plate wrap
     for s in segments:
-        if s["role"] in ("hook", "outro", "factcheck"):
+        if s.pop("llm_caption", False):
+            pass                            # the LLM already gave a clean caption
+        elif s["role"] in ("hook", "outro", "factcheck"):
             s["caption"] = clip_sentence(s.get("caption", ""), 46, ell="..")
         elif s.get("narration"):
-            # caption mirrors the voice line; if it can't end on a full sentence
-            # inside the width, leave a clean phrase fragment (no dangling "..")
-            cap = clip_sentence(s["narration"], 48, ell="")
-            s["caption"] = cap.rstrip(" ,·.")
+            # caption mirrors the voice line; must END CLEANLY — never on a
+            # dangling connective ("…에 따르면", "…안다며", "…했지만")
+            s["caption"] = _tidy_caption(s["narration"], cap_limit)
         if s["role"] not in ("outro",):
             n += 1
             s["num"] = n

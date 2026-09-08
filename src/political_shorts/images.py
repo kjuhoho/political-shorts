@@ -48,15 +48,19 @@ MAX_PORTRAITS = 5                  # people faces per video (user wants portrait
 # verified: each Korean-Wikipedia page has a raster lead photo on Commons and no
 # single identifiable person as its subject. Shuffled per story (see
 # collect_images) so consecutive videos don't reuse the same 4 shots.
+# NOTE: bare "대법원"/"헌법재판소" resolve to the *US Supreme Court* / *Taiwan
+# Judicial Yuan* lead image on ko.wikipedia (generic concept articles), so they
+# are deliberately NOT here. Only titles whose ko-wiki lead image is a real
+# Korean raster photo belong in this pool.
 LOCATION_POOL = [
     "대한민국 국회의사당", "국회의사당역", "여의도", "여의도공원",
-    "광화문광장", "서울광장", "청계천", "대법원", "헌법재판소",
+    "광화문광장", "서울광장", "청계천",
     "서울특별시청", "경복궁", "숭례문", "국립중앙박물관", "북악산",
     "한강", "서울역",
 ]
 # frame-relevant establishing shots, tried before the shuffled general pool
 _FRAME_LOCATION = {
-    "scandal": ["대법원", "헌법재판소", "광화문광장"],
+    "scandal": ["광화문광장", "대한민국 국회의사당", "서울광장"],
     "vote": ["대한민국 국회의사당", "국회의사당역", "서울광장"],
     "clash": ["대한민국 국회의사당", "광화문광장", "서울특별시청"],
     "personnel": ["대한민국 국회의사당", "서울특별시청"],
