@@ -151,5 +151,23 @@
   "frame": "scandal",
   "remote_id": "BLOCKED_manual",
   "platform": "block"
+ },
+ {
+  "published_ts": 1788847306,
+  "signature": "관종 김민석 맹공 발버둥 송영길 존재감 철없는 한동훈 한동훈에",
+  "actor": "한동훈",
+  "headline": "김민석 \"철없는 관종\"·송영길 \"존재감 발버둥\"...한동훈에 맹공",
+  "frame": "generic",
+  "remote_id": "BLOCKED_manual",
+  "platform": "block"
+ },
+ {
+  "published_ts": 1788847306,
+  "signature": "관종 맹공 민주당 지도부 철없는 한동훈",
+  "actor": "한동훈",
+  "headline": "민주당 지도부, 한동훈 맹공...\"철없는 관종\"",
+  "frame": "generic",
+  "remote_id": "BLOCKED_manual",
+  "platform": "block"
  }
 ]
