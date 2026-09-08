@@ -59,17 +59,19 @@ _COMMONS_BLOCK = re.compile(
     r"생중계|live\b|뉴스|news|broadcast|briefing|press|기자회견|"
     r"이재명|윤석열|한동훈|조국|김건희|이준석|장동혁", re.I)
 
-# Pexels stock queries — generic, safe, never a named person.
+# Pexels stock queries — generic, safe, never a named person. Every term is
+# Korea/Seoul-anchored: bare "government building" / "courthouse" pull Western
+# (often Roman) architecture that looks wrong on a Korean politics short.
 _PEXELS_TERMS = {
-    "vote": ["parliament session", "government voting", "legislature chamber"],
-    "clash": ["parliament debate", "government building protest"],
-    "scandal": ["courthouse exterior", "law justice gavel", "court building"],
-    "personnel": ["government building", "office building government"],
-    "poll": ["city crowd walking", "people street korea", "opinion survey"],
-    "remark": ["press conference microphones", "podium speech press"],
+    "vote": ["korea national assembly", "seoul government building", "korea parliament"],
+    "clash": ["seoul national assembly", "korea government building"],
+    "scandal": ["seoul courthouse", "korea government building", "seoul city night"],
+    "personnel": ["seoul government building", "korea government office"],
+    "poll": ["seoul street crowd", "seoul people walking", "korea city street"],
+    "remark": ["korea press conference", "seoul podium press", "korea news briefing"],
 }
-_PEXELS_GENERIC = ["south korea seoul city", "korean flag waving",
-                   "government building", "national assembly", "city skyline asia"]
+_PEXELS_GENERIC = ["seoul south korea city", "korean flag waving",
+                   "seoul cityscape", "seoul street aerial", "seoul skyline night"]
 
 _S = requests.Session()
 _S.headers["User-Agent"] = UA
