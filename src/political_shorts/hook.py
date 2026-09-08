@@ -198,16 +198,24 @@ _QUOTE_HOOKS = {
     "generic": "\"{quote}\" 이 말에서 시작된 이슈, 정리했습니다.",
 }
 _QUOTE_RE = re.compile(r'["“‘\']([^"“”‘’\']{6,42})["”’\']')
+# a lead quote must be neutral: skip name-calling / hype so the hook never
+# opens with "'철없는 관종' 이 말에서 시작된…"
+_SLUR_QUOTE = ("관종", "철없", "발버둥", "빨갱이", "수구", "꼴통", "토착왜구", "내로남불",
+               "쓰레기", "머저리", "얼간이", "3류", "삼류", "듣보", "미친", "정신 나간",
+               "존재감", "약", "약 빤", "코미디", "개그", "치졸", "저질", "양아치")
 
 
 def _lead_quote(*texts: str) -> str:
-    """A short verbatim quote to lead the hook with, or '' — mirrors the
-    quote-led titles of the top-performing neutral news shorts."""
+    """A short, NEUTRAL verbatim quote to lead the hook with, or '' — mirrors the
+    quote-led titles of the top neutral news shorts (never a slur / jab)."""
     for t in texts:
         for m in _QUOTE_RE.finditer(clean_text(t)):
             q = m.group(1).strip(" .,")
-            if 6 <= len(q) <= 42 and not q.endswith(("기자", "특파원")):
-                return q
+            if not (6 <= len(q) <= 42) or q.endswith(("기자", "특파원")):
+                continue
+            if any(w in q for w in _SLUR_QUOTE):
+                continue
+            return q
     return ""
 
 

@@ -275,9 +275,17 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     sfx = summary_fact.text if summary_fact else ""
     hl_tokens = _tokens(headline) | _tokens(sfx)
 
+    # photo-caption sentences ("…귀엣말하고 있다", "…악수하는 모습",
+    # "[연합뉴스] …") leak in as "facts" — they describe a picture, not news.
+    _CAPTION_RE = re.compile(
+        r"(하고|되고|나누고|들으며|웃으며|서서|앉아)\s*있다\.?$|"
+        r"모습(이다|\.)?$|장면(이다|\.)?$|^\[[^\]]{1,20}\]|기념\s*(촬영|사진)")
+
     def _adds_new(text: str) -> bool:
         tt = _tokens(text)
         if not tt:
+            return False
+        if _CAPTION_RE.search(clean_text(text)):
             return False
         overlap = len(tt & hl_tokens) / len(tt)
         return overlap < 0.6 and len(tt - hl_tokens) >= 3
@@ -375,9 +383,13 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     n = 0
     cap_limit = 66 if llm_on else 48     # LLM lines are fuller; let the plate wrap
     for s in segments:
-        if s.pop("llm_caption", False):
-            pass                            # the LLM already gave a clean caption
-        elif s["role"] in ("hook", "outro", "factcheck"):
+        if s["role"] == "factcheck":
+            s["caption"] = clip_sentence(s.get("caption", "팩트체크"), 46, ell="..")
+        elif s["role"] in ("hook", "outro") and llm_on and s.get("narration"):
+            # the LLM rewrote the voice line — the caption must follow it, not
+            # the now-stale templated caption
+            s["caption"] = _tidy_caption(s["narration"], 46)
+        elif s["role"] in ("hook", "outro"):
             s["caption"] = clip_sentence(s.get("caption", ""), 46, ell="..")
         elif s.get("narration"):
             # caption mirrors the voice line; must END CLEANLY — never on a

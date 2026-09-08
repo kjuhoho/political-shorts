@@ -60,17 +60,21 @@ def test_valid_rewrite_is_applied(monkeypatch):
     assert out[2]["narration"].startswith("쟁점과 원문")
 
 
-def test_narration_and_caption_object_form(monkeypatch):
-    payload = json.dumps({
-        "hook": {"narration": "국회가 내년 나라 살림 계획을 확정했습니다. 무엇이 달라질까요.",
-                 "caption": "내년 예산안, 국회 통과"},
-        "what": {"narration": "여야가 막판까지 맞섰지만 결국 합의해 통과시켰습니다.",
-                 "caption": "여야 합의로 처리"},
-    })
+def test_tolerates_nested_and_cards_shapes(monkeypatch):
+    # a small model may echo {"cards":[{role,narration}]} or nest {narration:...}
+    payload = json.dumps({"cards": [
+        {"role": "hook", "narration": "국회가 내년 나라 살림 계획을 확정했습니다."},
+        {"role": "what", "narration": "여야가 막판까지 맞섰지만 결국 합의해 통과시켰습니다."},
+    ]})
     monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
     out = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
-    assert out[0]["caption"] == "내년 예산안, 국회 통과" and out[0]["llm_caption"] is True
-    assert out[1]["narration"].startswith("여야가 막판까지")
+    assert out[0]["narration"].startswith("국회가 내년")
+    assert "합의해 통과" in out[1]["narration"]
+
+    payload2 = json.dumps({"hook": {"narration": "쉽게 풀어 설명하면 이렇습니다."}})
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload2)
+    out2 = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    assert out2[0]["narration"] == "쉽게 풀어 설명하면 이렇습니다."
 
 
 def test_json_fence_is_stripped(monkeypatch):

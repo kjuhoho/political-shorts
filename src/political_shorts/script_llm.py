@@ -37,11 +37,9 @@ _SYSTEM = (
     "3) 쉬운 말, 짧은 문장. 전문용어는 한 번 풀어서 설명.\n"
     "4) 철저히 중립: 한쪽 편을 들지 말고 양쪽 입장을 같은 무게로. 비꼬거나 평가하지 말 것.\n"
     "5) 원문에 없는 사실·숫자·발언을 만들지 말 것. 확실하지 않으면 '~라고 밝혔습니다' 식으로 출처를 남길 것.\n"
-    "6) 각 카드의 narration은 주어진 글자 수(limit) 이내, 반드시 완성된 문장으로 끝낼 것.\n"
-    "7) 각 카드에 caption도 함께: 화면 자막용으로 25자 이내의 완결된 짧은 구절 "
-    "(조사·연결어미로 끝내지 말 것).\n"
-    "8) 출력은 JSON 객체 하나만. 형식: "
-    '{"role": {"narration": "...", "caption": "..."}, ...}'
+    "6) 각 카드는 주어진 글자 수(limit) 이내, 반드시 완성된 문장으로 끝낼 것 "
+    "(조사·연결어미 '…에 따르면 / …라며 / …했지만'으로 끝내지 말 것).\n"
+    "7) 출력은 JSON 객체 하나만. 키는 카드 role, 값은 새 내레이션 문자열."
 )
 
 
@@ -67,7 +65,7 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]]) -> str:
         f"[이 기사의 핵심 인물/주제] {meta.get('topic', '') or '(없음)'}\n\n"
         f"[다시 쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"
         "각 카드의 draft를 위 규칙대로 다시 써서 JSON으로만 답하세요. "
-        '예: {"hook":{"narration":"...","caption":"..."},"what":{"narration":"...","caption":"..."}}'
+        '예: {"hook":"새 내레이션...","what":"새 내레이션...","reaction":"...","outro":"..."}'
     )
 
 
@@ -75,30 +73,54 @@ def _norm(v: str) -> str:
     return re.sub(r"\s+", " ", v).strip()
 
 
-def _parse(raw: str) -> dict[str, dict[str, str]]:
-    """-> {role: {"narration": str, "caption": str}}  (caption optional)."""
+_ROLE_KEYS = {"hook", "summary", "what", "reaction", "factcheck", "outro"}
+
+
+def _parse(raw: str) -> dict[str, str]:
+    """-> {role: narration}. Tolerates the shapes a small model actually emits:
+    flat {"hook": "..."}, nested {"hook": {"narration": "..."}}, an echoed
+    {"cards": [{"role": "hook", "narration": "..."}]}, or a bare list of those.
+    """
     txt = raw.strip()
     if txt.startswith("```"):
         txt = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", txt).strip()
-    try:
-        obj = json.loads(txt)
-    except Exception:
-        m = re.search(r"\{.*\}", txt, re.S)
-        if not m:
-            return {}
+    obj = None
+    for cand in (txt, (re.search(r"[\{\[].*[\}\]]", txt, re.S) or [None])[0]):
+        if not cand:
+            continue
         try:
-            obj = json.loads(m.group(0))
+            obj = json.loads(cand)
+            break
         except Exception:
-            return {}
-    out: dict[str, dict[str, str]] = {}
-    for k, v in (obj.items() if isinstance(obj, dict) else []):
-        if isinstance(v, str) and v.strip():
-            out[str(k)] = {"narration": _norm(v)}
-        elif isinstance(v, dict) and str(v.get("narration", "")).strip():
-            row = {"narration": _norm(str(v["narration"]))}
-            if str(v.get("caption", "")).strip():
-                row["caption"] = _norm(str(v["caption"]))
-            out[str(k)] = row
+            continue
+    if obj is None:
+        return {}
+
+    def _text(v: Any) -> str:
+        if isinstance(v, str):
+            return _norm(v)
+        if isinstance(v, dict):
+            return _norm(str(v.get("narration") or v.get("text") or v.get("draft") or ""))
+        return ""
+
+    rows: list = []
+    if isinstance(obj, dict) and isinstance(obj.get("cards"), list):
+        rows = obj["cards"]
+    elif isinstance(obj, list):
+        rows = obj
+    out: dict[str, str] = {}
+    if rows:
+        for r in rows:
+            if isinstance(r, dict) and r.get("role") in _ROLE_KEYS:
+                t = _text(r)
+                if t:
+                    out[r["role"]] = t
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k) in _ROLE_KEYS:
+                t = _text(v)
+                if t:
+                    out[str(k)] = t
     return out
 
 
@@ -131,19 +153,14 @@ def rewrite_segments(
     cand = [dict(s) for s in segments]
     changed = 0
     for s in cand:
-        role = s.get("role")
-        row = new.get(role)
-        if not row:
+        narr = new.get(s.get("role", ""))
+        if not narr:
             continue
-        narr = row["narration"]
-        lim = _LLM_LIMIT.get(role, 80)
-        if not (6 <= len(narr) <= int(lim * 1.8)):
+        lim = _LLM_LIMIT.get(s["role"], 80)
+        if not (8 <= len(narr) <= int(lim * 1.8)):
             continue
         s["narration"] = narr
-        cap = row.get("caption", "")
-        if 4 <= len(cap) <= 40:
-            s["caption"] = cap
-            s["llm_caption"] = True          # script_gen keeps this as-is
+        s.pop("caption", None)               # re-derived cleanly in script_gen
         changed += 1
     if not changed:
         return segments
