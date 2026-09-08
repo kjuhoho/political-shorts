@@ -22,8 +22,8 @@ from .analyze import analyze
 from .config import Settings, settings
 from .db import cluster_articles, connect
 from .hook import (
-    detect_entities, detect_frame, make_factcheck, make_hook, make_title, simplify,
-    strip_wire_marks,
+    detect_entities, detect_frame, josa, make_factcheck, make_hook, make_title,
+    simplify, strip_wire_marks,
 )
 from .logging_setup import get_logger
 from .textutil import clean_text, clip_sentence, strip_byline, truncate
@@ -50,21 +50,33 @@ _NARR_CAP_LLM = {"hook": 58, "summary": 62, "what": 100, "reaction": 96,
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
+# a chunk of text ending on a Korean predicate ending or sentence punctuation
+_SENT_CHUNK = re.compile(r".+?(?:[다요죠까](?=[\s\"')\]]|$)|[.!?](?=\s|$))")
+_TRAIL_JUNK = re.compile(
+    r"[,·]?\s*[가-힣]{0,12}?(라며|하며|면서|는데|지만|따르면|밝히며|말하며|위해|대해|"
+    r"관해|향해|에서|으로|에게|께|와|과|에|을|를|은|는|이|가|의|도|만|고|며|면)$"
+)
 
 
 def _spoken(text: str) -> str:
-    """Clean a narration string so TTS reads it naturally: no '..'/'…' fragments,
-    always ends on a full sentence + proper punctuation."""
-    t = clean_text(text).rstrip(" ,·…")
-    t = t.replace("...", ".").replace("..", ".").replace(" .", ".").replace("…", "")
-    t = t.rstrip(" ,·")
+    """Return only the COMPLETE sentences of a narration line, joined and
+    punctuated — or '' if there isn't one clean sentence (the caller then drops
+    the card rather than voicing a fragment like '…참여한 곳이')."""
+    t = clean_text(text).replace("…", " ").replace("...", " ").replace("..", " ")
+    t = re.sub(r"\s+", " ", t).strip(" ,·.")
     if not t:
-        return t
-    if not t.endswith(_SENT_END):
-        # drop a trailing partial clause, else just close the sentence
-        cut = max(t.rfind("다 "), t.rfind("요 "), t.rfind(". "))
-        t = (t[: cut + 1] if cut > len(t) * 0.4 else t).rstrip(" ,·") + "."
-    return t
+        return ""
+    good = " ".join(m.group(0).strip() for m in _SENT_CHUNK.finditer(t)).strip()
+    good = re.sub(r"\s+([.!?])", r"\1", good).strip(" ,·")
+    if good and len(good) >= max(10, int(len(t) * 0.4)):
+        return good if good[-1] in ".!?" else good + "."
+    # no complete sentence — salvage only if a clause-drop leaves a real
+    # predicate ending; otherwise return '' so the caller drops the card.
+    t = _TRAIL_JUNK.sub("", t).strip(" ,·")
+    if len(t) >= 8 and (t[-1] in ".!?" or t.endswith(
+            ("다", "요", "죠", "까", "음", "됨", "함", "임", "것", "중"))):
+        return t if t[-1] in ".!?" else t + "."
+    return ""
 
 
 # connective / particle tails that must not be the last thing on a caption card
@@ -147,10 +159,26 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
             longest["narration"] = (" ".join(parts[:-1]).rstrip(" ,·") if len(parts) > 1
                                     else clip_sentence(t, int(len(t) * 0.8)))
 
-    # 4) final polish: every spoken line is a clean, complete sentence
+    # 4) final polish: every spoken line is a clean, complete sentence.
+    #    If trimming left a card with no complete sentence, drop it outright
+    #    (what/reaction are optional) rather than voice a fragment.
+    _ESSENTIAL = {"hook", "summary", "factcheck", "outro"}
+    kept: list[dict[str, Any]] = []
     for s in segments:
-        if s.get("narration"):
-            s["narration"] = _spoken(s["narration"])
+        if not s.get("narration"):
+            kept.append(s)
+            continue
+        clean = _spoken(s["narration"])
+        if clean:
+            s["narration"] = clean
+            kept.append(s)
+        elif s["role"] in _ESSENTIAL:
+            s["narration"] = _spoken(s["narration"] + " ") or clip_sentence(
+                s["narration"], _NARR_CAP.get(s["role"], 60)).rstrip(" ,·.") + "."
+            kept.append(s)
+        else:
+            log.info("dropped %s card — no clean sentence after trim", s["role"])
+    segments[:] = kept
     return segments
 
 
@@ -206,6 +234,10 @@ def _speaker(text: str) -> str:
     return m.group(1) if m else ""
 
 
+_LEFT = ("민주당", "더불어민주당", "조국혁신당", "진보당", "정의당", "야당", "야권")
+_RIGHT = ("국민의힘", "국힘", "개혁신당", "여당", "여권")
+
+
 def _side_key(text: str) -> str:
     for p in _PARTY_WORDS:
         if p in text:
@@ -213,32 +245,62 @@ def _side_key(text: str) -> str:
     return _speaker(text)
 
 
-_QUOTE_RE = re.compile(r"[\"'“”‘’]([^\"'“”‘’]{6,70})[\"'“”‘’]")
+def _lean_label(text: str) -> str:
+    """A concrete attribution for a reaction, never a vague '한쪽':
+    the party ('국민의힘'), the person ('조국'), or '' if neither."""
+    for p in _RIGHT:
+        if p in text:
+            return "국민의힘" if p in ("국힘",) else p
+    for p in _LEFT:
+        if p in text:
+            return "민주당" if p in ("더불어민주당",) else p
+    return _speaker(text)
 
 
-def _one_quote(text: str, limit: int = 46) -> str:
-    """The core of what someone said, ending cleanly (prefer the quoted span)."""
-    m = _QUOTE_RE.search(text)
-    core = m.group(1) if m else clean_text(text)
-    return clip_sentence(core, limit).rstrip(" .…")
+_QUOTE_RE = re.compile(r"[\"'“”‘’]([^\"'“”‘’]{4,70})[\"'“”‘’]")
+_ATTRIB_TAIL = re.compile(
+    r"\s*(?:라고|이라고|라며|이라며|고|며)\s*"
+    r"(?:말했다|밝혔다|주장했다|지적했다|반박했다|강조했다|설명했다|촉구했다|비판했다|덧붙였다|전했다)\.?$")
+_LEAD_NAME = re.compile(r"^[가-힣]{2,4}(?:\s?의원|\s?대표|\s?장관|\s?수석|\s?측)?\s*(?:은|는|이|가)\s+")
+
+
+def _one_quote(text: str, limit: int = 44) -> tuple[str, bool]:
+    """(core of what someone said, was_it_a_real_quoted_span).
+    Prefers the quoted span; else the sentence minus its '…라고 밝혔다' tail."""
+    t = clean_text(text)
+    m = _QUOTE_RE.search(t)
+    if m:
+        return clip_sentence(m.group(1), limit).rstrip(" .,…\"'"), True
+    core = _LEAD_NAME.sub("", _ATTRIB_TAIL.sub("", t))
+    return clip_sentence(core, limit).rstrip(" .,…\"'"), False
 
 
 def _reaction_line(claims: list) -> str:
-    """A 'who said what' line — framed as two sides only when the two quotes
-    genuinely come from different actors AND both clip to a usable sentence."""
+    """A 'who said what' line — ALWAYS name who: the party, the person, or
+    (when neither is identifiable) frame it as online / public reaction.
+    Never a faceless '한쪽 / 다른 쪽'."""
     if not claims:
         return ""
     a = claims[0]
-    ka = _side_key(a.text)
-    c0 = _one_quote(a.text)
-    if len(c0) < 8:
+    la = _lean_label(a.text)
+    c0, q0 = _one_quote(a.text)
+    if len(c0) < 5 or len(c0) > 48:
         return ""
-    b = next((c for c in claims[1:]
-              if _side_key(c.text) and _side_key(c.text) != ka), None)
-    c1 = _one_quote(b.text) if b else ""
-    if len(c1) >= 10:
-        return f"한쪽은 이렇게 말합니다. {c0}. 다른 쪽은 이렇게 맞섭니다. {c1}."
-    return f"이런 말이 나왔습니다. {c0}. 반대편 반응은 아직 나오지 않았습니다."
+    b = next((c for c in claims[1:] if _lean_label(c.text) != la), None)
+    c1, q1 = _one_quote(b.text) if b else ("", False)
+    lb = _lean_label(b.text) if b else ""
+    ok1 = 5 <= len(c1) <= 48
+    if la and lb and ok1:
+        return f'{josa(la, ("은", "는"))} "{c0}", {josa(lb, ("은", "는"))} "{c1}" 입장입니다.'
+    if la and ok1:
+        return f'{josa(la, ("은", "는"))} "{c0}"라고 밝혔고, 반론도 나옵니다.'
+    if la:
+        return f'{josa(la, ("은", "는"))} "{c0}"라는 입장입니다.'
+    if not q0:                       # no party AND not a real quote — skip it
+        return ""
+    if ok1:
+        return f'온라인에서는 "{c0}"라는 반응과 반대 목소리가 함께 나옵니다.'
+    return f'온라인에서는 "{c0}"라는 반응이 나옵니다.'
 
 
 def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]:
