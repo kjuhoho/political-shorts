@@ -139,6 +139,12 @@ def detect_frame(*texts: str) -> Frame:
         if len(hits) > best_score:
             best_score = len(hits)
             best = Frame(kind, hits)
+    # "personnel" lumps resignation and APPOINTMENT together, but the templates
+    # assume someone stepped down ("물러났다/왜?"). Split them: a nomination
+    # story with no resignation word is its own frame.
+    if best.kind == "personnel" and re.search(r"지명|임명|발탁|내정|후보에|낙점|인선", text) \
+            and not re.search(r"사퇴|사임|경질|물러|하차|낙마|해임|사의|자진", text):
+        return Frame("appoint", best.hits)
     return best
 
 
@@ -172,6 +178,11 @@ HOOKS: dict[str, list[str]] = {
         "{a_neun} 왜 갑자기 자리에서 내려왔을까요?",
         "{a_ga} 물러났습니다. 무슨 일이 있었던 걸까요?",
         "{a_ui} 교체, 그 배경을 짚어봤습니다.",
+    ],
+    "appoint": [
+        "{a_ga} 이 자리에 발탁됐습니다. 어떤 인물일까요?",
+        "새 인선, {a_neun} 왜 낙점됐을까요?",
+        "{a_ui} 지명, 무엇을 노린 인사인지 짚어봤습니다.",
     ],
     "clash": [
         "{a_reul} 둘러싼 공방, 무엇이 쟁점인지 짚어봤습니다.",
@@ -274,8 +285,17 @@ def issue_word(headline: str, *more: str) -> str:
 _TITLE_RE = re.compile(
     r"([가-힣]{2,4})\s*(?:청와대|대통령실|신임|전|前)?\s*"
     r"(대통령|국무총리|부총리|장관|차관|정책실장|비서실장|안보실장|수석|대변인|"
-    r"원내대표|당대표|위원장|의원|청장|총장|처장|본부장|사장|회장|시장|지사)"
+    r"원내대표|당대표|위원장|의원|청장|총장|처장|본부장|사장|회장|시장|지사|"
+    r"변호사|교수|재판관|대법관|헌법재판관)"
 )
+# name right before an appointment verb: "…후보에 김지용 변호사 지명"
+_NOMINEE_RE = re.compile(
+    r"([가-힣]{2,4})\s*(?:변호사|교수|전\s*[가-힣]{2,4}|후보자?)?\s*"
+    r"(?:를|을|에)?\s*(?:지명|발탁|내정|낙점|임명)"
+)
+# a "{X}청장/처장/총장" where X is an agency abbrev, not a person
+_ORG_PREFIX = {"중수", "국세", "관세", "경찰", "소방", "산림", "특허", "조달", "통계",
+               "기상", "병무", "해경", "검찰", "감사", "국정", "선관", "방사", "질병"}
 
 # snappy second line — short, keeps the open loop, no hype
 HOOK_TAIL = [
@@ -310,10 +330,16 @@ def pick_actor(headline: str, entities: Entities, frame: Frame) -> str:
     tgt = attack_target(headline)
     if tgt:
         return tgt
-    if frame.kind in ("personnel", "remark", "clash"):
-        m = _TITLE_RE.search(h)
-        if m:
+    if frame.kind == "appoint":
+        m = _NOMINEE_RE.search(h)
+        if m and m.group(1) not in _ORG_PREFIX:
             return m.group(1)
+    if frame.kind in ("personnel", "appoint", "remark", "clash"):
+        # first name+title match whose "name" isn't actually part of an agency
+        # name ("중수청장" -> 중수, "국세청장" -> 국세). "김지용 변호사 지명" wins.
+        for m in _TITLE_RE.finditer(h):
+            if m.group(1) not in _ORG_PREFIX:
+                return m.group(1)
     # the politician named EARLIEST in the headline is the subject — not just the
     # first one that happens to sort first in the lexicon (that picked 이재명 for
     # a "조국 '이재명 유죄 가능성' 발언" headline).
@@ -365,6 +391,9 @@ _TITLE_TMPL = {
     "personnel": [("{actor} 물러났다", "왜?"),
                   ("{actor} 사퇴", "무슨 일?"),
                   ("{actor} 교체", "이유는")],
+    "appoint": [("{actor} 발탁", "누구?"),
+                ("{actor} 지명", "왜 이 사람?"),
+                ("새 인선 카드", "노림수는?")],
     # every clash line is anchored on {actor} (the person under scrutiny) so an
     # "A criticises B" headline can never leak A's name into the title via the
     # free-text {issue} slot — see test_attack_headline_reframed_neutrally.

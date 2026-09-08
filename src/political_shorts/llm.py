@@ -59,7 +59,7 @@ def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         status = None
         for attempt in range(2):
-            r = requests.post(url, params={"key": key}, json=body, timeout=40)
+            r = requests.post(url, params={"key": key}, json=body, timeout=(10, 75))
             status = r.status_code
             if status == 200:
                 data = r.json()

@@ -173,18 +173,21 @@ def rewrite_segments(
     payload = _payload(meta, spoken)
     new: dict[str, str] = {}
     title: list[str] = []
-    for attempt in range(2):                 # one retry — a re-gen usually parses
+    last_exc = ""
+    for attempt in range(3):                 # retry timeouts / unparseable re-gens
         try:
             raw = complete(payload, cfg, max_tokens=1400, system=_SYSTEM)
         except Exception as exc:  # pragma: no cover - network dependent
-            log.warning("llm narration rewrite skipped: %s", exc)
-            return segments, []
+            last_exc = str(exc)
+            log.info("llm rewrite: call %d failed (%s), retrying", attempt + 1, last_exc[:80])
+            continue
         new, title = _parse(raw)
         if new:
             break
         log.info("llm rewrite: response %d unparseable, retrying", attempt + 1)
     if not new:
-        log.warning("llm rewrite: unparseable response, keeping template")
+        log.warning("llm rewrite: gave up after retries (%s) — keeping template",
+                    last_exc or "unparseable")
         return segments, []
 
     # apply — only where the model returned a sane narration for a card we have
