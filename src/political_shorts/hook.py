@@ -462,13 +462,26 @@ _FC_BYLINE = re.compile(
     r"경향신문|서울신문|한겨레|동아일보|조선일보|중앙일보|국민일보|세계일보|오마이뉴스)\s*")
 
 
+_FC_TAIL = re.compile(
+    r"[,·(]?\s*[가-힣]{0,10}?(라며|하며|밝히며|말하며|면서|는데|지만|따르면|위해|대해|"
+    r"관해|향해|바탕으로|통해|이라고|라고|와|과|고|며|면|은|는|이|가|을|를|에|의|도|만)$")
+
+
 def _fc_text(s: str, limit: int = 44) -> str:
     """Fact-check row text safe for the caption font: no byline, no '·…—' (the
-    bundled fonts render them as tofu), ends cleanly."""
+    bundled fonts render them as tofu), ends on a noun/predicate — not '…따뜻하고'."""
     s = _FC_BYLINE.sub("", clean_text(s))
     s = s.replace("·", ", ").replace("…", " ").replace("ㆍ", ", ").replace("—", "-").replace("~", "-")
     s = re.sub(r"\s+", " ", s).strip(" ,")
-    return clip_sentence(s, limit, ell="..").rstrip(" ,·.")
+    s = clip_sentence(s, limit, ell="").rstrip(" ,·.\"'()")
+    for _ in range(4):
+        if not s or s[-1] in "다요죠까)":
+            break
+        t = _FC_TAIL.sub("", s).rstrip(" ,·(")
+        if t == s or len(t) < 8:
+            break
+        s = t
+    return s
 
 
 def _fc_dup(a: str, b: str) -> bool:

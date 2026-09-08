@@ -46,7 +46,7 @@ _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 _NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
              "factcheck": 74, "outro": 0}
 _NARR_CAP_LLM = {"hook": 58, "summary": 62, "what": 100, "reaction": 96,
-                 "factcheck": 84, "outro": 50}
+                 "factcheck": 84, "outro": 66}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
