@@ -359,28 +359,30 @@ def make_hook(headline: str, entities: Entities, frame: Frame, style: str = "pun
 # --------------------------------------------------------------------------- #
 # Line 1 = the subject.  Line 2 = a NEUTRAL open loop (no 발칵/충격/아웃).
 # Mirrors "…재조명 / 무슨 일 / 되짚어봤습니다" endings of top neutral news shorts.
+# line 1 = the concrete subject, line 2 = a curiosity hook that makes the
+# thumbnail worth a tap (no 충격/발칵 hype, no slur, no false certainty).
 _TITLE_TMPL = {
-    "personnel": [("{actor} 사퇴", "무슨 일인가"),
-                  ("{actor} 왜 물러났나", "배경 정리"),
-                  ("{actor} 교체", "그 이유는")],
+    "personnel": [("{actor} 물러났다", "왜?"),
+                  ("{actor} 사퇴", "무슨 일?"),
+                  ("{actor} 교체", "이유는")],
     # every clash line is anchored on {actor} (the person under scrutiny) so an
     # "A criticises B" headline can never leak A's name into the title via the
     # free-text {issue} slot — see test_attack_headline_reframed_neutrally.
-    "clash": [("{actor} 관련 공방", "무엇이 쟁점인가"),
-              ("{actor} 둘러싼 공방", "쟁점 정리"),
+    "clash": [("{actor} 정면 공방", "쟁점은?"),
+              ("{actor} 둘러싼 논쟁", "무엇이 진짜?"),
               ("{actor} '{issueword}' 논란", "사실은?")],
-    "scandal": [("'{issue}' 논란", "어디까지 사실인가"),
-                ("{actor} 의혹", "쟁점 정리"),
-                ("'{issue}'", "핵심만 정리")],
-    "vote": [("'{issue}' {result}", "무엇이 달라지나"),
+    "scandal": [("'{issue}' 의혹", "어디까지 사실?"),
+                ("{actor} 겨눈 의혹", "쟁점 정리"),
+                ("'{issue}'", "진짜 문제는")],
+    "vote": [("'{issue}' {result}", "뭐가 바뀌나"),
              ("'{issue}' {result}", "쉽게 정리"),
-             ("국회 통과 법안", "핵심 3가지")],
-    "poll": [("{actor} 지지율 변화", "숫자로 보기"),
+             ("이 법안 통과", "내 삶엔?")],
+    "poll": [("{actor} 지지율 요동", "숫자로 보면"),
              ("여론조사 결과", "무엇을 읽나")],
-    "remark": [("{actor} 발언", "왜 파장인가"),
-               ("이 한마디", "무슨 뜻이었나")],
-    "generic": [("오늘의 정치 이슈", "핵심만"),
-                ("지금 이 이슈", "30초 정리")],
+    "remark": [("{actor} 이 한마디", "왜 파장?"),
+               ("문제의 발언", "무슨 뜻이었나")],
+    "generic": [("이 소식 왜 화제?", "30초 정리"),
+                ("지금 이 이슈", "핵심만 콕")],
 }
 
 

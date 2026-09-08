@@ -19,6 +19,7 @@ from typing import Any
 
 from .config import Settings
 from .logging_setup import get_logger
+from .textutil import clean_text
 
 log = get_logger("script_llm")
 
@@ -43,7 +44,12 @@ _SYSTEM = (
     "7) 각 카드는 주어진 글자 수(limit) 이내. 한 문장은 40자 안팎에서 끊어 1~2문장으로 "
     "쓰고, 모든 문장을 '~습니다 / ~합니다 / ~됩니다'처럼 완결형 종결어미로 끝낼 것. "
     "절대 조사·연결어미('…에 따르면 / …라며 / …했지만 / …곳이 / …가운데')로 끝내지 말 것.\n"
-    "8) 출력은 JSON 객체 하나만. 키는 카드 role, 값은 새 내레이션 문자열. "
+    "8) title도 함께: 영상 내내 화면에 박히는 2줄 제목. 1줄은 이 영상의 핵심 "
+    "대상(인물·기관·숫자·쟁점)을 구체적으로, 2줄은 클릭하고 싶게 만드는 궁금증 "
+    "한 마디('왜?', '무슨 일?', '진짜일까?', '이유는', '판정은'). 각 줄 13자 "
+    "이내, 원문에 있는 사실만, 비하·단정·과장('충격/발칵') 금지. 내용과 반드시 일치.\n"
+    "9) 출력은 JSON 객체 하나만. 형식: "
+    '{"title": ["1줄", "2줄"], "hook": "새 내레이션", "what": "...", ...}. '
     "문자열 안에서 인용이 필요하면 반드시 홑따옴표(')만 쓸 것(겹따옴표 금지)."
 )
 
@@ -69,8 +75,10 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]]) -> str:
         f"[등장 인물·정당] {who}\n"
         f"[이 기사의 핵심 인물/주제] {meta.get('topic', '') or '(없음)'}\n\n"
         f"[다시 쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"
-        "각 카드의 draft를 위 규칙대로 다시 써서 JSON으로만 답하세요. "
-        '예: {"hook":"새 내레이션...","what":"새 내레이션...","reaction":"...","outro":"..."}'
+        "각 카드의 draft를 규칙대로 다시 쓰고, 눈길을 끄는 2줄 title도 지어 "
+        "JSON으로만 답하세요. "
+        '예: {"title":["김성수 후보 처남 전세","특혜 맞나?"],'
+        '"hook":"새 내레이션...","what":"...","reaction":"...","outro":"..."}'
     )
 
 
@@ -81,10 +89,20 @@ def _norm(v: str) -> str:
 _ROLE_KEYS = {"hook", "summary", "what", "reaction", "factcheck", "outro"}
 
 
-def _parse(raw: str) -> dict[str, str]:
-    """-> {role: narration}. Tolerates the shapes a small model actually emits:
-    flat {"hook": "..."}, nested {"hook": {"narration": "..."}}, an echoed
-    {"cards": [{"role": "hook", "narration": "..."}]}, or a bare list of those.
+def _title_lines(v: Any) -> list[str]:
+    if isinstance(v, str):
+        v = re.split(r"\s*[/|·\n]\s*", v)
+    if not isinstance(v, list):
+        return []
+    out = [_norm(str(x)).strip('"\'“”·.') for x in v if str(x).strip()]
+    out = [x for x in out if 1 <= len(x) <= 18][:2]
+    return out if len(out) == 2 else []
+
+
+def _parse(raw: str) -> tuple[dict[str, str], list[str]]:
+    """-> ({role: narration}, [title_line1, title_line2]). Tolerates the shapes a
+    small model actually emits: flat {"hook": "..."}, nested
+    {"hook": {"narration": "..."}}, an echoed {"cards": [...]}, or a bare list.
     """
     txt = raw.strip()
     if txt.startswith("```"):
@@ -107,7 +125,8 @@ def _parse(raw: str) -> dict[str, str]:
         except Exception:
             continue
     if obj is None:
-        return {}
+        return {}, []
+    title = _title_lines(obj.get("title")) if isinstance(obj, dict) else []
 
     def _text(v: Any) -> str:
         if isinstance(v, str):
@@ -134,38 +153,39 @@ def _parse(raw: str) -> dict[str, str]:
                 t = _text(v)
                 if t:
                     out[str(k)] = t
-    return out
+    return out, title
 
 
 def rewrite_segments(
     segments: list[dict[str, Any]], meta: dict[str, Any], cfg: Settings,
     base_script: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Return `segments` with spoken narration rewritten by the LLM, or the
-    unchanged input on any problem."""
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """(`segments` with narration rewritten by the LLM, a punchy 2-line title)
+    — or (unchanged input, []) on any problem."""
     provider = (getattr(cfg, "llm_provider", "") or "").strip()
     if not provider:
-        return segments
+        return segments, []
     spoken = [s for s in segments if s.get("role") in _LLM_LIMIT and s.get("narration")]
     if not spoken:
-        return segments
+        return segments, []
 
     from .llm import complete
     payload = _payload(meta, spoken)
     new: dict[str, str] = {}
+    title: list[str] = []
     for attempt in range(2):                 # one retry — a re-gen usually parses
         try:
             raw = complete(payload, cfg, max_tokens=1400, system=_SYSTEM)
         except Exception as exc:  # pragma: no cover - network dependent
             log.warning("llm narration rewrite skipped: %s", exc)
-            return segments
-        new = _parse(raw)
+            return segments, []
+        new, title = _parse(raw)
         if new:
             break
         log.info("llm rewrite: response %d unparseable, retrying", attempt + 1)
     if not new:
         log.warning("llm rewrite: unparseable response, keeping template")
-        return segments
+        return segments, []
 
     # apply — only where the model returned a sane narration for a card we have
     cand = [dict(s) for s in segments]
@@ -181,7 +201,17 @@ def rewrite_segments(
         s.pop("caption", None)               # re-derived cleanly in script_gen
         changed += 1
     if not changed:
-        return segments
+        return segments, []
+
+    # title must MATCH the content: a 2+ char token of line 1 has to appear in
+    # the headline or the rewritten narration, else drop it (template fallback).
+    if title:
+        body = clean_text(base_script.get("headline", "") if base_script else "") + " " + \
+               " ".join(s.get("narration", "") for s in cand)
+        toks = [w for w in re.findall(r"[가-힣]{2,}|[0-9]{2,}", title[0]) if len(w) >= 2]
+        if toks and not any(w in body for w in toks):
+            log.info("llm title %r doesn't match content — using template", " / ".join(title))
+            title = []
 
     # safety gate — DIFFERENTIAL: reject only if the rewrite adds a block that
     # the templated version didn't already have (structural blocks like a
@@ -198,10 +228,10 @@ def rewrite_segments(
         if added:
             log.warning("llm rewrite introduces safety block(s) %s — keeping template",
                         "; ".join(sorted(added))[:140])
-            return segments
+            return segments, []
     except Exception as exc:  # pragma: no cover
         log.warning("llm rewrite: safety check errored (%s) — keeping template", exc)
-        return segments
+        return segments, []
 
     log.info("llm narration rewrite: %d/%d cards via %s", changed, len(spoken), provider)
-    return cand
+    return cand, title

@@ -415,6 +415,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     #     lay-friendly explanation that flows card to card. Falls back silently
     #     to the templated lines on any problem; every fact still traces to the
     #     source and the result must pass safety.review_script.
+    llm_title: list[str] = []
     llm_on = bool((getattr(cfg, "llm_provider", "") or "").strip())
     if llm_on:
         try:
@@ -431,7 +432,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                              "parties": entities.parties},
                 "topic": _pick_actor(headline, entities, frame),
             }
-            segments = rewrite_segments(
+            segments, llm_title = rewrite_segments(
                 segments, meta, cfg,
                 base_script={
                     "headline": headline, "frame": frame.kind,
@@ -441,7 +442,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                                  "parties": entities.parties,
                                  "institutions": entities.institutions},
                 },
-            ) or segments
+            )
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("llm rewrite errored, using template: %s", exc)
 
@@ -474,7 +475,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             s["num"] = n
 
     est_seconds = round(sum(_seg_seconds(s) for s in segments), 1)
-    title = [_glyph_safe(t) for t in make_title(headline, entities, frame)]
+    title = [_glyph_safe(t)[:14] for t in (llm_title or make_title(headline, entities, frame))]
     from .hook import pick_actor as _pa
     topic = _pa(headline, entities, frame)
 

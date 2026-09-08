@@ -39,11 +39,17 @@ def _cfg(**kw):
     return dataclasses.replace(settings, llm_provider="gemini", gemini_api_key="k", **kw)
 
 
+def _rw(*a, **k):
+    """rewrite_segments now returns (segments, title); tests want the segments."""
+    segs, _title = script_llm.rewrite_segments(*a, **k)
+    return segs
+
+
 def test_no_provider_is_a_noop(monkeypatch):
     calls = []
     monkeypatch.setattr(llm, "complete", lambda *a, **k: calls.append(1) or "{}")
     segs = _segs()
-    out = script_llm.rewrite_segments(segs, META, settings, BASE)   # provider ""
+    out = _rw(segs, META, settings, BASE)   # provider ""
     assert out == segs and calls == []
 
 
@@ -54,7 +60,7 @@ def test_valid_rewrite_is_applied(monkeypatch):
         "outro": "쟁점과 원문은 더보기란에 정리해 뒀습니다.",
     })
     monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
-    out = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    out = _rw(_segs(), META, _cfg(), BASE)
     assert out[0]["narration"].startswith("국회가 내년")
     assert "합의해 예산안을 통과" in out[1]["narration"]
     assert out[2]["narration"].startswith("쟁점과 원문")
@@ -67,27 +73,27 @@ def test_tolerates_nested_and_cards_shapes(monkeypatch):
         {"role": "what", "narration": "여야가 막판까지 맞섰지만 결국 합의해 통과시켰습니다."},
     ]})
     monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
-    out = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    out = _rw(_segs(), META, _cfg(), BASE)
     assert out[0]["narration"].startswith("국회가 내년")
     assert "합의해 통과" in out[1]["narration"]
 
     payload2 = json.dumps({"hook": {"narration": "쉽게 풀어 설명하면 이렇습니다."}})
     monkeypatch.setattr(llm, "complete", lambda *a, **k: payload2)
-    out2 = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    out2 = _rw(_segs(), META, _cfg(), BASE)
     assert out2[0]["narration"] == "쉽게 풀어 설명하면 이렇습니다."
 
 
 def test_json_fence_is_stripped(monkeypatch):
     payload = "```json\n" + json.dumps({"hook": "쉽게 풀어 설명하면 이렇습니다."}) + "\n```"
     monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
-    out = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    out = _rw(_segs(), META, _cfg(), BASE)
     assert out[0]["narration"] == "쉽게 풀어 설명하면 이렇습니다."
 
 
 def test_garbage_response_keeps_template(monkeypatch):
     monkeypatch.setattr(llm, "complete", lambda *a, **k: "sorry, I cannot help")
     segs = _segs()
-    assert script_llm.rewrite_segments(segs, META, _cfg(), BASE) == segs
+    assert _rw(segs, META, _cfg(), BASE) == segs
 
 
 def test_oversized_card_is_skipped_others_applied(monkeypatch):
@@ -96,7 +102,7 @@ def test_oversized_card_is_skipped_others_applied(monkeypatch):
         "what": "과도하게 긴 문장 " * 40,          # way over the cap -> skip this one
     })
     monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
-    out = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    out = _rw(_segs(), META, _cfg(), BASE)
     assert out[0]["narration"] == "짧고 자연스러운 새 훅 문장입니다."
     assert out[1]["narration"] == "여야가 합의해 통과시켰습니다."   # unchanged
 
@@ -107,7 +113,27 @@ def test_rewrite_that_adds_a_safety_block_is_rejected(monkeypatch):
     payload = json.dumps({"hook": "상대를 빨갱이라고 부르며 표결이 시작됐습니다."})
     monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
     segs = _segs()
-    assert script_llm.rewrite_segments(segs, META, _cfg(), BASE) == segs
+    assert _rw(segs, META, _cfg(), BASE) == segs
+
+
+def test_llm_title_used_when_it_matches_content(monkeypatch):
+    payload = json.dumps({
+        "title": ["예산안 국회 통과", "뭐가 바뀌나?"],
+        "hook": "국회가 내년 나라 살림 계획을 확정했습니다.",
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    _segsr, title = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    assert title == ["예산안 국회 통과", "뭐가 바뀌나?"]
+
+
+def test_llm_title_dropped_when_off_topic(monkeypatch):
+    payload = json.dumps({
+        "title": ["삼성전자 실적 발표", "충격?"],       # nothing to do with the story
+        "hook": "국회가 내년 나라 살림 계획을 확정했습니다.",
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    _segsr, title = script_llm.rewrite_segments(_segs(), META, _cfg(), BASE)
+    assert title == []
 
 
 def test_gemini_request_shape(monkeypatch):
