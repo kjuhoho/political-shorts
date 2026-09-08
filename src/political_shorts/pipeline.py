@@ -70,8 +70,27 @@ def _safe_slug(text: str, limit: int = 40) -> str:
     return (slug[:limit] or "story").lower()
 
 
+def _theme_saturated(conn, sig, actor: str, cfg: Settings) -> str:
+    """The story isn't a duplicate, but the channel just ran 2+ shorts on the
+    same actor/theme (e.g. a week of one saga). Return a reason to hold it back,
+    or '' to proceed. Bypassed on the no-fresh-story fallback pass."""
+    from .db import recent_topics
+    from .topics import signature_str
+
+    recent = recent_topics(conn, int(__import__("time").time()) - 3 * 86400)
+    words = set(signature_str(sig).split())
+    hits = 0
+    for r in list(recent)[:4]:
+        prev = set((r["signature"] or "").split())
+        if (actor and r["actor"] and r["actor"] == actor) or len(words & prev) >= 3:
+            hits += 1
+    return (f"최근 3일 영상 {hits}건과 주제·인물이 겹침 (다양성 확보)"
+            if hits >= 2 else "")
+
+
 def _process_story(
-    cluster_id: int, cfg: Settings, do_publish: bool, report: RunReport
+    cluster_id: int, cfg: Settings, do_publish: bool, report: RunReport,
+    enforce_variety: bool = True,
 ) -> StoryOutcome:
     out = StoryOutcome(cluster_id=cluster_id)
     try:
@@ -84,12 +103,14 @@ def _process_story(
         actor = str(script.get("topic") or "")
         with connect(cfg.db_path) as conn:
             is_dup, why = recent_duplicate(conn, sig, cfg, actor=actor)
-        if is_dup:
+            sat = _theme_saturated(conn, sig, actor, cfg) if (enforce_variety and not is_dup) else ""
+        if is_dup or sat:
             out.status = "skipped"
-            out.reason = f"이미 다룬 이슈 ({why})"
+            out.reason = f"이미 다룬 이슈 ({why})" if is_dup else sat
             with connect(cfg.db_path) as conn:
                 set_cluster_status(conn, cluster_id, "skipped")
-            log.info("cluster %d SKIPPED (duplicate topic): %s", cluster_id, why)
+            log.info("cluster %d SKIPPED (%s): %s", cluster_id,
+                     "duplicate" if is_dup else "topic variety", why or sat)
             return out
 
         safety = review_script(script, cfg)
@@ -223,6 +244,17 @@ def run_pipeline(
                     if report.built >= limit:
                         break
                     report.stories.append(_process_story(cid, cfg, do_publish, report))
+
+        # Still nothing — the variety filter may have held everything back
+        # (a week where every top story is one saga). Re-walk politics with it
+        # off so the channel always posts something.
+        if report.built == 0:
+            log.info("variety filter held back every story — re-walking politics without it")
+            for cid in cluster_ids:
+                if report.built >= limit:
+                    break
+                report.stories.append(
+                    _process_story(cid, cfg, do_publish, report, enforce_variety=False))
 
         report.skipped = sum(1 for s in report.stories if s.status == "skipped")
 
