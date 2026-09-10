@@ -618,9 +618,10 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         caps=_NARR_CAP_LLM if llm_on else _NARR_CAP,
     )
 
-    # --- Subtitle Script, SEPARATE from the narration. The voice reads the full
-    #     connected sentences; the screen shows ONE compressed key message per
-    #     card (subtitle.beat_caption), not a transcript. ---
+    # --- FULL-SCRIPT SUBTITLE: the on-screen caption IS the narration (the words
+    #     the voice is saying), verbatim — never compressed. It is split into
+    #     clean readable 2-3 line chunks per scene by scene.plan(). A separate
+    #     short `topic_label` (compressed) is kept for the persistent top bar. ---
     from . import subtitle as _sub
     n = 0
     for s in segments:
@@ -630,24 +631,23 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         elif s["role"] == "outro" and not nar:
             s["caption"] = _glyph_safe(clip_sentence(s.get("caption", "구독과 좋아요"), 46, ell=".."))
         elif nar:
-            s["caption"] = _glyph_safe(
-                s.get("_llm_sub")                       # LLM-written key message
-                or _sub.beat_caption(nar, s["role"],
-                                     fallback=s.get("kicker") or _actor or "오늘의 이슈"))
+            s["caption"] = nar                          # subtitle == the spoken words
         s["narration"] = nar
+        # short label for the top bar (LLM writes a tighter one when available)
+        if nar and s["role"] not in ("factcheck", "outro"):
+            s["topic_label"] = _glyph_safe(
+                s.get("_llm_sub")
+                or _sub.topic_label(nar, s["role"],
+                                    fallback=s.get("kicker") or _actor or "오늘의 이슈"))
         if s["role"] not in ("outro",):
             n += 1
             s["num"] = n
 
-    # --- one sentence per card, so the caption and the voice stay in lockstep.
-    #     (a 2-sentence 'what' card used to show only sentence 1 while the voice
-    #     read sentence 2 with no caption.) fact-check / caption-only cards and
-    #     already-single-sentence cards pass through unchanged. ---
+    # --- one sentence per card (voice/subtitle lockstep) ---
     segments = _split_by_sentence(segments)
 
-    # --- Scene Duration Controller: no frame sits static for long. Split any
-    #     scene over ~3.5s at a clause / event-change boundary and attach a
-    #     per-scene visual plan (camera move + transition + emphasis). ---
+    # --- Scene Duration Controller: one clean readable subtitle chunk per scene,
+    #     each held long enough to read; per-scene camera move + transition. ---
     from .scene import plan as _plan_scenes
     segments = _plan_scenes(segments)
 

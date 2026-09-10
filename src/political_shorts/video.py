@@ -263,19 +263,25 @@ def _overlay_png(
                 _text_stroke(draw, (tx, y + 2 + k * 52), ln, f_row, (*FG, 255), 3, (*STROKE_DARK, 220))
             y += 70 + 52 * len(wrapped)
     else:
-        # Big, CENTERED caption on a rounded dark plate — the look of
-        # high-view Korean news/issue shorts (auto-caption style).
+        # FULL-SCRIPT SUBTITLE — the words the voice is saying, verbatim, on a
+        # rounded dark plate. Large + high contrast + generous line spacing so
+        # any age reads it comfortably; hard floor on the size, max 3 lines.
         cap = seg.get("caption", "")
         clen = len(cap)
-        # bigger than before — high-view shorts run large captions
-        bsize = (94 if clen <= 18 else 86 if clen <= 30 else 74 if clen <= 44
-                 else 62 if clen <= 64 else 52)
+        bsize = (92 if clen <= 14 else 84 if clen <= 24 else 76 if clen <= 34
+                 else 68 if clen <= 46 else 62)
         f_body = _font(cfg.font_body or cfg.font_bold_path, bsize)
         f_hot = _font(cfg.font_body or cfg.font_bold_path, int(bsize * 1.16))
-        lines = _wrap(draw, cap, f_body, int(w * 0.90))[:5]
-        lh = int(bsize * (1.30 if len(lines) <= 4 else 1.22))
+        lines = _wrap(draw, cap, f_body, int(w * 0.88))
+        while len(lines) > 3 and bsize > 52:            # shrink once to fit 3 lines
+            bsize -= 6
+            f_body = _font(cfg.font_body or cfg.font_bold_path, bsize)
+            f_hot = _font(cfg.font_body or cfg.font_bold_path, int(bsize * 1.16))
+            lines = _wrap(draw, cap, f_body, int(w * 0.88))
+        lines = lines[:3]
+        lh = int(bsize * 1.38)                          # generous line spacing
         block = lh * len(lines)
-        y0 = int(h * 0.47) - block // 2
+        y0 = int(h * 0.46) - block // 2
 
         def _lw(ln: str) -> float:
             parts = [t for t in ln.split(" ") if t]
@@ -744,7 +750,6 @@ def _segment_clip(
     else:
         vbg = f"[0:v]scale={w}:{h},setsar=1,fps={fps}[bg]"
 
-    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v]"
     cmd = [
         ffmpeg, "-y", "-loglevel", "error",
         "-loop", "1", "-i", str(base_img),
@@ -752,12 +757,16 @@ def _segment_clip(
     ]
     if nar.wav_path:
         cmd += ["-i", str(nar.wav_path)]
-        amap = ["-map", "2:a", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
+        # pad the narration with trailing silence so the audio always fills the
+        # clip even when it is held longer for subtitle read-time
+        afilt = "[2:a]aresample=48000,apad[a]"
     else:
         cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-        amap = ["-map", "2:a", "-c:a", "aac", "-b:a", "160k"]
+        afilt = "[2:a]apad[a]"
+    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v];{afilt}"
     cmd += [
-        "-filter_complex", filt, "-map", "[v]", *amap,
+        "-filter_complex", filt, "-map", "[v]", "-map", "[a]",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
         "-t", f"{duration:.3f}", "-r", str(fps),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
         str(out_mp4),
@@ -785,7 +794,6 @@ def _segment_video_clip(
         px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
     vbg = (f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=increase,"
            f"crop={w}:{h}:x='{px}':y='(ih-{h})/2',setsar=1,fps={fps}[bg]")
-    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v]"
 
     cmd = [
         ffmpeg, "-y", "-loglevel", "error",
@@ -794,12 +802,14 @@ def _segment_video_clip(
     ]
     if nar.wav_path:
         cmd += ["-i", str(nar.wav_path)]
-        amap = ["-map", "2:a", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
+        afilt = "[2:a]aresample=48000,apad[a]"
     else:
         cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-        amap = ["-map", "2:a", "-c:a", "aac", "-b:a", "160k"]
+        afilt = "[2:a]apad[a]"
+    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v];{afilt}"
     cmd += [
-        "-filter_complex", filt, "-map", "[v]", *amap,
+        "-filter_complex", filt, "-map", "[v]", "-map", "[a]",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
         "-t", f"{duration:.3f}", "-r", str(fps),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
         str(out_mp4),
@@ -941,7 +951,10 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                 duration = estimate_caption_seconds(seg.get("caption", ""), cfg)
             else:
                 duration = 1.5                       # caption-only end card
-            duration = max(duration, float(sc.get("min_s", 0.0)))   # no sub-1.5s flash
+            # the subtitle must stay on screen long enough to actually READ —
+            # this can extend a scene past the audio (per the full-script rule)
+            duration = max(duration, float(sc.get("min_read_s", 0.0)),
+                           float(sc.get("min_s", 0.0)))
             total_dur += duration
 
             clip = workdir / f"clip_{i:02d}.mp4"

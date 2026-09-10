@@ -1,15 +1,18 @@
-"""Subtitle Script — separate from the Narration Script.
+"""Subtitle & topic-label text.
 
-The voice reads the full, connected sentences (script_gen / script_llm). The
-screen does NOT echo them. `beat_caption()` returns ONE compressed 1-2 line key
-message for a whole card: drop the connective lead-in, the "…라고 밝혔습니다"
-reporting tail, hedges and parenthetical glosses; prefer the shortest COMPLETE
-informative sentence; only hard-trim as a last resort, and never end on a
-dangling particle. Figures / decisive words are kept in — the caption renderer
-draws those bigger and red.
+TWO distinct jobs:
 
-When an LLM is in the loop it writes a tighter `subtitle` per card
-(script_llm); this module is the always-available fallback.
+* `readable_chunks()` — the FULL-SCRIPT subtitle. The voice reads the whole
+  connected sentence; the screen shows the SAME words, never compressed, split
+  into clean readable chunks (2-3 lines each) at natural boundaries — a sentence
+  end, a comma, or a connective like "…꺼내면서" that reads fine as a line break.
+  A sentence with no clean seam stays whole; nothing is ever cut mid-word.
+
+* `beat_caption()` / `topic_label()` — a SHORT compressed key phrase for the
+  persistent top-bar label ("연임 개헌 논란"), NOT the on-screen subtitle. Drops
+  the connective lead-in, the "…라고 밝혔습니다" tail, hedges and parentheticals;
+  prefers the shortest complete informative sentence. LLM may supply a tighter
+  one (`script_llm`); this is the fallback.
 """
 from __future__ import annotations
 
@@ -61,6 +64,74 @@ _DECISIVE = re.compile(
 
 _CLAUSE = re.compile(r"(?<=[,·])\s+|(?<=[가-힣])(?:는데|지만|면서|으며|고서)\s+")
 _SENT = re.compile(r"(?<=[.!?])\s+|(?<=니다)\s+(?=[가-힣])|(?<=니다\.)\s+")
+
+# --------------------------------------------------------------------------- #
+# FULL-SCRIPT subtitle — clean readable chunks (no compression)
+# --------------------------------------------------------------------------- #
+_CHUNK_MAX = 40          # ~2-3 readable lines at the large caption size
+_CHUNK_MIN_TAIL = 8
+
+# where a subtitle line/chunk may break — best first. The break KEEPS the
+# connective on the line: "…꺼내면서" reads fine as a line end; "…물러나" does not.
+_CHUNK_BREAKS = (
+    re.compile(r"(?<=니다[.!?])\s+"),
+    re.compile(r"(?<=[.!?])\s+(?=[가-힣\"'“‘])"),
+    re.compile(r"(?<=[,])\s+"),
+    re.compile(r"(?<=면서)\s+"), re.compile(r"(?<=으며)\s+"),
+    re.compile(r"(?<=며)\s+(?=[가-힣])"),
+    re.compile(r"(?<=는데)\s+"), re.compile(r"(?<=지만)\s+"),
+    re.compile(r"(?<=고서)\s+"),
+    re.compile(r"(?<=고)\s+(?=[가-힣])"),
+    re.compile(r"(?<=면)\s+(?=[가-힣])"),
+)
+
+
+def _atoms(text: str) -> list[str]:
+    """Smallest clean clause pieces of `text` (split only at _CHUNK_BREAKS)."""
+    cuts = sorted({m.end() for rx in _CHUNK_BREAKS for m in rx.finditer(text)})
+    out: list[str] = []
+    prev = 0
+    for c in cuts:
+        piece = text[prev:c].strip()
+        if piece:
+            out.append(piece)
+        prev = c
+    tail = text[prev:].strip()
+    if tail:
+        out.append(tail)
+    return out or [text]
+
+
+def readable_chunks(text: str, budget: int = _CHUNK_MAX) -> list[str]:
+    """Full narration -> [chunk, ...], each a clean readable unit that fits ~2-3
+    lines. NEVER compresses or drops words, NEVER cuts mid-word: a clause with
+    no inner break stays whole even if it runs a little long."""
+    t = clean_text(text or "").strip()
+    if not t:
+        return []
+    if len(t) <= budget:
+        return [t]
+    chunks: list[str] = []
+    cur = ""
+    for a in _atoms(t):
+        cand = f"{cur} {a}".strip()
+        if not cur or len(cand) <= budget:
+            cur = cand
+        else:
+            chunks.append(cur)
+            cur = a
+    if cur:
+        if chunks and len(cur) < _CHUNK_MIN_TAIL:
+            chunks[-1] = f"{chunks[-1]} {cur}".strip()
+        else:
+            chunks.append(cur)
+    return chunks or [t]
+
+
+def read_seconds(text: str) -> float:
+    """How long a subtitle chunk needs to be on screen to be comfortably read
+    (a touch slower than the TTS rate, with a floor)."""
+    return max(1.6, len(clean_text(text or "")) / 6.2 + 0.6)
 
 
 def _score(s: str) -> float:
@@ -176,3 +247,9 @@ def valid_llm_subtitle(s: str) -> str:
     if re.search(r"(?:은|는|을|를|이|가|에|와|의|고|며|면서|라고|다고)$", s):
         return ""
     return s
+
+
+# semantic alias — the short compressed phrase is the TOP-BAR label now,
+# not the on-screen subtitle (that is `readable_chunks`).
+def topic_label(narration: str, role: str = "", fallback: str = "") -> str:
+    return beat_caption(narration, role, fallback)

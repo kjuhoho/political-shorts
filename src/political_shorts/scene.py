@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .subtitle import readable_chunks, read_seconds as _read_seconds
+from .subtitle import _CHUNK_MAX
 from .textutil import clean_text
 
 SCENE_MIN_S = 1.5
@@ -189,43 +191,43 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             scenes.append(sc)
             continue
 
-        # the hook is ONE punch beat — never clause-split it, even at ~4s.
+        # the hook is ONE beat — never split it.
         if role == "hook":
             sc = dict(seg)
+            sc["caption"] = nar                      # full text, verbatim
             sc["scene"] = {"emphasis": emphasis_of(nar), "hold_media": False,
-                           "min_s": SCENE_MIN_S, "max_s": SCENE_MAX_S,
+                           "min_s": SCENE_MIN_S, "max_s": SCENE_MAX_S + 1.0,
+                           "min_read_s": _read_seconds(nar),
                            "_punch": bool(_EMPH.match(nar))}
             sc["sub"] = 0
             scenes.append(sc)
             continue
 
-        # factcheck: the on-screen 사실/주장/전망 TABLE stays put, but the spoken
-        # explanation ("확인된 사실은 … 이게 무슨 뜻이냐면 …") is long — split it into
-        # a FEW longer beats (~4.5s, at most 4) so the same table isn't re-cut a
-        # dozen times.
-        cap_s = 4.6 if role == "factcheck" else SCENE_MAX_S
-        pieces = _merge_short(_split_long(nar, cap_s), ceil=cap_s + 0.7) or [nar]
+        # FULL-SCRIPT SUBTITLE: split the sentence into clean READABLE chunks
+        # (2-3 lines each) — never compressed, never cut mid-word. One chunk per
+        # scene; the caption IS the chunk (the words the voice is saying).
+        # factcheck keeps its 사실/주장/전망 table, so its chunks stay coarser.
+        budget = 56 if role == "factcheck" else _CHUNK_MAX
+        pieces = readable_chunks(nar, budget) or [nar]
         if role == "factcheck" and len(pieces) > 4:
-            head = pieces[:3]
-            head.append(" ".join(p.rstrip(" .·,") for p in pieces[3:]).strip())
-            pieces = head
+            pieces = pieces[:3] + [" ".join(p.rstrip(" .·,") for p in pieces[3:]).strip()]
         for j, piece in enumerate(pieces):
-            piece = _tidy(piece)
+            piece = re.sub(r"\s+", " ", piece).strip(" ·")
             if not piece:
                 continue
             sc = dict(seg)
             sc["narration"] = piece
-            # the caption is the card's ONE compressed key message (subtitle.py),
-            # NOT this spoken slice — inherited from `seg`, kept on every scene.
-            emph = emphasis_of(piece) or emphasis_of(sc.get("caption", ""))
+            if role != "factcheck":
+                sc["caption"] = piece               # subtitle == the spoken words
+            emph = emphasis_of(piece)
             sc["scene"] = {
                 "emphasis": emph,
-                "hold_media": j > 0,          # sub-scene keeps the same image
-                "min_s": SCENE_MIN_S, "max_s": SCENE_MAX_S,
-                # a scene that OPENS on a figure / decisive word gets the punch
+                "hold_media": j > 0,                 # continuation keeps the image
+                "min_s": SCENE_MIN_S, "max_s": SCENE_MAX_S + 1.5,
+                "min_read_s": _read_seconds(piece),  # subtitle must stay long enough to read
                 "_punch": bool(emph) and bool(_EMPH.match(piece)),
             }
-            if j:                       # only the first scene of a beat is chipped
+            if j:
                 sc["kicker"] = ""
                 sc.pop("num", None)
             sc["sub"] = j
