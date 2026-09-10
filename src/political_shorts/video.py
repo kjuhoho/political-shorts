@@ -13,6 +13,7 @@ No moviepy: Pillow + system ffmpeg only.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -164,6 +165,36 @@ def _text_stroke(draw, xy, text, font, fill, stroke_w, stroke_fill, anchor=None)
               stroke_fill=stroke_fill, anchor=anchor)
 
 
+# the "impact" bits of a caption — a figure or a decisive word — are drawn
+# bigger + in red so the eye lands on them (high-view shorts caption style).
+# NEVER a party / person name — that would read as partisan colour-coding.
+IMPACT_RED = (243, 61, 61)
+_IMPACT_TOKEN = re.compile(
+    r"^[\"'“‘(\[]?"
+    r"(?:\d[\d,.]*\s?%|\d[\d,.]*\s?(?:퍼센트|명|석|표|위|건|년|개월|억원|억|조원|조|만명|배|호|차)"
+    r"|과반|절반|첫|최초|사상처음|최대|최다|만장일치|전원|무산|부결|가결|통과|불발|철회|급증|급감|역대)"
+    r"[\"'”’)\]]?[,.!?]?$"
+)
+
+
+def _draw_caption_line(draw, cx: int, baseline: int, line: str,
+                       f_body, f_hot, stroke_w: int) -> None:
+    """One centred caption line; number / decisive-word tokens in bigger red."""
+    toks = [t for t in line.split(" ") if t]
+    if not toks:
+        return
+    sp = draw.textlength(" ", font=f_body)
+    fonts = [f_hot if _IMPACT_TOKEN.match(t) else f_body for t in toks]
+    widths = [draw.textlength(t, font=f) for t, f in zip(toks, fonts)]
+    x = cx - (sum(widths) + sp * (len(toks) - 1)) / 2
+    for t, f, tw in zip(toks, fonts, widths):
+        hot = f is f_hot
+        _text_stroke(draw, (x, baseline), t, f,
+                     (*IMPACT_RED, 255) if hot else (*FG, 255),
+                     stroke_w, (*STROKE_DARK, 245), anchor="ls")
+        x += tw + sp
+
+
 def _overlay_png(
     seg: dict[str, Any], idx: int, total: int, script: dict[str, Any], out_png: Path, cfg: Settings
 ) -> None:
@@ -236,24 +267,33 @@ def _overlay_png(
         # high-view Korean news/issue shorts (auto-caption style).
         cap = seg.get("caption", "")
         clen = len(cap)
-        bsize = 84 if clen <= 18 else 76 if clen <= 30 else 64 if clen <= 44 else 54
+        # bigger than before — high-view shorts run large captions
+        bsize = (94 if clen <= 18 else 86 if clen <= 30 else 74 if clen <= 44
+                 else 62 if clen <= 64 else 52)
         f_body = _font(cfg.font_body or cfg.font_bold_path, bsize)
-        lines = _wrap(draw, cap, f_body, int(w * 0.86))[:4]
-        lh = int(bsize * 1.32)
+        f_hot = _font(cfg.font_body or cfg.font_bold_path, int(bsize * 1.16))
+        lines = _wrap(draw, cap, f_body, int(w * 0.90))[:5]
+        lh = int(bsize * (1.30 if len(lines) <= 4 else 1.22))
         block = lh * len(lines)
         y0 = int(h * 0.47) - block // 2
-        widest = max((draw.textlength(ln, font=f_body) for ln in lines), default=0)
-        pad_x, pad_y = 40, 30
-        px0 = max(24, int(w / 2 - widest / 2) - pad_x)
+
+        def _lw(ln: str) -> float:
+            parts = [t for t in ln.split(" ") if t]
+            return (sum(draw.textlength(t, font=(f_hot if _IMPACT_TOKEN.match(t) else f_body))
+                        for t in parts)
+                    + draw.textlength(" ", font=f_body) * max(0, len(parts) - 1))
+
+        widest = max((_lw(ln) for ln in lines), default=0)
+        pad_x, pad_y = 44, 34
+        px0 = max(20, int(w / 2 - widest / 2) - pad_x)
         _round_rect(draw, [px0, y0 - pad_y, w - px0, y0 + block + pad_y - int(lh - bsize)],
-                    30, (8, 10, 16, 214))
+                    32, (8, 10, 16, 216))
         # a short accent tab centred above the plate
         draw.rectangle([int(w / 2 - 46), y0 - pad_y - 12, int(w / 2 + 46), y0 - pad_y - 4],
                        fill=(*accent, 255))
-        yy = y0
+        yy = y0 + int(bsize * 0.82)          # first baseline
         for ln in lines:
-            _text_stroke(draw, (int(w / 2), yy), ln, f_body, (*FG, 255), 5,
-                         (*STROKE_DARK, 245), anchor="ma")
+            _draw_caption_line(draw, int(w / 2), yy, ln, f_body, f_hot, 5)
             yy += lh
 
     # ---- 4) FOOTER ------------------------------------------------------
@@ -748,7 +788,7 @@ def _segment_video_clip(
     _run(cmd)
 
 
-XFADE_SECONDS = 0.22
+XFADE_SECONDS = 0.14   # quick dissolve so each card's caption snaps in fast
 
 
 def _concat(ffmpeg: str, clips: list[Path], out_mp4: Path, fps: int) -> None:
@@ -815,7 +855,8 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
 
     workdir = Path(tempfile.mkdtemp(prefix="pshorts_"))
     try:
-        narrations = synthesize_segments([s["narration"] for s in segments], workdir / "audio", cfg)
+        narrations = synthesize_segments(
+            [s["narration"] for s in segments], workdir / "audio", cfg)
         seg_images = _assign_images(segments, script.get("images", []), script.get("topic", ""))
         video_set = {im["path"] for im in script.get("images", [])
                      if im.get("kind") == "video" and im.get("path")}
