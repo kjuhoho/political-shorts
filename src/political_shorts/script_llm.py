@@ -58,8 +58,11 @@ _SYSTEM = (
     "  - summary(앞): 그 숫자를 일상어로 다시 풀 것 (예: '국민 10명 중 4명 이상').\n"
     "  - what(중반): '그런데', '여기서 진짜 핵심은', '문제는 이겁니다' 같은 말로 "
     "긴장을 이어가 끝까지 보게 할 것.\n"
-    "  - factcheck(뒷부분): '확인된 사실은 이겁니다'로 시작해, 원문에서 교차 "
-    "검증되는 사실 딱 한 가지만 짧게.\n"
+    "  - factcheck(뒷부분): narration은 '확인된 사실은 이겁니다'로 시작해 교차 "
+    "검증되는 사실 한 가지만. 그리고 화면 표에 들어갈 facts_table도 만들 것 — "
+    "'사실'(원문에서 확인된 사실, 완결 문장), '주장'(누가 무엇을 주장하는지, "
+    "'○○측: …' 형태), '전망'(아직 확정 안 된 관측). 각 줄 30자 이내, 조사·이름 "
+    "으로 끊지 말고 완결형으로.\n"
     "  - sides(뒷부분): 갈리는 입장을 딱 두 문장으로 — 각 문장이 한 진영. "
     "'민주당(진보층)은 …라는 이유로 …라고 봅니다.' / '국민의힘(보수층)은 …라는 "
     "이유로 …라고 봅니다.' 처럼 주체를 밝히고 '왜'를 한 줄 붙일 것. 전환어만 있는 "
@@ -68,7 +71,8 @@ _SYSTEM = (
     "요청하는 문장을 넣을 것 (예: '이런 정치 이슈 30초로 정리해 드립니다. 구독과 "
     "좋아요 눌러주시면 큰 힘이 됩니다').\n"
     "10) 출력은 JSON 객체 하나만. 형식: "
-    '{"title": ["1줄", "2줄"], "hook": "새 내레이션", "what": "...", ...}. '
+    '{"title": ["1줄","2줄"], "hook": "새 내레이션", "what": "...", "sides": "...", '
+    '"outro": "...", "facts_table": {"사실":"...","주장":"...","전망":"..."}}. '
     "문자열 안에서 인용이 필요하면 반드시 홑따옴표(')만 쓸 것(겹따옴표 금지)."
 )
 
@@ -121,9 +125,12 @@ def _title_lines(v: Any) -> list[str]:
     return out if len(out) == 2 else []
 
 
-def _parse(raw: str) -> tuple[dict[str, str], list[str]]:
-    """-> ({role: narration}, [title_line1, title_line2]). Tolerates the shapes a
-    small model actually emits: flat {"hook": "..."}, nested
+_FC_TAGS = ("사실", "주장", "전망")
+
+
+def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
+    """-> ({role: narration}, [title1, title2], {사실/주장/전망: text}). Tolerates
+    the shapes a small model actually emits: flat {"hook": "..."}, nested
     {"hook": {"narration": "..."}}, an echoed {"cards": [...]}, or a bare list.
     """
     txt = raw.strip()
@@ -147,8 +154,15 @@ def _parse(raw: str) -> tuple[dict[str, str], list[str]]:
         except Exception:
             continue
     if obj is None:
-        return {}, []
+        return {}, [], {}
     title = _title_lines(obj.get("title")) if isinstance(obj, dict) else []
+    ftab: dict[str, str] = {}
+    _raw_ft = obj.get("facts_table") if isinstance(obj, dict) else None
+    if isinstance(_raw_ft, dict):
+        for k, v in _raw_ft.items():
+            kk = str(k).strip()
+            if kk in _FC_TAGS and str(v).strip():
+                ftab[kk] = _norm(str(v))[:60]
 
     def _text(v: Any) -> str:
         if isinstance(v, str):
@@ -175,7 +189,7 @@ def _parse(raw: str) -> tuple[dict[str, str], list[str]]:
                 t = _text(v)
                 if t:
                     out[str(k)] = t
-    return out, title
+    return out, title, ftab
 
 
 def rewrite_segments(
@@ -195,6 +209,7 @@ def rewrite_segments(
     payload = _payload(meta, spoken)
     new: dict[str, str] = {}
     title: list[str] = []
+    ftab: dict[str, str] = {}
     last_exc = ""
     for attempt in range(3):                 # retry timeouts / unparseable re-gens
         try:
@@ -203,7 +218,7 @@ def rewrite_segments(
             last_exc = str(exc)
             log.info("llm rewrite: call %d failed (%s), retrying", attempt + 1, last_exc[:80])
             continue
-        new, title = _parse(raw)
+        new, title, ftab = _parse(raw)
         if new:
             break
         log.info("llm rewrite: response %d unparseable, retrying", attempt + 1)
@@ -211,6 +226,11 @@ def rewrite_segments(
         log.warning("llm rewrite: gave up after retries (%s) — keeping template",
                     last_exc or "unparseable")
         return segments, []
+
+    def _clean_row(v: str) -> str:
+        v = re.sub(r"\s+", " ", v).strip(" ·,")
+        v = re.sub(r"[·…—]", " ", v).strip()
+        return v[:44].rstrip(" ,·")
 
     # apply — only where the model returned a sane narration for a card we have
     cand = [dict(s) for s in segments]
@@ -227,6 +247,20 @@ def rewrite_segments(
         changed += 1
     if not changed:
         return segments, []
+
+    # LLM-written fact-check TABLE rows (clean sentences, not 44-char article
+    # clips). Keep the template's "확인" row (source count) at the end.
+    if ftab:
+        fc = next((s for s in cand if s.get("role") == "factcheck"), None)
+        if fc:
+            tone = {"사실": "ok", "주장": "claim", "전망": "warn"}
+            new_rows = [{"tag": k, "tone": tone[k], "text": _clean_row(v)}
+                        for k, v in ftab.items() if k in tone and len(_clean_row(v)) >= 6]
+            keep = next((r for r in (fc.get("rows") or []) if r.get("tone") == "info"), None)
+            new_rows.append(keep or {"tag": "확인", "tone": "info",
+                                     "text": "여러 매체 종합, 원문은 더보기란"})
+            if len(new_rows) >= 3:
+                fc["rows"] = new_rows
 
     # title must MATCH the content: a 2+ char token of line 1 has to appear in
     # the headline or the rewritten narration, else drop it (template fallback).

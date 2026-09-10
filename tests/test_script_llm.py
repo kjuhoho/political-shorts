@@ -136,6 +136,26 @@ def test_llm_title_dropped_when_off_topic(monkeypatch):
     assert title == []
 
 
+def test_llm_facts_table_replaces_factcheck_rows(monkeypatch):
+    payload = json.dumps({
+        "hook": "국회가 내년 예산안을 확정했습니다.",
+        "facts_table": {"사실": "예산안이 3일 본회의를 통과했습니다.",
+                        "주장": "여당측: 민생을 위한 결정이라는 입장입니다.",
+                        "전망": "야당 반발로 후속 갈등이 예상됩니다."},
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    segs = _segs() + [{"role": "factcheck", "kicker": "확인된 사실", "caption": "팩트체크",
+                       "narration": "확인된 사실은 이겁니다.",
+                       "rows": [{"tag": "사실", "tone": "ok", "text": "old"},
+                                {"tag": "확인", "tone": "info", "text": "2개 매체 종합"}]}]
+    out, _t = script_llm.rewrite_segments(segs, META, _cfg(), BASE)
+    fc = next(s for s in out if s["role"] == "factcheck")
+    tags = [r["tag"] for r in fc["rows"]]
+    assert tags == ["사실", "주장", "전망", "확인"]
+    assert fc["rows"][0]["text"].startswith("예산안이 3일")
+    assert fc["rows"][-1]["text"] == "2개 매체 종합"     # template's 확인 row kept
+
+
 def test_gemini_request_shape(monkeypatch):
     seen = {}
 
