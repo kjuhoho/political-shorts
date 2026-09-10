@@ -62,6 +62,7 @@ class RenderResult:
     video_path: Path
     duration_s: float
     n_segments: int
+    timeline: Any = None            # timeline.Timeline — sync source of truth
 
 
 def _ffmpeg(cfg: Settings) -> str:
@@ -907,6 +908,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
         clip_paths: list[Path] = []
         clip_durs: list[float] = []
         total_dur = 0.0
+        thumb_s = 0.0
 
         # ---- designed opening frame (the Shorts poster) --------------------
         if getattr(cfg, "thumb_enabled", True):
@@ -926,8 +928,14 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                 clip_paths.append(tclip)
                 clip_durs.append(hold)
                 total_dur += hold
+                thumb_s = hold
             except Exception as exc:  # never let the poster break a render
                 log.warning("thumbnail frame skipped: %s", exc)
+
+        # ---- TIMELINE ENGINE — the single source of scene / audio / subtitle
+        #      sync. Every clip length + transition + absolute start/end. ----
+        from . import timeline as _tl
+        tl = _tl.build(segments, narrations, cfg, thumb_s=thumb_s)
 
         n_broll = 0
         for i, seg in enumerate(segments):
@@ -945,16 +953,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             is_broll = bool(media) and media in video_set and Path(media).exists()
 
             nar = narrations[i]
-            if nar.wav_path and nar.duration_s > 0.3:
-                duration = nar.duration_s + 0.16     # tiny tail -> quick cut
-            elif seg.get("narration"):
-                duration = estimate_caption_seconds(seg.get("caption", ""), cfg)
-            else:
-                duration = 1.5                       # caption-only end card
-            # the subtitle must stay on screen long enough to actually READ —
-            # this can extend a scene past the audio (per the full-script rule)
-            duration = max(duration, float(sc.get("min_read_s", 0.0)),
-                           float(sc.get("min_s", 0.0)))
+            duration = tl.scenes[i].clip_s          # from the TIMELINE ENGINE
             total_dur += duration
 
             clip = workdir / f"clip_{i:02d}.mp4"
@@ -973,15 +972,14 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             clip_paths.append(clip)
             clip_durs.append(duration)
 
-        # per-boundary transition kind (cut / dissolve / fade), from the Scene
-        # Duration Controller. A leading "dissolve" covers the poster -> scene 0.
-        seg_tx = [(s.get("scene", {}) or {}).get("transition", "dissolve")
-                  for s in segments[:-1]]
+        # per-boundary transition kinds from the timeline. A leading "dissolve"
+        # covers the poster -> scene 0.
+        seg_tx = tl.transitions
         transitions = (["dissolve"] + seg_tx) if len(clip_paths) == len(segments) + 1 else seg_tx
 
         narration_mp4 = workdir / "narration.mp4"
-        xf = _assemble(ffmpeg, clip_paths, clip_durs, narration_mp4, cfg, transitions)
-        total_dur -= xf                       # xfade overlaps shorten the whole
+        _assemble(ffmpeg, clip_paths, clip_durs, narration_mp4, cfg, transitions)
+        total_dur = tl.total_s                 # timeline already nets the xfade overlaps
 
         n_imgs = sum(1 for p in seg_images if p)
         media_desc = f"{n_imgs} imgs" + (f", {n_broll} b-roll" if n_broll else "")
@@ -994,7 +992,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             log.info("video rendered %s (%.1fs, %d segs, %s)",
                      out_path.name, total_dur, total, media_desc)
 
-        return RenderResult(out_path, round(total_dur, 2), total)
+        return RenderResult(out_path, round(total_dur, 2), total, tl)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

@@ -135,6 +135,9 @@ def _process_story(
 
         render = render_video(script, video_path, cfg)
         meta = build_metadata(script, safety.to_dict(), video_path, cfg)
+        if getattr(render, "timeline", None) is not None:
+            meta["timeline"] = render.timeline.to_list()
+            meta["duration_s"] = render.duration_s
         meta_path = write_sidecar(meta, video_path)
 
         with connect(cfg.db_path) as conn:
