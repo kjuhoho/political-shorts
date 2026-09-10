@@ -707,23 +707,37 @@ def _assign_images(
     return picks
 
 
+def _kb_expr(zoom: str, w: int, duration: float, idx: int, is_photo: bool) -> tuple[float, str, str, str]:
+    """(over-scale, per-frame zoom expr `pz`, crop-x expr `px`, crop-y frac).
+    The Scene Duration Controller picks `zoom` per scene so no two adjacent
+    scenes move the same way."""
+    prog = f"(0.5-0.5*cos(PI*min(t/{max(duration, 0.1):.2f}\\,1)))"     # 0->1 eased
+    if zoom == "in":
+        return 1.14, f"(1.0+0.10*{prog})", f"(iw-{w})/2", "0.42"
+    if zoom == "out":
+        return 1.16, f"(1.14-0.12*{prog})", f"(iw-{w})/2", "0.42"
+    if zoom == "pan_right":
+        return 1.12, "1.05", f"(iw-{w})*{prog}", "0.5"
+    if zoom == "pan_left":
+        return 1.12, "1.05", f"(iw-{w})*(1-{prog})", "0.5"
+    # "punch" (default): quick +5% at the cut, gone ~0.5s, gentle pan by parity
+    px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
+    return (1.18 if is_photo else 1.12), "(1+0.05*exp(-t*6))", px, ("0.5" if idx % 2 == 0 else "0.32")
+
+
 def _segment_clip(
     ffmpeg: str, base_img: Path, is_photo: bool, overlay: Path,
-    nar: Narration, duration: float, out_mp4: Path, cfg: Settings, idx: int
+    nar: Narration, duration: float, out_mp4: Path, cfg: Settings, idx: int,
+    zoom: str = "punch",
 ) -> None:
     w, h, fps = cfg.video_width, cfg.video_height, cfg.video_fps
 
     if cfg.ken_burns:
-        # Cheap Ken-Burns: over-scale, then crop-pan with a cosine ease PLUS a
-        # quick punch-in on the cut. The punch-in is baked into a per-frame
-        # `scale` (eval=frame) so there's no second dynamic crop to choke on;
-        # zoompan is far too slow.
-        over = 1.18 if is_photo else 1.12
+        # Cheap Ken-Burns: over-scale, then crop-pan/zoom baked into a per-frame
+        # `scale` (eval=frame) — zoompan is far too slow. The move (in / out /
+        # pan / punch) comes from the Scene Duration Controller.
+        over, pz, px, yb = _kb_expr(zoom, w, duration, idx, is_photo)
         sw, sh = int(w * over), int(h * over)
-        prog = f"(0.5-0.5*cos(PI*min(t/{duration:.2f}\\,1)))"
-        yb = 0.5 if idx % 2 == 0 else 0.32
-        px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
-        pz = "(1+0.05*exp(-t*6))"                    # +5% at the cut, gone ~0.5s
         vbg = (f"[0:v]scale=w='{sw}*{pz}':h='{sh}*{pz}':eval=frame,"
                f"crop={w}:{h}:x='{px}':y='(ih-{h})*{yb}',"
                f"setsar=1,fps={fps}[bg]")
@@ -753,17 +767,22 @@ def _segment_clip(
 
 def _segment_video_clip(
     ffmpeg: str, broll: Path, overlay: Path, nar: Narration,
-    duration: float, out_mp4: Path, cfg: Settings, idx: int
+    duration: float, out_mp4: Path, cfg: Settings, idx: int, zoom: str = "punch"
 ) -> None:
     """One card backed by a b-roll VIDEO clip (context cards only). The source
     is scaled to cover 1080x1920, cropped with a slow pan, its own audio
     dropped; the caption PNG is overlaid and the narration is the only audio.
     The clip is looped if shorter than the card."""
     w, h, fps = cfg.video_width, cfg.video_height, cfg.video_fps
-    over = 1.08
+    over = 1.10
     sw, sh = int(w * over), int(h * over)
     prog = f"(0.5-0.5*cos(PI*min(t/{max(duration,0.1):.2f}\\,1)))"
-    px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
+    if zoom == "pan_left":
+        px = f"(iw-{w})*(1-{prog})"
+    elif zoom in ("in", "out", "pan_right"):
+        px = f"(iw-{w})*{prog}"
+    else:
+        px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
     vbg = (f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=increase,"
            f"crop={w}:{h}:x='{px}':y='(ih-{h})/2',setsar=1,fps={fps}[bg]")
     filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v]"
@@ -788,7 +807,8 @@ def _segment_video_clip(
     _run(cmd)
 
 
-XFADE_SECONDS = 0.14   # quick dissolve so each card's caption snaps in fast
+# default cross-fade if a boundary has no explicit transition kind (see _XF)
+XFADE_SECONDS = 0.14
 
 
 def _concat(ffmpeg: str, clips: list[Path], out_mp4: Path, fps: int) -> None:
@@ -802,27 +822,39 @@ def _concat(ffmpeg: str, clips: list[Path], out_mp4: Path, fps: int) -> None:
     ])
 
 
+# seconds of cross-fade per transition kind (the Scene Duration Controller
+# tags each boundary): a hard beat-change is nearly a cut, a role change breathes.
+_XF = {"cut": 0.03, "dissolve": 0.14, "fade": 0.30}
+
+
 def _assemble(ffmpeg: str, clips: list[Path], durs: list[float],
-              out_mp4: Path, cfg: Settings) -> float:
-    """Join the per-card clips. With video_xfade on, cross-dissolve video +
-    cross-fade audio between every card so cuts don't feel abrupt; otherwise a
-    plain concat. Returns the seconds removed by the xfade overlaps (0 on
-    concat) so the caller can keep the BGM timing in sync. Falls back to concat
-    on any ffmpeg error."""
+              out_mp4: Path, cfg: Settings, transitions: list[str] | None = None) -> float:
+    """Join the per-scene clips. With video_xfade on, cross-dissolve video +
+    cross-fade audio between every scene; the per-boundary duration comes from
+    `transitions` (cut / dissolve / fade). Returns the seconds removed by the
+    overlaps so the caller keeps BGM timing in sync. Concat fallback on error."""
     fps = cfg.video_fps
     n = len(clips)
     if not getattr(cfg, "video_xfade", True) or n < 2:
         _concat(ffmpeg, clips, out_mp4, fps)
         return 0.0
 
-    t = min(XFADE_SECONDS, max(0.08, min(durs) * 0.45))
+    transitions = transitions or ["dissolve"] * (n - 1)
+
+    def _t(k: int) -> float:
+        want = _XF.get(transitions[k - 1] if k - 1 < len(transitions) else "dissolve", 0.14)
+        return max(0.03, min(want, durs[k - 1] * 0.45, durs[k] * 0.45))
+
     ins: list[str] = []
     for c in clips:
         ins += ["-i", str(c)]
     vparts, aparts = [], []
     vprev, aprev = "[0:v]", "[0:a]"
     acc = durs[0]
+    removed = 0.0
     for k in range(1, n):
+        t = _t(k)
+        removed += t
         vout, aout = f"[v{k}]", f"[a{k}]"
         off = acc - t
         vparts.append(f"{vprev}[{k}:v]xfade=transition=fade:duration={t:.3f}:offset={off:.3f}{vout}")
@@ -838,7 +870,7 @@ def _assemble(ffmpeg: str, clips: list[Path], durs: list[float],
     ]
     try:
         _run(cmd)
-        return t * (n - 1)
+        return removed
     except Exception as exc:
         log.warning("xfade assemble failed (%s); plain concat", exc)
         _concat(ffmpeg, clips, out_mp4, fps)
@@ -892,7 +924,14 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             overlay = workdir / f"ov_{i:02d}.png"
             _overlay_png(seg, i, total, script, overlay, cfg)
 
+            sc = seg.get("scene", {}) or {}
+            zoom = sc.get("zoom", "punch")
+
             media = seg_images[i]
+            # a continuation sub-scene of the same sentence keeps the same image
+            # (only the camera move changes) — no jarring picture swap mid-thought
+            if sc.get("hold_media") and i > 0 and seg_images[i - 1]:
+                media = seg_images[i - 1]
             is_broll = bool(media) and media in video_set and Path(media).exists()
 
             nar = narrations[i]
@@ -902,12 +941,13 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                 duration = estimate_caption_seconds(seg.get("caption", ""), cfg)
             else:
                 duration = 1.5                       # caption-only end card
+            duration = max(duration, float(sc.get("min_s", 0.0)))   # no sub-1.5s flash
             total_dur += duration
 
             clip = workdir / f"clip_{i:02d}.mp4"
             if is_broll:
                 try:
-                    _segment_video_clip(ffmpeg, Path(media), overlay, nar, duration, clip, cfg, i)
+                    _segment_video_clip(ffmpeg, Path(media), overlay, nar, duration, clip, cfg, i, zoom)
                     n_broll += 1
                 except Exception as exc:            # fall back to a still backdrop
                     log.warning("b-roll clip %d failed (%s); using still", i, exc)
@@ -916,12 +956,18 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                 base, is_photo = _segment_bg(media if media not in video_set else None,
                                              frame_kind, i, cfg.video_width,
                                              cfg.video_height, workdir)
-                _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i)
+                _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i, zoom)
             clip_paths.append(clip)
             clip_durs.append(duration)
 
+        # per-boundary transition kind (cut / dissolve / fade), from the Scene
+        # Duration Controller. A leading "dissolve" covers the poster -> scene 0.
+        seg_tx = [(s.get("scene", {}) or {}).get("transition", "dissolve")
+                  for s in segments[:-1]]
+        transitions = (["dissolve"] + seg_tx) if len(clip_paths) == len(segments) + 1 else seg_tx
+
         narration_mp4 = workdir / "narration.mp4"
-        xf = _assemble(ffmpeg, clip_paths, clip_durs, narration_mp4, cfg)
+        xf = _assemble(ffmpeg, clip_paths, clip_durs, narration_mp4, cfg, transitions)
         total_dur -= xf                       # xfade overlaps shorten the whole
 
         n_imgs = sum(1 for p in seg_images if p)

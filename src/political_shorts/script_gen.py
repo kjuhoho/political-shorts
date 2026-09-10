@@ -642,6 +642,12 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     #     already-single-sentence cards pass through unchanged. ---
     segments = _split_by_sentence(segments)
 
+    # --- Scene Duration Controller: no frame sits static for long. Split any
+    #     scene over ~3.5s at a clause / event-change boundary and attach a
+    #     per-scene visual plan (camera move + transition + emphasis). ---
+    from .scene import plan as _plan_scenes
+    segments = _plan_scenes(segments)
+
     est_seconds = round(sum(_seg_seconds(s) for s in segments), 1)
 
     # the bundled fonts have no CJK-Han glyph — 李/尹/文 render as tofu on the
