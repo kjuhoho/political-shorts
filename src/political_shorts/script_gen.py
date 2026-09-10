@@ -45,8 +45,8 @@ _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
              "factcheck": 74, "outro": 0}
-_NARR_CAP_LLM = {"hook": 58, "summary": 62, "what": 100, "reaction": 96,
-                 "factcheck": 84, "outro": 66}
+_NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 76, "reaction": 76,
+                 "factcheck": 84, "outro": 78}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -403,13 +403,14 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         segments.append({"role": "factcheck", "kicker": "팩트체크",
                          "caption": "팩트체크", "rows": fc_rows, "narration": narr})
 
-    # 6) outro --------------------------------------------------
-    lean_note = ("여러 성향의 매체 보도를 종합했습니다."
+    # 6) outro — one-line wrap + a subscribe/like call to action
+    lean_note = ("여러 매체 보도를 종합했습니다."
                  if len(set(leans) - {"wire"}) >= 2 or len(leans) >= 3
-                 else "보도량이 많지 않은 사안이라 추가 확인이 필요합니다.")
+                 else "아직 보도가 많지 않아 추가 확인이 필요합니다.")
     segments.append({"role": "outro", "kicker": "",
-                     "caption": "여러분 생각은 어떤가요? 댓글로 알려주세요",
-                     "narration": f"{lean_note} 자세한 내용과 원문 링크는 더보기란에 있습니다."})
+                     "caption": "구독과 좋아요가 큰 힘이 됩니다",
+                     "narration": f"{lean_note} 이런 정치 이슈, 30초로 정리해 드립니다. "
+                                  "구독과 좋아요 눌러주시면 큰 힘이 됩니다."})
 
     # 6b) optional — let a (free) LLM rewrite the narration into a natural,
     #     lay-friendly explanation that flows card to card. Falls back silently
@@ -452,24 +453,21 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         caps=_NARR_CAP_LLM if llm_on else _NARR_CAP,
     )
 
-    # --- align the on-screen caption with what's actually being said, and
-    #     number the content cards so the viewer can follow ("1." "2." ...) ---
+    # --- caption == what's being said, so the viewer reads ALONG with the
+    #     voice. Cards are short enough now that the whole line fits the plate;
+    #     only fall back to a clean clip if a line runs long. ---
     n = 0
-    cap_limit = 66 if llm_on else 48     # LLM lines are fuller; let the plate wrap
     for s in segments:
+        nar = _glyph_safe(s.get("narration", ""))
         if s["role"] == "factcheck":
             s["caption"] = clip_sentence(s.get("caption", "팩트체크"), 46, ell="..")
-        elif s["role"] in ("hook", "outro") and llm_on and s.get("narration"):
-            # the LLM rewrote the voice line — the caption must follow it, not
-            # the now-stale templated caption
-            s["caption"] = _tidy_caption(s["narration"], 46)
-        elif s["role"] in ("hook", "outro"):
+        elif s["role"] in ("hook", "outro") and (not llm_on) and not s.get("narration"):
             s["caption"] = _glyph_safe(clip_sentence(s.get("caption", ""), 46, ell=".."))
-        elif s.get("narration"):
-            # caption mirrors the voice line; must END CLEANLY — never on a
-            # dangling connective ("…에 따르면", "…안다며", "…했지만")
-            s["caption"] = _tidy_caption(s["narration"], cap_limit)
-        s["narration"] = _glyph_safe(s.get("narration", ""))
+        elif nar:
+            # full sentence when it fits the plate (~82 chars / 4-5 lines),
+            # else a clean clip that still ends on a complete clause
+            s["caption"] = nar if len(nar) <= 82 else _tidy_caption(nar, 78)
+        s["narration"] = nar
         if s["role"] not in ("outro",):
             n += 1
             s["num"] = n

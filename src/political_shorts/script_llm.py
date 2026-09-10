@@ -23,10 +23,11 @@ from .textutil import clean_text
 
 log = get_logger("script_llm")
 
-# spoken cards the LLM may rewrite, and how many chars it gets for each
-# (looser than the template caps — the point is room to actually explain)
-_LLM_LIMIT = {"hook": 55, "summary": 60, "what": 95, "reaction": 90,
-              "factcheck": 80, "outro": 48}
+# spoken cards the LLM may rewrite, and how many chars each gets. Kept short so
+# the on-screen caption can show the WHOLE line (read-along) without spilling
+# past the caption plate — a card == one bite-sized, fully-readable thought.
+_LLM_LIMIT = {"hook": 48, "summary": 52, "what": 70, "reaction": 70,
+              "factcheck": 80, "outro": 72}
 
 _SYSTEM = (
     "당신은 정치에 관심 없는 일반인에게 뉴스를 풀어 설명하는 한국어 내레이션 작가입니다. "
@@ -48,7 +49,15 @@ _SYSTEM = (
     "대상(인물·기관·숫자·쟁점)을 구체적으로, 2줄은 클릭하고 싶게 만드는 궁금증 "
     "한 마디('왜?', '무슨 일?', '진짜일까?', '이유는', '판정은'). 각 줄 13자 "
     "이내, 원문에 있는 사실만, 비하·단정·과장('충격/발칵') 금지. 내용과 반드시 일치.\n"
-    "9) 출력은 JSON 객체 하나만. 형식: "
+    "9) 이 영상은 유튜브 쇼츠입니다. 카드 순서대로 몰입 곡선을 만들 것:\n"
+    "  - hook·summary(앞): 기사에서 가장 세거나 의외인 사실·숫자·장면을 먼저 "
+    "던져 첫 3초에 시선을 붙잡을 것. 단, 낚시·과장·비하 없이 '사실 자체의 무게'로.\n"
+    "  - what·reaction(중반): '그런데', '여기서 진짜 핵심은', '문제는 이겁니다' "
+    "같은 말로 긴장을 이어가 끝까지 보게 할 것.\n"
+    "  - outro(마지막): 한 줄로 정리한 뒤, 구독·좋아요·알림 설정을 자연스럽게 "
+    "요청하는 문장을 넣을 것 (예: '이런 정치 이슈 30초로 정리해 드립니다. 구독과 "
+    "좋아요 눌러주시면 큰 힘이 됩니다').\n"
+    "10) 출력은 JSON 객체 하나만. 형식: "
     '{"title": ["1줄", "2줄"], "hook": "새 내레이션", "what": "...", ...}. '
     "문자열 안에서 인용이 필요하면 반드시 홑따옴표(')만 쓸 것(겹따옴표 금지)."
 )
