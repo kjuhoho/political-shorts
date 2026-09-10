@@ -26,7 +26,9 @@ log = get_logger("script_llm")
 # chars each spoken card may run to. GENEROUS on purpose — a viewer who doesn't
 # follow politics needs background + a plain-language explanation, not a
 # one-line headline. Longer video is fine.
-_LLM_LIMIT = {"hook": 60, "summary": 120, "what": 150, "reaction": 110,
+# NOTE: "hook" is deliberately absent — the first ~2s is owned by the dedicated
+# Hook Engine (hook_engine.py); the LLM never rewrites it.
+_LLM_LIMIT = {"summary": 120, "what": 150, "reaction": 110,
               "factcheck": 130, "sides": 190, "outro": 80}
 
 _SYSTEM = (
@@ -51,8 +53,7 @@ _SYSTEM = (
     "불분명하면 '온라인에서는 …는 반응이 나옵니다'.\n"
     "6) 원문에 없는 사실·숫자·발언을 지어내지 말 것.\n\n"
     "카드별 역할 (유튜브 쇼츠 몰입 곡선):\n"
-    "  - hook: 가장 세거나 의외인 사실 한 방. 핵심 숫자가 있으면 그 숫자로 시작. "
-    "낚시·과장 없이.\n"
+    "  - (hook 카드는 별도 엔진이 만듭니다. 당신은 hook을 쓰지 마세요.)\n"
     "  - summary: 이 사건의 '배경'. 이 인물·기관이 뭐 하는 곳인지, 왜 지금 이게 "
     "이슈인지 2~3문장으로 깔아줄 것.\n"
     "  - what: 실제로 무슨 일이 있었는지 + 그게 왜 특이하거나 중요한지. '그런데', "
@@ -71,7 +72,7 @@ _SYSTEM = (
     "'진짜일까?', '왜 논란인가'). 각 줄 16자 이내. '지금 이 이슈', '핵심만', '쟁점 "
     "정리' 같은 맹탕 문구 절대 금지. 내용과 반드시 일치, 과장·비하 없이.\n\n"
     "출력은 JSON 하나만: "
-    '{"title": ["1줄","2줄"], "hook": "...", "summary": "...", "what": "...", '
+    '{"title": ["1줄","2줄"], "summary": "...", "what": "...", '
     '"factcheck": "...", "sides": "...", "outro": "...", '
     '"facts_table": {"사실":"...","주장":"...","전망":"..."}}. '
     "문자열 안 인용은 홑따옴표(')만."
@@ -101,9 +102,9 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]]) -> str:
         f"[이 기사의 핵심 인물/주제] {meta.get('topic', '') or '(없음)'}\n\n"
         f"[다시 쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"
         "각 카드의 draft를 규칙대로(배경→무슨 일→왜 중요) 풀어 쓰고, 인기 영상 "
-        "형식의 눈길 끄는 2줄 title도 지어 JSON으로만 답하세요.\n"
+        "형식의 눈길 끄는 2줄 title도 지어 JSON으로만 답하세요. (hook은 쓰지 마세요.)\n"
         '예: {"title":["한동훈 녹취록 공개","유출 경위 조사할까?"],'
-        '"hook":"...","summary":"한동훈은 국민의힘 대표를 지낸 인물인데, ...",'
+        '"summary":"한동훈은 국민의힘 대표를 지낸 인물인데, ...",'
         '"what":"그런데 이번에 공개된 녹취록에는 ...","factcheck":"확인된 사실은 이겁니다. ... '
         '이게 무슨 뜻이냐면 ...","sides":"민주당은 ...라는 이유로 ...","outro":"..."}'
     )
@@ -113,7 +114,8 @@ def _norm(v: str) -> str:
     return re.sub(r"\s+", " ", v).strip()
 
 
-_ROLE_KEYS = {"hook", "summary", "what", "reaction", "factcheck", "sides", "outro"}
+# "hook" intentionally excluded — owned by hook_engine.py, never LLM-written
+_ROLE_KEYS = {"summary", "what", "reaction", "factcheck", "sides", "outro"}
 
 
 def _title_lines(v: Any) -> list[str]:
@@ -242,9 +244,9 @@ def rewrite_segments(
     changed = 0
     for s in cand:
         narr = new.get(s.get("role", ""))
-        if not narr:
+        lim = _LLM_LIMIT.get(s.get("role", ""))
+        if not narr or lim is None:          # lim is None -> not LLM-owned (e.g. hook)
             continue
-        lim = _LLM_LIMIT.get(s["role"], 80)
         if not (8 <= len(narr) <= int(lim * 1.8)):
             continue
         s["narration"] = narr

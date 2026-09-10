@@ -23,7 +23,7 @@ from .config import Settings, settings
 from .db import cluster_articles, connect
 from .hook import (
     _NOT_TARGET, detect_entities, detect_frame, josa, make_factcheck, make_hook,
-    make_title, simplify, strip_wire_marks, to_polite,
+    make_title, pick_actor, simplify, strip_wire_marks, to_polite,
 )
 from .logging_setup import get_logger
 from .textutil import clean_text, clip_sentence, strip_byline, truncate
@@ -36,15 +36,18 @@ MAX_WHAT = 1
 
 # Top-performing news shorts run tight — 20-38s. Aim ~30-36s: hook opens a
 # loop, the summary card is dropped, 4-5 fast cards.
-MAX_VIDEO_SECONDS = 38.0
+# the template path now carries real background + significance + meaning
+# (explain.py), not one-line clips, so it needs room like the LLM path — a
+# viewer who doesn't follow politics needs the explanation more than a 30s cut.
+MAX_VIDEO_SECONDS = 66.0
 # the LLM writes real background + explanation now, so a card can run longer
 # and the whole video too — a viewer who doesn't follow politics needs it.
 MAX_VIDEO_SECONDS_LLM = 82.0
 _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
-_NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
-             "factcheck": 70, "sides": 104, "outro": 0}
+_NARR_CAP = {"hook": 42, "summary": 155, "what": 180, "reaction": 90,
+             "factcheck": 170, "sides": 150, "outro": 95}
 _NARR_CAP_LLM = {"hook": 66, "summary": 150, "what": 190, "reaction": 120,
                  "factcheck": 170, "sides": 230, "outro": 88}
 _SILENT_CARD_SECONDS = 1.5
@@ -457,17 +460,45 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
 
     segments: list[dict[str, Any]] = []
 
-    # 1) hook ---------------------------------------------------------------
-    hcap, hnar = make_hook(headline, entities, frame, cfg.headline_style)
-    segments.append({"role": "hook", "kicker": "오늘의 이슈", "caption": hcap, "narration": hnar})
+    _actor = pick_actor(headline, entities, frame)
 
-    # 2) one-line summary -------------------------------------------------
+    # 1) hook — a dedicated engine builds the first ~2s (surprise / twist /
+    #    question / outcome-first / conflict / number), never the raw headline.
+    from .hook_engine import HookContext, build_hook
+    hk = build_hook(HookContext(
+        headline=headline,
+        facts=[f.text for f in analysis.facts],
+        claims=[c.text for c in analysis.claims],
+        frame=frame, entities=entities, actor=_actor, n_sources=n_sources,
+    ))
+    hcap, hnar = hk.caption, hk.narration
+    if not hnar or len(hnar) < 8:                       # engine gave up -> template
+        hcap, hnar = make_hook(headline, entities, frame, cfg.headline_style)
+    segments.append({"role": "hook", "kicker": "오늘의 이슈",
+                     "caption": hcap, "narration": hnar, "hook_kind": hk.kind})
+
+    # 2) summary card — BACKGROUND: who/what is involved + a term gloss, then
+    #    the core fact. A viewer who doesn't follow politics starts here.
+    from . import explain
     summary_fact = analysis.facts[0] if analysis.facts else None
-    if summary_fact:
-        s = simplify(summary_fact.text, add_lead=True)
+    bg = explain.background(_actor, headline, entities, frame)
+    core = simplify(summary_fact.text, add_lead=False) if summary_fact else ""
+    if bg and core and _actor and core.startswith(_actor):
+        # background already introduced the person — drop a repeated
+        # "{name} {role}이/가" subject; Korean lets the subject be understood
+        stripped = re.sub(
+            rf"^{re.escape(_actor)}(?:\s+[가-힣]+){{0,2}}?\s*(?:은|는|이|가)\s+", "", core)
+        if 6 <= len(stripped) < len(core):
+            core = stripped
+    if bg and core:
+        s = f"{bg} {core}"
+    elif bg:
+        s = f"{bg} 오늘 이와 관련한 소식이 나왔습니다."
+    elif core:
+        s = f"쉽게 말하면, {core}"
     else:
-        s = f"쉽게 말하면, {n_sources}개 언론이 이 사안을 나란히 보도했습니다: {headline}."
-    segments.append({"role": "summary", "kicker": "한 줄 요약",
+        s = f"{n_sources}개 매체가 이 사안을 나란히 보도했습니다."
+    segments.append({"role": "summary", "kicker": "배경부터",
                      "caption": clip_sentence(s, CAPTION_LIMIT), "narration": s})
 
     # 3) what happened — a fact that is NOT just the headline restated
@@ -497,20 +528,30 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         # then trim to a clean sentence boundary
         raw = max(re.split(r"…|\.\.\.", clean_text(f.text)), key=len)
         clause = simplify(raw, limit=64)
-        segments.append({"role": "what", "kicker": "무슨 일이냐면",
+        # WHY IT MATTERS: the fact, then a true-of-this-kind-of-event line so the
+        # viewer understands the significance, not just the headline.
+        narr = f"{clause.rstrip('.')}. {explain.significance(frame)}"
+        segments.append({"role": "what", "kicker": "무슨 일이고 왜 중요하냐면",
                          "caption": clip_sentence(clause, CAPTION_LIMIT),
-                         "narration": clause,
+                         "narration": narr,
                          "source": lead["source_name"], "multi_source": multi,
                          "cues": f.cues})
-    # (no genuinely new fact -> skip the 'what' card)
+    else:
+        # no second fact — still explain why this kind of story matters
+        segments.append({"role": "what", "kicker": "왜 중요하냐면",
+                         "caption": clip_sentence(explain.significance(frame), CAPTION_LIMIT),
+                         "narration": explain.significance(frame),
+                         "source": lead["source_name"], "multi_source": multi})
 
     # 4) fact-check — the ONE confirmed fact (+ the on-screen 사실/주장/전망 table)
     if cfg.factcheck_segment:
         fc_rows = make_factcheck(analysis, n_sources)
         fact_row = next((r for r in fc_rows if r["tone"] == "ok"), None)
         fact_t = to_polite(clip_sentence(fact_row["text"], 46).rstrip(" .…")) if fact_row else ""
-        narr = f"확인된 사실은 이겁니다. {fact_t.rstrip('.')}." if fact_t else \
-               f"{n_sources}개 매체가 이 사안을 나란히 보도했습니다."
+        if fact_t:
+            narr = f"확인된 사실은 이겁니다. {fact_t.rstrip('.')}. 이게 무슨 뜻이냐면, {explain.meaning(frame)}"
+        else:
+            narr = f"{n_sources}개 매체가 이 사안을 나란히 보도했습니다."
         segments.append({"role": "factcheck", "kicker": "확인된 사실",
                          "caption": "팩트체크", "rows": fc_rows, "narration": narr})
 
@@ -615,7 +656,14 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         s = re.sub(r"[^가-힣0-9%·\s]", " ", s)
         return re.sub(r"\s+", " ", s).strip(" ·")
 
-    title = [_chip_safe(_glyph_safe(t))[:16]
+    def _title_safe(s: str) -> str:
+        # like _chip_safe but keeps the punctuation the user's own titles use
+        # ("유출 경위 조사할까?", "'전격' 사퇴")
+        s = "".join(_HANJA.get(c, c) for c in s)
+        s = re.sub(r"[^가-힣0-9%\s?!'\"·]", " ", s).replace('"', "'")
+        return re.sub(r"\s+", " ", s).strip(" ·")
+
+    title = [_title_safe(_glyph_safe(t))[:16]
              for t in (llm_title or make_title(headline, entities, frame))]
     from .hook import pick_actor as _pa
     topic = _chip_safe(_pa(headline, entities, frame))

@@ -295,14 +295,19 @@ _NAME_AFTER_ROLE = re.compile(
     r"(?:대통령실|청와대|국회|정부|여당|야당|국민의힘|더불어민주당|민주당|"
     r"조국혁신당|개혁신당|신임|전|前|초대|차기|새)?\s*"
     r"(?:국무총리|부총리|정책실장|비서실장|안보실장|국정상황실장|정무수석|경제수석|"
-    r"사회수석|홍보수석|민정수석|시민사회수석|대변인|원내대표|사무총장|비서실장|"
+    r"사회수석|홍보수석|민정수석|시민사회수석|대변인|원내대표|사무총장|"
     r"장관|차관|수석|의장|위원장|처장|청장|본부장|원장|시장|지사|대표)\s+"
-    r"([가-힣]{2,4})(?=\s|$|[,.·…'\"”’)\]]|씨|은|는|이|가|을|를|와|과|의|도|만|께서)"
-)
+    r"([가-힣]{2,4})(?=\s|$|[,.·…'\"“”’)\]])"     # name ends at a REAL boundary,
+)                                                # not word-internally ("임명동"+"의")
 # nouns that can sit right after a role word but are NOT a person's name
 _NOT_A_NAME = {"사퇴", "사의", "교체", "경질", "내정", "지명", "임명", "발탁", "후보",
                "논란", "파문", "의혹", "출신", "권한", "대행", "겸직", "인선", "임기",
                "발언", "회의", "주재", "참석", "회견", "결정", "지시", "보고", "인사"}
+# a pure job-title noun (no personal name) — must not be returned as the actor
+_ROLE_NOUN = re.compile(
+    r"^(?:대통령|국무총리|부총리|장관|차관|정책실장|비서실장|안보실장|실장|수석|"
+    r"대변인|원내대표|당대표|대표|의장|위원장|처장|청장|총장|본부장|원장|"
+    r"국회의장|사무총장)$")
 # office / institution words that a role regex can swallow as a fake "name"
 _OFFICE_WORD = {"대통령실", "청와대", "국회", "국회의장", "정부", "여당", "야당",
                 "정치권", "당정", "여야", "검찰", "경찰", "법원", "공수처", "헌재",
@@ -349,17 +354,19 @@ def pick_actor(headline: str, entities: Entities, frame: Frame) -> str:
     tgt = attack_target(headline)
     if tgt:
         return tgt
-    if frame.kind == "appoint":
-        m = _NOMINEE_RE.search(h)
-        if m and m.group(1) not in _ORG_PREFIX:
-            return m.group(1)
     if frame.kind in ("personnel", "appoint", "remark", "clash"):
-        # "직책 이름" order first ("대통령실 정책실장 김승원" -> 김승원), so the
-        # office word isn't mistaken for the name.
+        # "직책 이름" order first ("대통령실 정책실장 김승원" -> 김승원, "국무총리
+        # 김민석 임명동의안" -> 김민석), so a role/office word isn't taken as the name.
         m = _NAME_AFTER_ROLE.search(h)
         if m and m.group(1) not in _NOT_A_NAME and m.group(1) not in _ORG_PREFIX \
                 and m.group(1) not in _OFFICE_WORD:
             return m.group(1)
+    if frame.kind == "appoint":
+        m = _NOMINEE_RE.search(h)
+        if m and m.group(1) not in _ORG_PREFIX and m.group(1) not in _OFFICE_WORD \
+                and m.group(1) not in _NOT_A_NAME and not _ROLE_NOUN.search(m.group(1)):
+            return m.group(1)
+    if frame.kind in ("personnel", "appoint", "remark", "clash"):
         # then "이름 직책" order, skipping agency abbrevs ("국세청장" -> 국세) and
         # office words ("대통령실 정책실장" -> 대통령실). "김지용 변호사 지명" wins.
         for m in _TITLE_RE.finditer(h):

@@ -5,6 +5,7 @@ heuristic output, never to be the sole author of a claim.
 """
 from __future__ import annotations
 
+import os
 import time
 
 import requests
@@ -17,6 +18,8 @@ log = get_logger("llm")
 
 def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = "") -> str:
     provider = cfg.llm_provider
+    if provider == "groq":
+        return _groq(prompt, cfg, max_tokens, system)
     if provider == "gemini":
         return _gemini(prompt, cfg, max_tokens, system)
     if provider == "anthropic":
@@ -24,6 +27,52 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
     if provider == "openai":
         return _openai(prompt, cfg, max_tokens, system)
     raise RuntimeError(f"no usable LLM provider configured (LLM_PROVIDER={provider!r})")
+
+
+# Groq — FREE, no credit card, and far steadier than the Gemini free tier.
+# OpenAI-compatible endpoint. Models tried in order when LLM_MODEL is unset.
+_GROQ_MODELS = [
+    "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it",
+]
+
+
+def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
+    key = (getattr(cfg, "groq_api_key", "") or os.environ.get("GROQ_API_KEY", "")).strip()
+    if not key:
+        raise RuntimeError("GROQ_API_KEY not set")
+    models = [cfg.llm_model] if cfg.llm_model else list(_GROQ_MODELS)
+    last = ""
+    for model in models:
+        body = {
+            "model": model, "max_tokens": max_tokens, "temperature": 0.5,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system or "You are a careful, neutral Korean news editor."},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        status = None
+        for attempt in range(3):
+            r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                              headers={"Authorization": f"Bearer {key}"},
+                              json=body, timeout=(10, 75))
+            status = r.status_code
+            if status == 200:
+                if model != models[0]:
+                    log.info("groq: using model %s", model)
+                return (r.json()["choices"][0]["message"]["content"] or "").strip()
+            try:
+                last = f"{model} -> {status}: {(r.json().get('error') or {}).get('message', '')}".strip()
+            except Exception:
+                last = f"{model} -> HTTP {status}"
+            if status in (429, 500, 502, 503) and attempt < 2:
+                time.sleep(3.0)
+                continue
+            break
+        if status in (400, 404):          # model retired / not visible -> next model
+            continue
+        break
+    raise RuntimeError(f"groq call failed ({last})")
 
 
 # tried in order when LLM_MODEL is unset. `gemini-flash-latest` is a portable

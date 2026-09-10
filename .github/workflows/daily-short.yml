@@ -49,6 +49,7 @@ jobs:
           PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}
           PS_PEXELS_KEY: ${{ secrets.PS_PEXELS_KEY }}
           PS_GEMINI_KEY: ${{ secrets.PS_GEMINI_KEY }}
+          PS_GROQ_KEY: ${{ secrets.PS_GROQ_KEY }}
           PS_OPENAI_KEY: ${{ secrets.PS_OPENAI_KEY }}
         run: |
           mkdir -p secrets
@@ -72,12 +73,15 @@ jobs:
             echo "PEXELS_API_KEY=$PS_PEXELS_KEY" >> .env
             echo "BROLL_ENABLED=true" >> .env
           fi
-          # Natural-narration rewrite. Prefer OpenAI (gpt-4o-mini — reliable,
-          # ~cents/month) when PS_OPENAI_KEY is set; else the free Gemini tier.
-          # No key -> templated narration.
+          # Natural-narration rewrite. Preference: OpenAI (paid, most reliable) ->
+          # Groq (FREE, no card, steady) -> Gemini (FREE but flaky). No key at
+          # all -> the templated explainer (explain.py) still carries background.
           if [ -n "$PS_OPENAI_KEY" ]; then
             echo "OPENAI_API_KEY=$PS_OPENAI_KEY" >> .env
             echo "LLM_PROVIDER=openai" >> .env
+          elif [ -n "$PS_GROQ_KEY" ]; then
+            echo "GROQ_API_KEY=$PS_GROQ_KEY" >> .env
+            echo "LLM_PROVIDER=groq" >> .env
           elif [ -n "$PS_GEMINI_KEY" ]; then
             echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
             echo "LLM_PROVIDER=gemini" >> .env
