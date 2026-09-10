@@ -108,21 +108,32 @@ def _tidy_caption(narration: str, limit: int) -> str:
     return cap or clip_sentence(narration, limit, ell="")
 
 
-_SENT_SPLIT = re.compile(r"(?<=[다요죠까])\.?\s+(?=[가-힣“\"'])|(?<=[.!?])\s+(?=[가-힣“\"'])")
+# split ONLY at a real sentence end — a formal ending (…습니다/…합니다/…죠/…나요)
+# or explicit punctuation. NOT after bare "…다" (which also ends "찬성보다",
+# "그에 따라" etc.), so "반대가 찬성보다 많았습니다" stays one sentence.
+_SENT_SPLIT = re.compile(
+    r"(?<=니다)\.?\s+(?=[가-힣“\"'])"
+    r"|(?<=[요죠])\.?\s+(?=[가-힣“\"'])"
+    r"|(?<=[.!?])\s+(?=[가-힣“\"'])"
+    r"|(?<=(?:했다|된다|한다|이다|았다|었다|겠다|온다|난다))\.\s+(?=[가-힣])"
+)
+_SENT_END_OK = ("니다", "니다.", "요", "요.", "죠", "죠.", ".", "!", "?")
 
 
 def _sentences(text: str) -> list[str]:
-    """Split spoken text into whole sentences (each ends on 다/요/죠/까 or .!?)."""
-    parts = [p.strip(" ·,") for p in _SENT_SPLIT.split(clean_text(text)) if p.strip(" ·,")]
+    """Split spoken text into whole sentences; a piece that doesn't end cleanly
+    is merged back so we never surface a fragment like '반대가 찬성보다'."""
+    t = clean_text(text)
+    parts = [p.strip(" ·,") for p in _SENT_SPLIT.split(t) if p.strip(" ·,")]
     out: list[str] = []
     for p in parts:
-        p = p if p[-1] in ".!?" else p + "."
-        # a very short trailing fragment ("네.") rides along with the previous one
-        if out and len(p) <= 6:
-            out[-1] = out[-1].rstrip(".") + " " + p
+        clean = p if p.endswith(_SENT_END_OK) else (p + "." if p.endswith(("다", "요", "죠")) else p)
+        rides = out and (len(p) <= 8 or not clean.endswith(_SENT_END_OK))
+        if rides:
+            out[-1] = out[-1].rstrip(".") + " " + p.rstrip(".") + "."
         else:
-            out.append(p)
-    return out or ([clean_text(text)] if text else [])
+            out.append(clean if clean.endswith(_SENT_END_OK) else clean + ".")
+    return out or ([t + "." if t and t[-1] not in ".!?" else t] if t else [])
 
 
 def _split_by_sentence(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
