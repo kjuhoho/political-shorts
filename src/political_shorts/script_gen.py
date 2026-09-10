@@ -39,7 +39,7 @@ MAX_WHAT = 1
 MAX_VIDEO_SECONDS = 38.0
 # with an LLM writing connected explanation, allow a little more room so it can
 # actually explain (still well under the 60s Shorts limit).
-MAX_VIDEO_SECONDS_LLM = 56.0
+MAX_VIDEO_SECONDS_LLM = 62.0     # the restructured ending needs room; still a Short
 _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
@@ -230,11 +230,15 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
                     segments.pop(i)
                     break
 
-    # 3) still over? drop a whole trailing sentence from the longest card
+    # 3) still over? drop a trailing sentence from the longest card — but never
+    #    from the hook or the closing 'sides'/'factcheck' (the payoff): trim
+    #    summary/what instead, and only touch sides/hook if nothing else is left.
     guard = 0
-    while total() > budget and guard < 10:
+    while total() > budget and guard < 12:
         guard += 1
-        longest = max((s for s in segments if s.get("narration")),
+        pool = [s for s in segments if s.get("narration")
+                and s["role"] not in ("hook", "sides", "factcheck", "outro")]
+        longest = max(pool or [s for s in segments if s.get("narration")],
                       key=lambda s: len(s["narration"]), default=None)
         if not longest:
             break
