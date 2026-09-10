@@ -228,9 +228,13 @@ def rewrite_segments(
         return segments, []
 
     def _clean_row(v: str) -> str:
-        v = re.sub(r"\s+", " ", v).strip(" ·,")
-        v = re.sub(r"[·…—]", " ", v).strip()
-        return v[:44].rstrip(" ,·")
+        v = re.sub(r"[·…—]", " ", re.sub(r"\s+", " ", v)).strip(" ·,")
+        if len(v) <= 52:
+            return v
+        # clip to the last sentence end / comma within the budget, never mid-word
+        head = v[:52]
+        cut = max(head.rfind("니다"), head.rfind(". "), head.rfind(", "))
+        return (head[:cut + 2] if cut >= 24 else head[:head.rfind(" ") or 52]).rstrip(" ,·")
 
     # apply — only where the model returned a sane narration for a card we have
     cand = [dict(s) for s in segments]
