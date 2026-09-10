@@ -121,9 +121,13 @@ _SENT_SPLIT = re.compile(
 _SENT_END_OK = ("니다", "니다.", ".", "!", "?")
 
 
+_CONNECTOR_LEAD = re.compile(r"^(그런데|그러나|하지만|반면|한편|또한|아울러|이에|이처럼|그리고|즉)\b")
+
+
 def _sentences(text: str) -> list[str]:
     """Split spoken text into whole sentences; a piece that doesn't end cleanly
-    is merged back so we never surface a fragment like '반대가 찬성보다'."""
+    is merged back, and a very short or bare-connector sentence rides WITH its
+    neighbour so a 4-word line never gets its own 3-second card."""
     t = clean_text(text)
     parts = [p.strip(" ·,") for p in _SENT_SPLIT.split(t) if p.strip(" ·,")]
     out: list[str] = []
@@ -134,7 +138,31 @@ def _sentences(text: str) -> list[str]:
             out[-1] = out[-1].rstrip(".") + " " + p.rstrip(".") + "."
         else:
             out.append(clean if clean.endswith(_SENT_END_OK) else clean + ".")
-    return out or ([t + "." if t and t[-1] not in ".!?" else t] if t else [])
+    # second pass: fold a CONTENTLESS short line (no number, no name, just a
+    # transition like "그런데 이걸 보는 눈은 이렇게 갈립니다") into the next
+    # sentence so it doesn't get its own 3-second card. A short line that
+    # carries a figure or a party name keeps its card.
+    def _contentless(s: str) -> bool:
+        if len(s) >= 24 or re.search(r"\d", s):
+            return False
+        if re.search(r"민주당|국민의힘|정의당|진보당|개혁신당|조국|한동훈|이재명|여당|야당", s):
+            return False
+        return bool(_CONNECTOR_LEAD.match(s)) or len(s) < 13
+
+    merged: list[str] = []
+    i = 0
+    while i < len(out):
+        cur = out[i]
+        if _contentless(cur) and i + 1 < len(out) and len(cur) + len(out[i + 1]) <= 82:
+            merged.append(cur.rstrip(".") + " " + out[i + 1])
+            i += 2
+        elif _contentless(cur) and merged and len(merged[-1]) + len(cur) <= 82:
+            merged[-1] = merged[-1].rstrip(".") + " " + cur
+            i += 1
+        else:
+            merged.append(cur)
+            i += 1
+    return merged or ([t + "." if t and t[-1] not in ".!?" else t] if t else [])
 
 
 def _split_by_sentence(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -223,8 +251,10 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
 
     # 4) final polish: every spoken line is a clean, complete sentence.
     #    If trimming left a card with no complete sentence, drop it outright
-    #    (what/reaction are optional) rather than voice a fragment.
-    _ESSENTIAL = {"hook", "summary", "factcheck", "outro"}
+    #    rather than voice a fragment ("…한국리서치가 지난 ."). Only hook /
+    #    factcheck / outro are truly load-bearing; summary/what/sides are
+    #    droppable.
+    _ESSENTIAL = {"hook", "factcheck", "outro"}
     kept: list[dict[str, Any]] = []
     for s in segments:
         if not s.get("narration"):
@@ -547,6 +577,14 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     title = [_glyph_safe(t)[:14] for t in (llm_title or make_title(headline, entities, frame))]
     from .hook import pick_actor as _pa
     topic = _pa(headline, entities, frame)
+    # the on-screen chip shouldn't say "이재명" for a poll/policy story that only
+    # mentions him in passing — use a short headline phrase instead.
+    _prez = entities.president or ""
+    if topic and topic == _prez and _prez not in clean_text(headline):
+        m = re.search(r"[‘'\"“]([^’'\"”]{2,16})[’'\"”]", headline) \
+            or re.match(r"\s*([가-힣]{2,6}(?:\s[가-힣]{2,6})?)", clean_text(_headline(headline)))
+        if m and m.group(1).strip():
+            topic = m.group(1).strip()
 
     # 7) images (keyless CC) + optional b-roll video -------------
     images: list[dict[str, Any]] = []
