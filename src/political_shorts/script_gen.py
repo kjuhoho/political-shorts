@@ -45,8 +45,8 @@ _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
              "factcheck": 70, "sides": 104, "outro": 0}
-_NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 102, "reaction": 76,
-                 "factcheck": 66, "sides": 124, "outro": 78}
+_NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 130, "reaction": 76,
+                 "factcheck": 66, "sides": 132, "outro": 78}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -149,11 +149,15 @@ def _sentences(text: str) -> list[str]:
     # sentence so it doesn't get its own 3-second card. A short line that
     # carries a figure or a party name keeps its card.
     def _contentless(s: str) -> bool:
-        if len(s) >= 24 or re.search(r"\d", s):
+        if len(s) >= 26 or re.search(r"\d", s):
             return False
         if re.search(r"민주당|국민의힘|정의당|진보당|개혁신당|조국|한동훈|이재명|여당|야당", s):
             return False
-        return bool(_CONNECTOR_LEAD.match(s)) or len(s) < 13
+        # a bare transition: starts with a connector, OR is just "…엇갈렸습니다 /
+        # …갈립니다 / …다릅니다" with no subject worth its own card
+        if bool(_CONNECTOR_LEAD.match(s)) or len(s) < 13:
+            return True
+        return bool(re.search(r"(엇갈|갈립|갈렸|나뉘|나뉜|다릅니다|다른데|팽팽)", s))
 
     merged: list[str] = []
     i = 0
