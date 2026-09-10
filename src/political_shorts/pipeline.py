@@ -116,9 +116,20 @@ def _process_story(
         safety = review_script(script, cfg)
         out.safety_warnings = safety.warnings
 
+        # FACT CHECK ENGINE gate: a serious-allegation word on a single, low-
+        # confidence source -> build for review, never auto-publish.
+        fc = script.get("factcheck", {}) or {}
+        needs_review = bool(fc.get("review_required"))
+        if needs_review:
+            out.safety_warnings = [*out.safety_warnings,
+                                   f"POLITICAL_CONTENT_REVIEW_REQUIRED — {fc.get('review_reason', '')}"]
+            log.warning("cluster %d POLITICAL_CONTENT_REVIEW_REQUIRED: %s",
+                        cluster_id, fc.get("review_reason", ""))
+
         with connect(cfg.db_path) as conn:
             script_id = save_script(
-                conn, cluster_id, script, safety.to_dict(), approved=safety.passed
+                conn, cluster_id, script, safety.to_dict(),
+                approved=safety.passed and not needs_review,
             )
 
         if not safety.passed:
@@ -151,7 +162,10 @@ def _process_story(
         report.built += 1
         log.info("cluster %d BUILT -> %s (%.1fs)", cluster_id, name, render.duration_s)
 
-        if do_publish:
+        if do_publish and needs_review:
+            out.reason = "POLITICAL_CONTENT_REVIEW_REQUIRED — built, not published"
+            log.warning("cluster %d built but held from publish (fact-check review)", cluster_id)
+        if do_publish and not needs_review:
             from .publishers import get_publishers
 
             any_ok = False

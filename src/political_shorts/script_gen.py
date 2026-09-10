@@ -454,6 +454,11 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     entities = detect_entities(titles, summaries)
     frame = detect_frame(titles, summaries)
 
+    # FACT CHECK ENGINE — structured, source-attributed units (FACT / QUOTE /
+    # INTERPRETATION / UNCERTAIN) with cross-source confidence.
+    from .factcheck import extract as _fc_extract
+    fc = _fc_extract(rows)
+
     n_sources = len({r["source_name"] for r in rows})
     leans = sorted({r["source_lean"] for r in rows})
     headline = _headline(lead["title"])
@@ -548,9 +553,10 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                          "narration": explain.significance(frame),
                          "source": lead["source_name"], "multi_source": multi})
 
-    # 4) fact-check — the ONE confirmed fact (+ the on-screen 사실/주장/전망 table)
+    # 4) fact-check — the ONE confirmed fact (+ the on-screen 사실/주장/전망 table),
+    #    now source-attributed and confidence-ranked by the FACT CHECK ENGINE.
     if cfg.factcheck_segment:
-        fc_rows = make_factcheck(analysis, n_sources)
+        fc_rows = fc.rows(n_sources) or make_factcheck(analysis, n_sources)
         fact_row = next((r for r in fc_rows if r["tone"] == "ok"), None)
         fact_t = to_polite(clip_sentence(fact_row["text"], 46).rstrip(" .…")) if fact_row else ""
         if fact_t:
@@ -593,9 +599,10 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             _LEAN_KO = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송", "center": "중도"}
             meta = {
                 "source_text": f"{titles}\n{summaries}",
-                "facts": [f.text for f in analysis.facts],
-                "claims": [c.text for c in analysis.claims],
-                "interps": [i.text for i in analysis.interpretations],
+                # classified + cross-source-verified view (FACT CHECK ENGINE)
+                "facts": [u.text for u in fc.facts] or [f.text for f in analysis.facts],
+                "claims": [u.text for u in fc.quotes] or [c.text for c in analysis.claims],
+                "interps": [u.text for u in fc.interpretations] or [i.text for i in analysis.interpretations],
                 "entities": {"president": entities.president,
                              "politicians": entities.politicians,
                              "parties": entities.parties},
@@ -749,6 +756,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         "sources": _sources_from_rows(rows),
         "counts": {"facts": len(analysis.facts), "claims": len(analysis.claims),
                    "interpretations": len(analysis.interpretations)},
+        "factcheck": fc.to_dict(),
         "disclaimer": DISCLAIMER,
         "style": cfg.headline_style,
     }
