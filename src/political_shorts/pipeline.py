@@ -41,6 +41,8 @@ class StoryOutcome:
     status: str = ""          # built | skipped | error
     video_path: str = ""
     reason: str = ""
+    quality_score: int = 0
+    quality_band: str = ""
     safety_warnings: list[str] = field(default_factory=list)
     publishes: list[dict[str, Any]] = field(default_factory=list)
 
@@ -149,6 +151,16 @@ def _process_story(
         if getattr(render, "timeline", None) is not None:
             meta["timeline"] = render.timeline.to_list()
             meta["duration_s"] = render.duration_s
+
+        # QUALITY CHECKER — score the finished video, gate publish.
+        from .quality import check as _qc
+        qr = _qc(script, meta, video_path, cfg, safety.to_dict())
+        meta["quality"] = qr.to_dict()
+        out.quality_score = qr.score
+        out.quality_band = qr.band
+        if not qr.publishable:
+            out.safety_warnings = [*out.safety_warnings,
+                                   f"QUALITY {qr.band} ({qr.score}/100) — 자동 게시 보류"]
         meta_path = write_sidecar(meta, video_path)
 
         with connect(cfg.db_path) as conn:
@@ -162,10 +174,13 @@ def _process_story(
         report.built += 1
         log.info("cluster %d BUILT -> %s (%.1fs)", cluster_id, name, render.duration_s)
 
-        if do_publish and needs_review:
-            out.reason = "POLITICAL_CONTENT_REVIEW_REQUIRED — built, not published"
-            log.warning("cluster %d built but held from publish (fact-check review)", cluster_id)
-        if do_publish and not needs_review:
+        hold_publish = needs_review or not qr.publishable
+        if do_publish and hold_publish:
+            out.reason = (f"보류: {'REVIEW_REQUIRED' if needs_review else qr.band} "
+                          f"(quality {qr.score}/100) — 빌드 완료, 게시 안 함")
+            log.warning("cluster %d built but held from publish (%s, quality=%d/%s)",
+                        cluster_id, "review" if needs_review else "quality", qr.score, qr.band)
+        if do_publish and not hold_publish:
             from .publishers import get_publishers
 
             any_ok = False

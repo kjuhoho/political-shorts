@@ -749,6 +749,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         "segments": segments,
         "images": images,
         "est_seconds": est_seconds,
+        "source_text": clean_text(f"{titles} {summaries}")[:4000],
         "length_class": lp.cls,
         "length_label": lp.label,
         "target_seconds": lp.target_s,
