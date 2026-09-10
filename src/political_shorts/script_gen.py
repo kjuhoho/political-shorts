@@ -50,8 +50,14 @@ _NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 102, "reaction": 76,
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
-# a chunk of text ending on a Korean predicate ending or sentence punctuation
-_SENT_CHUNK = re.compile(r".+?(?:[다요죠까](?=[\s\"')\]]|$)|[.!?](?=\s|$))")
+# a chunk ending on a REAL sentence end: a formal "…니다" ending, a plain-style
+# verb ending, or .!? — NOT a bare "…다" ("찬성보다", "그에 따라" would falsely
+# match and drop the rest of the sentence).
+_SENT_CHUNK = re.compile(
+    r".+?(?:니다(?=[\s\"')\].!?]|$)"
+    r"|(?:했다|한다|된다|이다|아니다|았다|었다|겠다|온다|난다|봤다|랬다)(?=[\s\"')\].!?]|$)"
+    r"|[.!?](?=\s|$))"
+)
 _TRAIL_JUNK = re.compile(
     r"[,·]?\s*[가-힣]{0,12}?(라며|하며|면서|는데|지만|따르면|밝히며|말하며|위해|대해|"
     r"관해|향해|에서|으로|에게|께|와|과|에|을|를|은|는|이|가|의|도|만|고|며|면)$"
