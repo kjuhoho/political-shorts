@@ -184,10 +184,21 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             scenes.append(sc)
             continue
 
-        # factcheck: the on-screen 사실/주장/전망 TABLE stays put, but the
-        # spoken explanation ("확인된 사실은 … 이게 무슨 뜻이냐면 …") is long, so
-        # split it too — every sub-scene re-shows the same table, camera moves.
-        pieces = _merge_short(_split_long(nar)) or [nar]
+        # the hook is ONE punch beat — never clause-split it, even at ~4s.
+        if role == "hook":
+            sc = dict(seg)
+            sc["scene"] = {"emphasis": emphasis_of(nar), "hold_media": False,
+                           "min_s": SCENE_MIN_S, "max_s": SCENE_MAX_S,
+                           "_punch": bool(_EMPH.match(nar))}
+            sc["sub"] = 0
+            scenes.append(sc)
+            continue
+
+        # factcheck: the on-screen 사실/주장/전망 TABLE stays put, but the spoken
+        # explanation ("확인된 사실은 … 이게 무슨 뜻이냐면 …") is long — split it into
+        # a FEW longer beats (~4.5s) so the same table isn't re-cut a dozen times.
+        cap_s = 4.6 if role == "factcheck" else SCENE_MAX_S
+        pieces = _merge_short(_split_long(nar, cap_s), ceil=cap_s + 0.7) or [nar]
         for j, piece in enumerate(pieces):
             piece = _tidy(piece)
             if not piece:
