@@ -89,14 +89,19 @@ def _split_long(text: str, max_s: float = SCENE_MAX_S) -> list[str]:
         a, b = text[:cut].strip(" ,·"), text[cut:].strip(" ,·")
         if a and b:
             return _split_long(a, max_s) + _split_long(b, max_s)
-    # last resort — nearest word break to the middle
+    # last resort — nearest word break to the middle, but never between a
+    # number and the next number ("'5년 | 10년") or right after an opening quote
     mid = len(text) // 2
-    left = text.rfind(" ", 0, mid)
-    right = text.find(" ", mid)
-    sp = right if (left < 6 and right != -1) else left
-    if sp <= 6 or sp >= len(text) - 6:
-        return [text]
-    return _split_long(text[:sp].strip(), max_s) + _split_long(text[sp:].strip(), max_s)
+    cands = [m.start() for m in re.finditer(r"\s+", text) if 6 <= m.start() <= len(text) - 6]
+    cands.sort(key=lambda c: abs(c - mid))
+    for sp in cands:
+        before, after = text[:sp].rstrip(), text[sp:].lstrip()
+        if re.search(r"\d\s*[년월개원배%]?$", before) and re.match(r"[\"'(]?\d", after):
+            continue
+        if before.endswith(("\"", "'", "(", "‘", "“")):
+            continue
+        return _split_long(before, max_s) + _split_long(after, max_s)
+    return [text]
 
 
 def _merge_short(pieces: list[str], min_s: float = SCENE_MIN_S,
@@ -196,9 +201,14 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         # factcheck: the on-screen 사실/주장/전망 TABLE stays put, but the spoken
         # explanation ("확인된 사실은 … 이게 무슨 뜻이냐면 …") is long — split it into
-        # a FEW longer beats (~4.5s) so the same table isn't re-cut a dozen times.
+        # a FEW longer beats (~4.5s, at most 4) so the same table isn't re-cut a
+        # dozen times.
         cap_s = 4.6 if role == "factcheck" else SCENE_MAX_S
         pieces = _merge_short(_split_long(nar, cap_s), ceil=cap_s + 0.7) or [nar]
+        if role == "factcheck" and len(pieces) > 4:
+            head = pieces[:3]
+            head.append(" ".join(p.rstrip(" .·,") for p in pieces[3:]).strip())
+            pieces = head
         for j, piece in enumerate(pieces):
             piece = _tidy(piece)
             if not piece:
