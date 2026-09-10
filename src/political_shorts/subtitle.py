@@ -163,7 +163,13 @@ def emphasis_terms(text: str) -> list[str]:
 def valid_llm_subtitle(s: str) -> str:
     """Accept an LLM-written subtitle only if it's a sane short line. The model
     wrote it deliberately — only light cleanup, no aggressive trimming."""
-    s = clean_text(s or "").strip().strip('"\'“”').rstrip(" .·,")
+    s = clean_text(s or "").strip().rstrip(" .·,")
+    if len(s) >= 2 and s[0] in "\"'“‘" and s[-1] in "\"'”’":   # matched outer quotes
+        s = s[1:-1].strip()
+    for q in ("'", '"'):                        # a lone quote from a clipped span
+        if s.count(q) % 2:
+            s = s.replace(q, "")
+    s = s.strip(" .·,'\"")
     if not (3 <= len(s) <= 30) or s.count(" ") > 7:
         return ""
     # bounce a line that still ends on an obvious connective / dangling particle
