@@ -27,7 +27,7 @@ log = get_logger("script_llm")
 # the on-screen caption can show the WHOLE line (read-along) without spilling
 # past the caption plate — a card == one bite-sized, fully-readable thought.
 _LLM_LIMIT = {"hook": 48, "summary": 52, "what": 70, "reaction": 70,
-              "factcheck": 80, "outro": 72}
+              "factcheck": 58, "sides": 116, "outro": 72}
 
 _SYSTEM = (
     "당신은 정치에 관심 없는 일반인에게 뉴스를 풀어 설명하는 한국어 내레이션 작가입니다. "
@@ -52,8 +52,15 @@ _SYSTEM = (
     "9) 이 영상은 유튜브 쇼츠입니다. 카드 순서대로 몰입 곡선을 만들 것:\n"
     "  - hook·summary(앞): 기사에서 가장 세거나 의외인 사실·숫자·장면을 먼저 "
     "던져 첫 3초에 시선을 붙잡을 것. 단, 낚시·과장·비하 없이 '사실 자체의 무게'로.\n"
-    "  - what·reaction(중반): '그런데', '여기서 진짜 핵심은', '문제는 이겁니다' "
-    "같은 말로 긴장을 이어가 끝까지 보게 할 것.\n"
+    "  - what(중반): '그런데', '여기서 진짜 핵심은', '문제는 이겁니다' 같은 말로 "
+    "긴장을 이어가 끝까지 보게 할 것.\n"
+    "  - factcheck(뒷부분): '확인된 사실은 이겁니다'로 시작해, 원문에서 교차 "
+    "검증되는 사실 딱 한 가지만 짧게.\n"
+    "  - sides(뒷부분): '그런데 이걸 보는 눈은 이렇게 갈립니다'로 시작해, 갈리는 "
+    "입장을 반드시 주체를 밝혀 설명할 것 — '민주당은 …이라는 이유로 …라고 봅니다', "
+    "'국민의힘은 …이라는 이유로 …라고 봅니다' (또는 진보·보수, 해당 정당·인물). "
+    "각 입장에 '왜 그렇게 보는지' 한 줄 근거를 붙여 끝까지 볼 이유를 줄 것. "
+    "어느 쪽도 편들지 말고 같은 무게로.\n"
     "  - outro(마지막): 한 줄로 정리한 뒤, 구독·좋아요·알림 설정을 자연스럽게 "
     "요청하는 문장을 넣을 것 (예: '이런 정치 이슈 30초로 정리해 드립니다. 구독과 "
     "좋아요 눌러주시면 큰 힘이 됩니다').\n"
@@ -82,12 +89,15 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]]) -> str:
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []))}\n\n"
         f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 5)}\n\n"
         f"[등장 인물·정당] {who}\n"
+        f"[보도 매체 성향] {', '.join(meta.get('leans', [])) or '(불명)'}\n"
         f"[이 기사의 핵심 인물/주제] {meta.get('topic', '') or '(없음)'}\n\n"
         f"[다시 쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"
         "각 카드의 draft를 규칙대로 다시 쓰고, 눈길을 끄는 2줄 title도 지어 "
         "JSON으로만 답하세요. "
         '예: {"title":["김성수 후보 처남 전세","특혜 맞나?"],'
-        '"hook":"새 내레이션...","what":"...","reaction":"...","outro":"..."}'
+        '"hook":"새 내레이션...","what":"...","factcheck":"확인된 사실은...",'
+        '"sides":"그런데 이걸 보는 눈은 이렇게 갈립니다. 민주당은... 국민의힘은...",'
+        '"outro":"..."}'
     )
 
 
@@ -95,7 +105,7 @@ def _norm(v: str) -> str:
     return re.sub(r"\s+", " ", v).strip()
 
 
-_ROLE_KEYS = {"hook", "summary", "what", "reaction", "factcheck", "outro"}
+_ROLE_KEYS = {"hook", "summary", "what", "reaction", "factcheck", "sides", "outro"}
 
 
 def _title_lines(v: Any) -> list[str]:

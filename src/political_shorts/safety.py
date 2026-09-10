@@ -108,7 +108,7 @@ def review_script(script: dict[str, Any], cfg: Settings | None = None) -> Safety
     absolute = _hits(text, ABSOLUTE)
     if absolute:
         ok = any(
-            seg.get("role") in {"reaction", "factcheck"}
+            seg.get("role") in {"reaction", "sides", "factcheck"}
             and any(a in _seg_text(seg) for a in absolute)
             for seg in segments
         )
@@ -151,8 +151,8 @@ def review_script(script: dict[str, Any], cfg: Settings | None = None) -> Safety
         real_leans = leans - {"wire", "center"}
         if len(real_leans) == 1:
             rep.warnings.append(f"편집 성향 치우침({next(iter(real_leans))}) — 다른 성향 매체 보강 권장")
-        if not any(s.get("role") == "reaction" for s in segments):
-            rep.warnings.append("양쪽 반응 카드가 없음 — 쟁점 사안이면 균형 보완 권장")
+        if not any(s.get("role") in {"reaction", "sides"} for s in segments):
+            rep.warnings.append("양쪽 입장 카드가 없음 — 쟁점 사안이면 균형 보완 권장")
 
     # WARN: headline-only body ---------------------------------
     first_what = next((s for s in segments if s.get("role") == "what"), None)

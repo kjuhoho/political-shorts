@@ -59,7 +59,8 @@ def build_metadata(
     lines.append(f"{date_str} 이슈, 통신·진보·보수 매체를 종합해 30초로 정리했습니다.")
     lines.append("")
     lines.append("▶ 30초 요약")
-    _KLABEL = {"outro": "마무리", "hook": "오늘의 이슈"}
+    _KLABEL = {"outro": "마무리", "hook": "오늘의 이슈",
+               "factcheck": "확인된 사실", "sides": "갈리는 입장"}
     for seg in script.get("segments", []):
         k = seg.get("kicker") or _KLABEL.get(seg.get("role", ""), "")
         cap = truncate(clean_text(seg.get("caption", "")), 64)

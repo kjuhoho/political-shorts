@@ -44,9 +44,9 @@ _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
-             "factcheck": 74, "outro": 0}
+             "factcheck": 70, "sides": 104, "outro": 0}
 _NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 76, "reaction": 76,
-                 "factcheck": 84, "outro": 78}
+                 "factcheck": 66, "sides": 118, "outro": 78}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -365,6 +365,19 @@ def _reaction_line(claims: list) -> str:
     return f'온라인에서는 "{c0}"라는 반응이 나옵니다.'
 
 
+def _sides_line(claims: list, interps: list) -> str:
+    """Seed for the closing 'where the sides differ' card. The LLM then adds a
+    one-line 'why' to each side. '' when there's no real dispute to lay out."""
+    core = _reaction_line(claims)     # "국민의힘은 '…', 민주당은 '…' 입장입니다."
+    if core:
+        return "그런데 이 사안을 보는 눈은 이렇게 갈립니다. " + core
+    if interps:
+        it = clip_sentence(clean_text(interps[0].text), 70).rstrip(" .…")
+        if len(it) >= 10:
+            return f"확정된 건 아니지만, 정치권에서는 {it}는 전망이 나옵니다."
+    return ""
+
+
 def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]:
     cfg = cfg or settings
     with connect(cfg.db_path) as conn:
@@ -433,30 +446,25 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                          "cues": f.cues})
     # (no genuinely new fact -> skip the 'what' card)
 
-    # 4) reaction (attributed) --------------------------------------
-    reaction = _reaction_line(analysis.claims)
-    if reaction:
-        segments.append({"role": "reaction", "kicker": "양쪽 반응",
-                         "caption": clip_sentence(reaction, CAPTION_LIMIT + 8),
-                         "narration": reaction, "attributed": True,
-                         "cues": analysis.claims[0].cues if analysis.claims else []})
-
-    # 5) fact-check ------------------------------------------------
+    # 4) fact-check — the ONE confirmed fact (+ the on-screen 사실/주장/전망 table)
     if cfg.factcheck_segment:
         fc_rows = make_factcheck(analysis, n_sources)
         fact_row = next((r for r in fc_rows if r["tone"] == "ok"), None)
-        fact_t = clip_sentence(fact_row["text"], 40).rstrip(" .…") if fact_row else ""
-        has_claim = any(r["tone"] == "claim" for r in fc_rows)
-        has_interp = any(r["tone"] == "warn" for r in fc_rows)
-        narr = "핵심만 짚습니다. "
-        if fact_t:
-            narr += f"확인된 건 이겁니다. {fact_t}. "
-        if has_claim or has_interp:
-            narr += "나머지는 아직 한쪽 주장이거나 전망입니다. 자세한 건 더보기란을 보세요."
-        else:
-            narr += "자세한 출처는 더보기란에 있습니다."
-        segments.append({"role": "factcheck", "kicker": "팩트체크",
+        fact_t = clip_sentence(fact_row["text"], 44).rstrip(" .…") if fact_row else ""
+        narr = f"확인된 사실은 이겁니다. {fact_t}." if fact_t else \
+               f"{n_sources}개 매체가 이 사안을 나란히 보도했습니다."
+        segments.append({"role": "factcheck", "kicker": "확인된 사실",
                          "caption": "팩트체크", "rows": fc_rows, "narration": narr})
+
+    # 5) sides — "그런데 해석은 갈립니다": each side's position, attributed by
+    #    party/진영, with room for the LLM to add a one-line 'why'. Sits right
+    #    before the outro so the back half still has something to watch.
+    sides = _sides_line(analysis.claims, analysis.interpretations)
+    if sides:
+        segments.append({"role": "sides", "kicker": "갈리는 입장",
+                         "caption": clip_sentence(sides, CAPTION_LIMIT + 12),
+                         "narration": sides, "attributed": True,
+                         "cues": analysis.claims[0].cues if analysis.claims else []})
 
     # 6) outro — one-line wrap + a subscribe/like call to action
     lean_note = ("여러 매체 보도를 종합했습니다."
@@ -478,6 +486,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             from .hook import pick_actor as _pick_actor
             from .script_llm import rewrite_segments
 
+            _LEAN_KO = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송", "center": "중도"}
             meta = {
                 "source_text": f"{titles}\n{summaries}",
                 "facts": [f.text for f in analysis.facts],
@@ -486,6 +495,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                 "entities": {"president": entities.president,
                              "politicians": entities.politicians,
                              "parties": entities.parties},
+                "leans": [_LEAN_KO.get(x, x) for x in leans],
                 "topic": _pick_actor(headline, entities, frame),
             }
             segments, llm_title = rewrite_segments(
