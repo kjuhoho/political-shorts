@@ -111,13 +111,14 @@ def _tidy_caption(narration: str, limit: int) -> str:
 # split ONLY at a real sentence end — a formal ending (…습니다/…합니다/…죠/…나요)
 # or explicit punctuation. NOT after bare "…다" (which also ends "찬성보다",
 # "그에 따라" etc.), so "반대가 찬성보다 많았습니다" stays one sentence.
+# narration is formal "~습니다" style, so a real sentence break is: an ending in
+# "…니다" (+ optional period), OR explicit .!? punctuation. Bare "…요"/"…죠" is
+# NOT a split point ("구독과 좋아요 눌러주세요" must not break at "좋아요").
 _SENT_SPLIT = re.compile(
     r"(?<=니다)\.?\s+(?=[가-힣“\"'])"
-    r"|(?<=[요죠])\.?\s+(?=[가-힣“\"'])"
     r"|(?<=[.!?])\s+(?=[가-힣“\"'])"
-    r"|(?<=(?:했다|된다|한다|이다|았다|었다|겠다|온다|난다))\.\s+(?=[가-힣])"
 )
-_SENT_END_OK = ("니다", "니다.", "요", "요.", "죠", "죠.", ".", "!", "?")
+_SENT_END_OK = ("니다", "니다.", ".", "!", "?")
 
 
 def _sentences(text: str) -> list[str]:
