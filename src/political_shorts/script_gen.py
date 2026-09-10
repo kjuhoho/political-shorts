@@ -45,8 +45,8 @@ _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
              "factcheck": 70, "sides": 104, "outro": 0}
-_NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 76, "reaction": 76,
-                 "factcheck": 66, "sides": 118, "outro": 78}
+_NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 102, "reaction": 76,
+                 "factcheck": 66, "sides": 124, "outro": 78}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -153,10 +153,10 @@ def _sentences(text: str) -> list[str]:
     i = 0
     while i < len(out):
         cur = out[i]
-        if _contentless(cur) and i + 1 < len(out) and len(cur) + len(out[i + 1]) <= 82:
-            merged.append(cur.rstrip(".") + " " + out[i + 1])
+        if _contentless(cur) and i + 1 < len(out):
+            merged.append(cur.rstrip(".") + " " + out[i + 1])   # fold forward always
             i += 2
-        elif _contentless(cur) and merged and len(merged[-1]) + len(cur) <= 82:
+        elif _contentless(cur) and merged:
             merged[-1] = merged[-1].rstrip(".") + " " + cur
             i += 1
         else:
@@ -583,10 +583,12 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     topic = _pa(headline, entities, frame)
     # the on-screen chip shouldn't say "이재명" for a poll/policy story that only
     # mentions him in passing — use a short headline phrase instead.
-    _prez = entities.president or ""
-    if topic and topic == _prez and _prez not in clean_text(headline):
+    _h = clean_text(headline)
+    _is_person = bool(topic) and (topic == (entities.president or "\0")
+                                  or topic in (entities.politicians or []))
+    if _is_person and topic not in _h:      # a politician the headline doesn't name
         m = re.search(r"[‘'\"“]([^’'\"”]{2,16})[’'\"”]", headline) \
-            or re.match(r"\s*([가-힣]{2,6}(?:\s[가-힣]{2,6})?)", clean_text(_headline(headline)))
+            or re.match(r"\s*([가-힣]{2,6}(?:\s?[가-힣]{2,6}){0,2})", clean_text(_headline(headline)))
         if m and m.group(1).strip():
             topic = m.group(1).strip()
 
