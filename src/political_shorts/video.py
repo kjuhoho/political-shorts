@@ -855,12 +855,15 @@ def _segment_video_clip(
     else:
         px = f"(iw-{w})*{prog}" if idx % 2 == 0 else f"(iw-{w})*(1-{prog})"
     vbg = (f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=increase,"
-           f"crop={w}:{h}:x='{px}':y='(ih-{h})/2',setsar=1,fps={fps}[bg]")
+           f"crop={w}:{h}:x='{px}':y='(ih-{h})/2',"
+           f"tpad=stop_mode=clone:stop_duration={duration + 0.5:.2f},"
+           f"setsar=1,fps={fps}[bg]")
 
-    # loop the b-roll enough to cover the (possibly read-time-extended) scene —
-    # an explicit count is more reliable inside a filtergraph than -stream_loop -1
+    # cover the (possibly read-time-extended) scene: loop the source (an explicit
+    # count when we can measure it, else -1), then FREEZE the last frame with
+    # tpad so the clip always fills `duration` even if the loop under-runs.
     src = probe_duration(broll, cfg) or 0.0
-    loops = 0 if src <= 0 else max(0, int(duration / max(src, 0.2)) + 1)
+    loops = int(duration / max(src, 0.2)) + 1 if src > 0.2 else -1
     cmd = [
         ffmpeg, "-y", "-loglevel", "error",
         "-stream_loop", str(loops), "-i", str(broll),
@@ -1054,6 +1057,18 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
         _assemble(ffmpeg, clip_paths, clip_durs, narration_mp4, cfg, transitions)
         total_dur = tl.total_s                 # timeline already nets the xfade overlaps
 
+        # reconcile with the ASSEMBLED file — if xfade/ffmpeg landed elsewhere,
+        # scale the timeline to it so meta["timeline"] never lies about sync.
+        asm = probe_duration(narration_mp4, cfg)
+        if asm > 1.0 and tl.total_s > 1.0 and abs(asm - tl.total_s) > 0.8:
+            log.warning("assembled %.1fs != timeline %.1fs — rescaling timeline", asm, tl.total_s)
+            k = asm / tl.total_s
+            for s in tl.scenes:
+                s.start = round(s.start * k, 3); s.end = round(s.end * k, 3)
+                s.clip_s = round(s.clip_s * k, 3)
+            tl.total_s = round(asm, 3)
+            total_dur = tl.total_s
+
         n_imgs = sum(1 for p in seg_images if p)
         media_desc = f"{n_imgs} imgs" + (f", {n_broll} b-roll" if n_broll else "")
         if _bgm_usable(cfg):
@@ -1100,15 +1115,25 @@ def _mix_bgm(ffmpeg: str, video_in: Path, bgm: Path, duration: float, out_path: 
     ])
 
 
+def _ffprobe_bin(cfg: Settings) -> str | None:
+    cand = [(cfg.ffmpeg_path or "ffmpeg").replace("ffmpeg", "ffprobe"),
+            shutil.which("ffprobe") or "",
+            str(Path(shutil.which(cfg.ffmpeg_path or "ffmpeg") or "").parent / "ffprobe")]
+    for c in cand:
+        if c and (shutil.which(c) or Path(c).exists()):
+            return c
+    return None
+
+
 def probe_duration(path: Path, cfg: Settings | None = None) -> float:
     cfg = cfg or settings
-    ffprobe = (cfg.ffmpeg_path or "ffmpeg").replace("ffmpeg", "ffprobe")
-    if not (shutil.which(ffprobe) or Path(ffprobe).exists()):
+    exe = _ffprobe_bin(cfg)
+    if not exe:
         return 0.0
     try:
         out = subprocess.run(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
-            capture_output=True, text=True, check=True,
+            [exe, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=25,
         )
         return float(json.loads(out.stdout)["format"]["duration"])
     except Exception:
