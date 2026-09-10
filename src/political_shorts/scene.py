@@ -228,8 +228,7 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "_punch": bool(emph) and bool(_EMPH.match(piece)),
             }
             if j:
-                sc["kicker"] = ""
-                sc.pop("num", None)
+                sc["kicker"] = ""       # keep `num` — the top bar shows the section on every scene
             sc["sub"] = j
             scenes.append(sc)
             if len(scenes) >= _MAX_SCENES:

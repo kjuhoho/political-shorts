@@ -693,8 +693,14 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         s = re.sub(r"[^가-힣0-9%\s?!'\"·]", " ", s).replace('"', "'")
         return re.sub(r"\s+", " ", s).strip(" ·")
 
-    title = [_title_safe(_glyph_safe(t))[:16]
-             for t in (llm_title or make_title(headline, entities, frame))]
+    def _title_line(s: str, limit: int = 16) -> str:
+        s = _title_safe(_glyph_safe(s)).strip()
+        if len(s) <= limit:
+            return s
+        cut = s.rfind(" ", 0, limit + 1)         # never mid-word
+        return (s[:cut] if cut >= limit - 6 else s[:limit]).rstrip(" ·'\"")
+
+    title = [_title_line(t) for t in (llm_title or make_title(headline, entities, frame))]
     from .hook import pick_actor as _pa
     topic = _chip_safe(_pa(headline, entities, frame))
     # famous names on the chip are GOOD (user wants 한동훈/이재명 up front) — only

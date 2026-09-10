@@ -1,0 +1,62 @@
+{
+  "_note": "Central design system for the rendered shorts. Change the look here, not in video.py.",
+
+  "safe_margin_pct": 0.055,
+  "title_safe_top_pct": 0.16,
+
+  "title": {
+    "max_lines": 2,
+    "size": 88,
+    "min_size": 54,
+    "line_height": 1.16,
+    "color": [255, 226, 61],
+    "plate_rgba": [6, 8, 14, 224],
+    "hook_phase_roles": ["hook"]
+  },
+
+  "topbar": {
+    "size": 40,
+    "chip_rgba": [245, 202, 66, 235],
+    "chip_ink": [12, 14, 20, 255],
+    "section_names": {
+      "summary": "배경",
+      "what": "핵심",
+      "factcheck": "확인된 사실",
+      "sides": "갈리는 입장",
+      "reaction": "정치권 반응",
+      "outro": "정리"
+    }
+  },
+
+  "subtitle": {
+    "max_lines": 3,
+    "size_ladder": [[14, 92], [24, 84], [34, 76], [46, 68], [999, 62]],
+    "min_size": 56,
+    "line_height": 1.38,
+    "wrap_width_pct": 0.88,
+    "panel_rgba": [8, 10, 16, 238],
+    "panel_radius": 32,
+    "panel_pad": [44, 34],
+    "y_center_pct": 0.46,
+    "fg": [245, 246, 248],
+    "impact_color": [243, 61, 61]
+  },
+
+  "source": {
+    "size": 30,
+    "color": [200, 208, 220, 235],
+    "y_from_bottom": 130
+  },
+
+  "progress": {
+    "gap": 7,
+    "height": 6,
+    "y": 14,
+    "on_rgba": [245, 202, 66, 255],
+    "off_rgba": [255, 255, 255, 70]
+  },
+
+  "transition_ms": { "cut": 30, "dissolve": 140, "fade": 300, "slide": 200, "zoom": 180, "push": 200 },
+
+  "scene_seconds": { "short": [1.5, 3.0], "normal": [3.0, 5.0], "important": [4.0, 7.0] }
+}

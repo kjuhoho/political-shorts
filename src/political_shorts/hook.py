@@ -329,12 +329,21 @@ HOOK_TAIL = [
 ]
 
 
+def _word_trim(s: str, limit: int) -> str:
+    """<= limit chars, cut on a space (never mid-word), no ellipsis glyph."""
+    s = s.strip()
+    if len(s) <= limit:
+        return s
+    cut = s.rfind(" ", 0, limit + 1)
+    return (s[:cut] if cut >= limit - 6 else s[:limit]).rstrip(" ·'\"")
+
+
 def _issue_phrase(headline: str, frame: Frame) -> str:
     """A short noun-ish phrase for the {issue} slot."""
     h = clean_text(headline)
     # take the chunk before the first strong punctuation / ellipsis
     h = re.split(r"[…·\-—\"'“”]|하며|라며|밝혀|주장", h)[0].strip()
-    return truncate(h, 18) or "이번 사안"
+    return _word_trim(h, 15) or "이번 사안"
 
 
 def _result_word(frame: Frame) -> str:
@@ -454,7 +463,7 @@ def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
     # headline's leading noun phrase — used for {issue} and when there's no
     # usable actor. e.g. "국회 신속처리안건 90일 단축..." -> "국회 신속처리안건"
     head_np = re.split(r"[…·\-—\"'“”,]|하며|라며|밝혀|주장|지적|공세|비판", h)[0].strip()
-    head_np = truncate(head_np, 16) or "오늘의 정치 이슈"
+    head_np = _word_trim(head_np, 15) or "오늘의 정치 이슈"
     # a bare-noun actor ("논란", "여야") -> lead with the headline phrase instead
     if actor in _NOT_TARGET or not (2 <= len(actor) <= 6) or actor in {"여야", "여당", "야당"}:
         return [head_np, random.choice(["무슨 일일까요?", "왜 논란일까?", "진짜일까?"])]
@@ -472,7 +481,7 @@ def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
         "result": _result_word(frame), "issueword": iw,
     }
     l1, l2 = random.choice(tmpls)
-    out = [truncate(l1.format(**slots), 16), truncate(l2.format(**slots), 16)]
+    out = [_word_trim(l1.format(**slots), 17), _word_trim(l2.format(**slots), 17)]
     return [x for x in out if x]
 
 

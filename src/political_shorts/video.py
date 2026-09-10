@@ -25,12 +25,24 @@ from PIL import (
     Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps,
 )
 
-from .config import Settings, settings
+from .config import CONFIG_DIR, Settings, settings
 from .logging_setup import get_logger
 from .textutil import clean_text
 from .tts import Narration, estimate_caption_seconds, synthesize_segments
 
 log = get_logger("video")
+
+
+def _style() -> dict:
+    """Central design system (config/video_style.json). Cached; falls back to {}
+    so a missing / broken file never breaks a render — callers use .get(...)."""
+    if not hasattr(_style, "_c"):
+        try:
+            _style._c = json.loads((CONFIG_DIR / "video_style.json").read_text("utf-8"))
+        except Exception as exc:  # pragma: no cover
+            log.warning("video_style.json not loaded (%s) — using built-in defaults", exc)
+            _style._c = {}
+    return _style._c
 
 # One neutral accent for every card — NO party colours (see NEUTRALITY.md).
 # Same news-caption yellow as the thumbnail / persistent title.
@@ -215,40 +227,54 @@ def _overlay_png(
     f_rtag = _font(cfg.font_label or cfg.font_bold_path, 36)
     f_row = _font(cfg.font_body or cfg.font_path, 44)
 
-    # thin progress ticks along the very top
-    tick_w = (w - 2 * margin - (total - 1) * 7) / max(1, total)
+    st = _style()
+    st_title = st.get("title", {})
+    st_top = st.get("topbar", {})
+    st_prog = st.get("progress", {})
+
+    # ---- progress indicator along the very top ----------------------------
+    gap = int(st_prog.get("gap", 7))
+    py, ph = int(st_prog.get("y", 14)), int(st_prog.get("height", 6))
+    on_c = tuple(st_prog.get("on_rgba", (*accent, 255)))
+    off_c = tuple(st_prog.get("off_rgba", (255, 255, 255, 70)))
+    tick_w = max(6.0, (w - 2 * margin - (total - 1) * gap) / max(1, total))
     for i in range(total):
-        x0 = margin + i * (tick_w + 7)
-        _round_rect(draw, [x0, 14, x0 + tick_w, 20], 3, accent if i <= idx else (255, 255, 255, 70))
+        x0 = margin + i * (tick_w + gap)
+        _round_rect(draw, [x0, py, x0 + tick_w, py + ph], 3, on_c if i <= idx else off_c)
 
-    # ---- 1) PERSISTENT TITLE (identical on every card) ----------------------
-    # Placed in the upper-middle so it survives the square/4:5 thumbnail crop.
-    title_lines = (script.get("title") or [script.get("headline", "")])[:2]
-    while f_title.size > 54 and any(
-        draw.textlength(t, font=f_title) > max_w for t in title_lines
-    ):
-        f_title = _font(cfg.font_title or cfg.font_bold_path, f_title.size - 4)
-    line_h = int(f_title.size * 1.16)
-    tblock = line_h * len(title_lines)
-    ty = int(h * 0.185)
-    # a rounded dark plate behind the title so it reads over any photo
-    _round_rect(draw, [0, ty - 26, w, ty + tblock + 22], 0, (6, 8, 14, 224))
-    y = ty
-    for t in title_lines:
-        _text_stroke(draw, (margin, y), t, f_title, (*TITLE_YELLOW, 255), 4, (*STROKE_DARK, 255))
-        y += line_h
+    hook_phase = role in st_title.get("hook_phase_roles", ["hook"])
+    ty = int(h * st.get("title_safe_top_pct", 0.16)) + 40
 
-    # ---- 2) small numbered section chip (just under the title) ------------
-    num = seg.get("num")
-    topic = script.get("topic") or ""
-    label = f"{num}  {topic}".strip() if num else (topic or seg.get("kicker", ""))
-    if label:
-        fc = _font(cfg.font_label or cfg.font_bold_path, 40)
-        ly = ty + tblock + 30
-        cw = draw.textlength(label, font=fc)
-        _round_rect(draw, [margin - 12, ly - 8, margin + cw + 20, ly + fc.size + 14], 10,
-                    (*accent, 235))
-        draw.text((margin + 4, ly + 2), label, font=fc, fill=(12, 14, 20, 255))
+    if hook_phase:
+        # ---- 0-3s: the HOOK title, big, on a plate. Only here — not every frame.
+        title_lines = [t for t in (script.get("title") or [script.get("headline", "")])[:2] if t]
+        tsize = int(st_title.get("size", 88))
+        f_t = _font(cfg.font_title or cfg.font_bold_path, tsize)
+        while f_t.size > int(st_title.get("min_size", 54)) and any(
+                draw.textlength(t, font=f_t) > max_w for t in title_lines):
+            f_t = _font(cfg.font_title or cfg.font_bold_path, f_t.size - 4)
+        line_h = int(f_t.size * st_title.get("line_height", 1.16))
+        tblock = line_h * len(title_lines)
+        _round_rect(draw, [0, ty - 26, w, ty + tblock + 22], 0,
+                    tuple(st_title.get("plate_rgba", (6, 8, 14, 224))))
+        yy = ty
+        for t in title_lines:
+            _text_stroke(draw, (margin, yy), t, f_t,
+                         (*tuple(st_title.get("color", TITLE_YELLOW))[:3], 255), 4, (*STROKE_DARK, 255))
+            yy += line_h
+    else:
+        # ---- after the hook: a compact numbered SECTION label, top-left.
+        num = seg.get("num")
+        section = st_top.get("section_names", {}).get(role, "") or seg.get("kicker", "")
+        label = (f"{int(num):02d}  {section}".strip() if num else section).strip()
+        if label:
+            fc = _font(cfg.font_label or cfg.font_bold_path, int(st_top.get("size", 40)))
+            ly = ty
+            cw = draw.textlength(label, font=fc)
+            _round_rect(draw, [margin - 12, ly - 8, margin + cw + 22, ly + fc.size + 14], 10,
+                        tuple(st_top.get("chip_rgba", (*accent, 235))))
+            draw.text((margin + 5, ly + 2), label, font=fc,
+                      fill=tuple(st_top.get("chip_ink", (12, 14, 20, 255))))
 
     # ---- 3) BODY / CAPTION ------------------------------------------------
     if role == "factcheck" and seg.get("rows"):
@@ -266,23 +292,27 @@ def _overlay_png(
     else:
         # FULL-SCRIPT SUBTITLE — the words the voice is saying, verbatim, on a
         # rounded dark plate. Large + high contrast + generous line spacing so
-        # any age reads it comfortably; hard floor on the size, max 3 lines.
+        # any age reads it comfortably; hard floor on the size, max N lines.
+        sst = _style().get("subtitle", {})
         cap = seg.get("caption", "")
         clen = len(cap)
-        bsize = (92 if clen <= 14 else 84 if clen <= 24 else 76 if clen <= 34
-                 else 68 if clen <= 46 else 62)
-        f_body = _font(cfg.font_body or cfg.font_bold_path, bsize)
-        f_hot = _font(cfg.font_body or cfg.font_bold_path, int(bsize * 1.16))
-        lines = _wrap(draw, cap, f_body, int(w * 0.88))
-        while len(lines) > 3 and bsize > 52:            # shrink once to fit 3 lines
+        ladder = sst.get("size_ladder", [[14, 92], [24, 84], [34, 76], [46, 68], [999, 62]])
+        bsize = next((s for c, s in ladder if clen <= c), ladder[-1][1])
+        min_size = int(sst.get("min_size", 56))
+        max_lines = int(sst.get("max_lines", 3))
+        lh_mult = float(sst.get("line_height", 1.38))
+        wrap_w = int(w * sst.get("wrap_width_pct", 0.88))
+        _bf = lambda s: _font(cfg.font_body or cfg.font_bold_path, s)
+        f_body, f_hot = _bf(bsize), _bf(int(bsize * 1.16))
+        lines = _wrap(draw, cap, f_body, wrap_w)
+        while len(lines) > max_lines and bsize > min_size:
             bsize -= 6
-            f_body = _font(cfg.font_body or cfg.font_bold_path, bsize)
-            f_hot = _font(cfg.font_body or cfg.font_bold_path, int(bsize * 1.16))
-            lines = _wrap(draw, cap, f_body, int(w * 0.88))
-        lines = lines[:3]
-        lh = int(bsize * 1.38)                          # generous line spacing
+            f_body, f_hot = _bf(bsize), _bf(int(bsize * 1.16))
+            lines = _wrap(draw, cap, f_body, wrap_w)
+        lines = lines[:max_lines]
+        lh = int(bsize * lh_mult)
         block = lh * len(lines)
-        y0 = int(h * 0.46) - block // 2
+        y0 = int(h * sst.get("y_center_pct", 0.46)) - block // 2
 
         def _lw(ln: str) -> float:
             parts = [t for t in ln.split(" ") if t]
@@ -291,10 +321,10 @@ def _overlay_png(
                     + draw.textlength(" ", font=f_body) * max(0, len(parts) - 1))
 
         widest = max((_lw(ln) for ln in lines), default=0)
-        pad_x, pad_y = 44, 34
+        pad_x, pad_y = sst.get("panel_pad", [44, 34])
         px0 = max(20, int(w / 2 - widest / 2) - pad_x)
         _round_rect(draw, [px0, y0 - pad_y, w - px0, y0 + block + pad_y - int(lh - bsize)],
-                    32, (8, 10, 16, 216))
+                    int(sst.get("panel_radius", 32)), tuple(sst.get("panel_rgba", (8, 10, 16, 222))))
         # a short accent tab centred above the plate
         draw.rectangle([int(w / 2 - 46), y0 - pad_y - 12, int(w / 2 + 46), y0 - pad_y - 4],
                        fill=(*accent, 255))
