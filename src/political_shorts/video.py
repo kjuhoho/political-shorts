@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 
@@ -633,11 +634,17 @@ def _assign_images(
     guessed onto a card."""
     portraits = [(im["path"], (im.get("query") or "").strip())
                  for im in images if im.get("path") and im.get("kind") == "portrait"]
-    # context media for the non-person cards: b-roll VIDEO clips first (when
-    # collect_footage found any), then still location photos.
+    # context media for the non-person cards. INTERLEAVE b-roll video + still
+    # photos so consecutive context scenes don't all land on video (the
+    # repetition detector was flagging "broll x4" runs).
     videos = [im["path"] for im in images if im.get("path") and im.get("kind") == "video"]
     photos = [im["path"] for im in images if im.get("path") and im.get("kind") == "photo"]
-    context = videos + photos
+    context: list[str] = []
+    for a, b in zip_longest(videos, photos):
+        if a:
+            context.append(a)
+        if b:
+            context.append(b)
     if not portraits and not context:
         return [None] * len(segments)
 

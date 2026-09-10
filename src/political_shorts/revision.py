@@ -18,16 +18,27 @@ from typing import Any
 
 MAX_PASSES = 1
 
-
-def decide(qr) -> str:
-    if not qr.fact_check_ok or not qr.political_safety_ok:
-        return "HOLD"
-    return {"PASS": "PASS", "MINOR_REVISION": "PASS",
-            "REVISION_REQUIRED": "REVISE", "REGENERATE": "HOLD"}.get(qr.band, "HOLD")
+# issues `apply()` can actually do something about
+_FIXABLE = {"length-off-band", "static-span", "repeat-zoom", "repeat-transition",
+            "repeat-media"}
 
 
 def _codes(qr) -> set[str]:
     return {i.get("code") for i in getattr(qr, "issues", [])}
+
+
+def decide(qr) -> str:
+    if not qr.fact_check_ok or not qr.political_safety_ok:
+        return "HOLD"
+    if qr.band == "REGENERATE":
+        return "HOLD"
+    if qr.band == "REVISION_REQUIRED":
+        return "REVISE"
+    # MINOR band: only bother re-rendering if there's a concrete, fixable defect
+    # and real headroom to gain.
+    if qr.band == "MINOR_REVISION" and qr.score < 88 and (_codes(qr) & _FIXABLE):
+        return "REVISE"
+    return "PASS"
 
 
 def apply(script: dict[str, Any], qr) -> tuple[dict[str, Any], list[str]]:

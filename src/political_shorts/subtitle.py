@@ -86,19 +86,42 @@ _CHUNK_BREAKS = (
 )
 
 
-def _atoms(text: str) -> list[str]:
-    """Smallest clean clause pieces of `text` (split only at _CHUNK_BREAKS)."""
+def _wordsplit(s: str, limit: int) -> list[str]:
+    """Split a seam-less run at word boundaries so no single subtitle line is
+    absurdly long. Never cuts mid-word."""
+    if len(s) <= limit:
+        return [s]
+    out, cur = [], ""
+    for wd in s.split(" "):
+        cand = f"{cur} {wd}".strip()
+        if not cur or len(cand) <= limit:
+            cur = cand
+        else:
+            out.append(cur)
+            cur = wd
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _atoms(text: str, hard: int = int(_CHUNK_MAX * 1.35)) -> list[str]:
+    """Smallest clean clause pieces of `text` (split at _CHUNK_BREAKS); a piece
+    with no inner seam that is still way over budget is word-split as a last
+    resort so a scene never carries a 4-line wall of text."""
     cuts = sorted({m.end() for rx in _CHUNK_BREAKS for m in rx.finditer(text)})
-    out: list[str] = []
+    raw: list[str] = []
     prev = 0
     for c in cuts:
         piece = text[prev:c].strip()
         if piece:
-            out.append(piece)
+            raw.append(piece)
         prev = c
     tail = text[prev:].strip()
     if tail:
-        out.append(tail)
+        raw.append(tail)
+    out: list[str] = []
+    for p in (raw or [text]):
+        out.extend(_wordsplit(p, hard) if len(p) > hard else [p])
     return out or [text]
 
 

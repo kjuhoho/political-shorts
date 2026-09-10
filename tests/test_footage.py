@@ -166,3 +166,26 @@ def test_assign_images_prefers_video_for_context_cards():
     out = _assign_images(segs, imgs, topic="김승원")
     # the content card takes the b-roll clip before the still photo
     assert out[1] == "V_assembly.webm"
+
+
+def test_assign_images_interleaves_video_and_photo_context():
+    from political_shorts.video import _assign_images
+
+    # 6 context cards, 3 b-roll clips + 3 stills available. Before the fix the
+    # context list was videos+photos so the first cards all got video and the
+    # repetition detector flagged a "broll x4" run.
+    segs = ([{"role": "hook", "caption": "훅", "narration": "", "kicker": ""}]
+            + [{"role": "what", "caption": f"본문 {i}", "narration": "", "kicker": ""}
+               for i in range(6)])
+    imgs = [{"path": f"V_{i}.webm", "kind": "video", "query": "국회"} for i in range(3)]
+    imgs += [{"path": f"L_{i}.jpg", "kind": "photo", "query": "거리"} for i in range(3)]
+    out = _assign_images(segs, imgs, topic="")
+    ctx = [p for p in out[1:] if p]
+    vids = [p for p in ctx if p.startswith("V_")]
+    stills = [p for p in ctx if p.startswith("L_")]
+    assert vids and stills                          # both kinds actually used
+    # no run of 3+ b-roll clips back to back
+    run = 0
+    for p in ctx:
+        run = run + 1 if p.startswith("V_") else 0
+        assert run < 3

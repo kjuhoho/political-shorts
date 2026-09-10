@@ -21,6 +21,19 @@ def test_decide():
     assert revision.decide(_qr("MINOR_REVISION", safety_ok=False)) == "HOLD"
 
 
+def test_decide_minor_band_revises_only_on_a_fixable_defect():
+    # a concrete pacing defect with headroom -> worth one re-render
+    revise = _qr("MINOR_REVISION", issues=[{"code": "static-span"}])
+    assert revision.decide(revise) == "REVISE"
+    # a MINOR ding we can't act on -> ship with the warning, don't burn a render
+    keep = _qr("MINOR_REVISION", issues=[{"code": "lean-skew"}])
+    assert revision.decide(keep) == "PASS"
+    # already close to PASS -> not worth it even with a fixable code
+    near = _qr("MINOR_REVISION", issues=[{"code": "static-span"}])
+    near.score = 89
+    assert revision.decide(near) == "PASS"
+
+
 def test_apply_shortens_read_time_on_length_issue():
     script = {"segments": [
         {"role": "what", "scene": {"min_read_s": 5.6}},

@@ -32,6 +32,20 @@ def test_no_clean_seam_stays_whole():
     assert readable_chunks(s) == [s]      # rather than cut "물러났" mid-word
 
 
+def test_very_long_seamless_run_is_word_split_not_left_as_a_wall():
+    # 57 chars, no clause seam anywhere -> must still break at spaces so no
+    # single on-screen chunk is a 4-line wall of text.
+    s = ("여야 원내대표 회동 무산 이후 협상 재개 시점 관련 "
+         "뚜렷한 진전 없이 대치 국면 지속 전망 우세")
+    chunks = readable_chunks(s)
+    assert len(chunks) >= 2
+    assert all(len(c) <= 54 for c in chunks)
+    assert "".join(c.replace(" ", "") for c in chunks) == s.replace(" ", "")
+    # every break landed on a space, so no word was cut
+    for c in chunks:
+        assert c == c.strip() and "  " not in c
+
+
 def test_read_seconds_has_a_floor():
     assert read_seconds("짧다") >= 1.4
     assert read_seconds("아" * 40) > read_seconds("아" * 10)
