@@ -149,13 +149,27 @@ def check(script: dict[str, Any], meta: dict[str, Any], video_path: Path,
         if (t.get("dur", 0) > 7.5 and t.get("role") != "factcheck"):
             ding("visual", 3, "static-span",
                  f"{t['start']}s 장면이 {t['dur']}s로 김 — 정지 느낌", t.get("start"), t.get("end"))
-    # repeated transition 3x in a row
-    txs = [t.get("transition") for t in tl]
-    for i in range(len(txs) - 2):
-        if txs[i] and txs[i] == txs[i + 1] == txs[i + 2]:
-            ding("visual", 2, "repeat-transition",
-                 f"같은 전환({txs[i]})이 3회 이상 연속", tl[i].get("start"))
-            break
+    # ---------- repetition detector ----------
+    def _run_of(key: str, n: int, code: str, msg: str, pts: float):
+        run, start_i = 1, 0
+        for i in range(1, len(tl)):
+            same = tl[i].get(key) and tl[i].get(key) == tl[i - 1].get(key)
+            run = run + 1 if same else 1
+            if same and run == n:
+                ding("visual", pts, code, f"{msg}: {tl[i].get(key)} ×{n}",
+                     tl[start_i].get("start"), tl[i].get("end"))
+                return
+            if not same:
+                start_i = i
+    _run_of("transition", 3, "repeat-transition", "같은 전환 연속", 2)
+    _run_of("zoom", 3, "repeat-zoom", "같은 카메라 무빙 연속", 3)
+    _run_of("layout", 5, "repeat-layout", "같은 레이아웃 연속", 2)
+    _run_of("media", 4, "repeat-media", "같은 배경 종류 연속", 3)
+    # a long stretch on the drawn backdrop (no real photo/video)
+    bd = sum(1 for t in tl if t.get("media") == "backdrop")
+    if tl and bd / len(tl) > 0.7:
+        ding("visual", 4, "backdrop-heavy",
+             f"장면 {bd}/{len(tl)}이 그린 배경 — 관련 사진/영상 부족")
 
     # ---------- AUDIO ----------
     silent = [s for s in segs if not s.get("narration") and s.get("role") != "outro"]

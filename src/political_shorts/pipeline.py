@@ -146,16 +146,34 @@ def _process_story(
         name = f"{stamp}_c{cluster_id}_{_safe_slug(script['headline'])}.mp4"
         video_path = cfg.output_dir / name
 
-        render = render_video(script, video_path, cfg)
-        meta = build_metadata(script, safety.to_dict(), video_path, cfg)
-        if getattr(render, "timeline", None) is not None:
-            meta["timeline"] = render.timeline.to_list()
-            meta["duration_s"] = render.duration_s
-
-        # QUALITY CHECKER — score the finished video, gate publish.
         from .quality import check as _qc
-        qr = _qc(script, meta, video_path, cfg, safety.to_dict())
+        from . import revision as _rev
+
+        def _render_and_check() -> tuple[Any, dict[str, Any], Any]:
+            rn = render_video(script, video_path, cfg)
+            mt = build_metadata(script, safety.to_dict(), video_path, cfg)
+            if getattr(rn, "timeline", None) is not None:
+                mt["timeline"] = rn.timeline.to_list()
+                mt["duration_s"] = rn.duration_s
+            return rn, mt, _qc(script, mt, video_path, cfg, safety.to_dict())
+
+        render, meta, qr = _render_and_check()
+        history = [qr.to_dict()]
+
+        # AUTO REVISION — one targeted pass for the fixable middle band.
+        if _rev.decide(qr) == "REVISE" and getattr(cfg, "auto_revision", True):
+            script, changes = _rev.apply(script, qr)
+            if changes:
+                log.info("cluster %d auto-revision: %s", cluster_id, "; ".join(changes))
+                render, meta, qr2 = _render_and_check()
+                history.append(qr2.to_dict())
+                if qr2.score >= qr.score:
+                    qr = qr2
+                meta["revision"] = {"applied": changes, "score_before": history[0]["score"],
+                                    "score_after": qr.score}
+
         meta["quality"] = qr.to_dict()
+        meta["quality_history"] = history
         out.quality_score = qr.score
         out.quality_band = qr.band
         if not qr.publishable:

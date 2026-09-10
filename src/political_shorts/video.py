@@ -975,6 +975,18 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                 _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i, zoom)
             clip_paths.append(clip)
             clip_durs.append(duration)
+            # record what this scene actually used, for the repetition checks
+            _kind = "broll" if is_broll else ("backdrop" if not media else next(
+                (im.get("kind", "photo") for im in script.get("images", [])
+                 if im.get("path") == media), "photo"))
+            tl.scenes[i].zoom = zoom
+            tl.scenes[i].media = _kind
+            try:
+                from .layout import layout_id
+                tl.scenes[i].layout = "table" if seg.get("role") == "factcheck" \
+                    else f"LAYOUT_{layout_id(seg.get('scene_type', ''))}"
+            except Exception:
+                pass
 
         # MEASURE each rendered clip (ffprobe) and retime the timeline to what
         # ffmpeg actually produced — the timeline must match the file, not a

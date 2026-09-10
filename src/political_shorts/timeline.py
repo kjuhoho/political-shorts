@@ -33,6 +33,9 @@ class TScene:
     start: float = 0.0         # absolute start on the finished video
     end: float = 0.0           # absolute end (== next scene's start)
     source: dict = field(default_factory=dict)
+    zoom: str = ""             # camera move (set by the renderer)
+    media: str = ""            # "portrait" | "photo" | "broll" | "backdrop"
+    layout: str = ""           # LAYOUT_NN id
 
 
 @dataclass
@@ -47,7 +50,8 @@ class Timeline:
              "dur": round(s.end - s.start, 2), "role": s.role, "type": s.scene_type,
              "caption": s.caption, "audio_s": round(s.audio_s, 2),
              "read_s": round(s.read_s, 2), "transition": s.transition,
-             "xfade_s": round(s.xfade_s, 3), "source": s.source}
+             "xfade_s": round(s.xfade_s, 3), "source": s.source,
+             "zoom": s.zoom, "media": s.media, "layout": s.layout}
             for s in self.scenes
         ]
 
