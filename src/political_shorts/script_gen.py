@@ -258,19 +258,21 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
     #    rather than voice a fragment ("…한국리서치가 지난 ."). Only hook /
     #    factcheck / outro are truly load-bearing; summary/what/sides are
     #    droppable.
-    _ESSENTIAL = {"hook", "factcheck", "outro"}
+    _ESSENTIAL = {"hook", "summary", "factcheck", "outro"}
     kept: list[dict[str, Any]] = []
     for s in segments:
         if not s.get("narration"):
             kept.append(s)
             continue
         clean = _spoken(s["narration"])
+        if not clean and s["role"] in _ESSENTIAL:
+            # keep the last complete sentence, or a clean clip, rather than lose
+            # a load-bearing card
+            whole = re.split(r"(?<=니다[.!?])\s+|(?<=[.!?])\s+", s["narration"])
+            clean = next((w for w in whole if w.strip().endswith(("니다", "니다.", ".", "!", "?"))),
+                         "") or clip_sentence(s["narration"], _NARR_CAP.get(s["role"], 60)).rstrip(" ,·.") + "."
         if clean:
             s["narration"] = clean
-            kept.append(s)
-        elif s["role"] in _ESSENTIAL:
-            s["narration"] = _spoken(s["narration"] + " ") or clip_sentence(
-                s["narration"], _NARR_CAP.get(s["role"], 60)).rstrip(" ,·.") + "."
             kept.append(s)
         else:
             log.info("dropped %s card — no clean sentence after trim", s["role"])
