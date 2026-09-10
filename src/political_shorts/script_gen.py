@@ -107,6 +107,49 @@ def _tidy_caption(narration: str, limit: int) -> str:
         cap = t
     return cap or clip_sentence(narration, limit, ell="")
 
+
+_SENT_SPLIT = re.compile(r"(?<=[다요죠까])\.?\s+(?=[가-힣“\"'])|(?<=[.!?])\s+(?=[가-힣“\"'])")
+
+
+def _sentences(text: str) -> list[str]:
+    """Split spoken text into whole sentences (each ends on 다/요/죠/까 or .!?)."""
+    parts = [p.strip(" ·,") for p in _SENT_SPLIT.split(clean_text(text)) if p.strip(" ·,")]
+    out: list[str] = []
+    for p in parts:
+        p = p if p[-1] in ".!?" else p + "."
+        # a very short trailing fragment ("네.") rides along with the previous one
+        if out and len(p) <= 6:
+            out[-1] = out[-1].rstrip(".") + " " + p
+        else:
+            out.append(p)
+    return out or ([clean_text(text)] if text else [])
+
+
+def _split_by_sentence(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Explode each spoken card into one card per sentence so the on-screen
+    caption tracks the voice exactly. fact-check, caption-only and
+    already-single-sentence cards pass straight through."""
+    out: list[dict[str, Any]] = []
+    for s in segments:
+        nar = s.get("narration", "")
+        if s.get("role") == "factcheck" or not nar:
+            out.append(s)
+            continue
+        sents = _sentences(nar)
+        if len(sents) <= 1:
+            out.append(s)
+            continue
+        for i, sent in enumerate(sents):
+            sub = dict(s)
+            sub["narration"] = sent
+            sub["caption"] = sent if len(sent) <= 82 else _tidy_caption(sent, 78)
+            if i:                       # only the first piece keeps the kicker chip
+                sub["kicker"] = ""
+            sub["sub"] = i
+            out.append(sub)
+    return out
+
+
 DISCLAIMER = (
     "이 영상은 공개된 언론 보도를 쉽게 풀어 정리한 개인 제작물입니다. "
     "인용·수치는 원문 확인이 필요하고, 해석·전망은 제작자 견해가 아니라 보도 내용을 옮긴 것입니다."
@@ -471,6 +514,12 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         if s["role"] not in ("outro",):
             n += 1
             s["num"] = n
+
+    # --- one sentence per card, so the caption and the voice stay in lockstep.
+    #     (a 2-sentence 'what' card used to show only sentence 1 while the voice
+    #     read sentence 2 with no caption.) fact-check / caption-only cards and
+    #     already-single-sentence cards pass through unchanged. ---
+    segments = _split_by_sentence(segments)
 
     est_seconds = round(sum(_seg_seconds(s) for s in segments), 1)
     title = [_glyph_safe(t)[:14] for t in (llm_title or make_title(headline, entities, frame))]
