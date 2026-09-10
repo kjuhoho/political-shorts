@@ -107,6 +107,18 @@ def test_oversized_card_is_skipped_others_applied(monkeypatch):
     assert out[1]["narration"] == "여야가 합의해 통과시켰습니다."   # unchanged
 
 
+def test_llm_subtitle_is_attached_separately_from_narration(monkeypatch):
+    payload = json.dumps({
+        "what": "여야가 막판까지 맞섰지만 결국 합의해 예산안을 통과시켰습니다.",
+        "subtitles": {"what": "여야 합의, 예산안 통과"},
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    out = _rw(_segs(), META, _cfg(), BASE)
+    what = next(s for s in out if s["role"] == "what")
+    assert what["_llm_sub"] == "여야 합의, 예산안 통과"
+    assert what["_llm_sub"] != what["narration"]      # screen != voice
+
+
 def test_rewrite_that_adds_a_safety_block_is_rejected(monkeypatch):
     # inject a slur from safety.HARMFUL -> the rewrite gains a block the
     # templated version didn't have, so it must be discarded

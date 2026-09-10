@@ -195,7 +195,8 @@ def _split_by_sentence(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for i, sent in enumerate(sents):
             sub = dict(s)
             sub["narration"] = sent
-            sub["caption"] = sent if len(sent) <= 82 else _tidy_caption(sent, 78)
+            # caption is the card's ONE compressed key message (set upstream) —
+            # every sentence-piece keeps it; only the voice changes per piece
             if i:                       # only the first piece keeps the kicker chip
                 sub["kicker"] = ""
             sub["sub"] = i
@@ -617,20 +618,22 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         caps=_NARR_CAP_LLM if llm_on else _NARR_CAP,
     )
 
-    # --- caption == what's being said, so the viewer reads ALONG with the
-    #     voice. Cards are short enough now that the whole line fits the plate;
-    #     only fall back to a clean clip if a line runs long. ---
+    # --- Subtitle Script, SEPARATE from the narration. The voice reads the full
+    #     connected sentences; the screen shows ONE compressed key message per
+    #     card (subtitle.beat_caption), not a transcript. ---
+    from . import subtitle as _sub
     n = 0
     for s in segments:
         nar = _glyph_safe(s.get("narration", ""))
         if s["role"] == "factcheck":
             s["caption"] = clip_sentence(s.get("caption", "팩트체크"), 46, ell="..")
-        elif s["role"] in ("hook", "outro") and (not llm_on) and not s.get("narration"):
-            s["caption"] = _glyph_safe(clip_sentence(s.get("caption", ""), 46, ell=".."))
+        elif s["role"] == "outro" and not nar:
+            s["caption"] = _glyph_safe(clip_sentence(s.get("caption", "구독과 좋아요"), 46, ell=".."))
         elif nar:
-            # full sentence when it fits the plate (~82 chars / 4-5 lines),
-            # else a clean clip that still ends on a complete clause
-            s["caption"] = nar if len(nar) <= 82 else _tidy_caption(nar, 78)
+            s["caption"] = _glyph_safe(
+                s.get("_llm_sub")                       # LLM-written key message
+                or _sub.beat_caption(nar, s["role"],
+                                     fallback=s.get("kicker") or _actor or "오늘의 이슈"))
         s["narration"] = nar
         if s["role"] not in ("outro",):
             n += 1

@@ -215,11 +215,9 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             sc = dict(seg)
             sc["narration"] = piece
-            # factcheck keeps its table caption ("팩트체크"); every other card's
-            # caption IS the spoken line (read-along lockstep)
-            if role != "factcheck":
-                sc["caption"] = piece
-            emph = emphasis_of(piece)
+            # the caption is the card's ONE compressed key message (subtitle.py),
+            # NOT this spoken slice — inherited from `seg`, kept on every scene.
+            emph = emphasis_of(piece) or emphasis_of(sc.get("caption", ""))
             sc["scene"] = {
                 "emphasis": emph,
                 "hold_media": j > 0,          # sub-scene keeps the same image

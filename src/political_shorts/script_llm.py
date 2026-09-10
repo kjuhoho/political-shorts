@@ -66,6 +66,12 @@ _SYSTEM = (
     "…라고 봅니다.' / '국민의힘(보수 쪽)은 …라는 이유로 …라고 봅니다.' 각 진영에 "
     "'왜 그렇게 보는지' 근거를 붙여 2~3문장. 전환어만 있는 문장 금지. 편들지 말 것.\n"
     "  - outro: 한 줄 정리 + '구독과 좋아요 눌러주시면 큰 힘이 됩니다' 류의 요청.\n\n"
+    "subtitles(화면 자막): 음성과 별개로, 각 카드의 '핵심 메시지'를 화면에 띄울 "
+    "짧은 자막. 음성 문장을 그대로 쓰지 말고 14자 이내로 압축. 한 화면에 하나의 "
+    "메시지만. 조사·연결어미로 끝내지 말고 명사나 '~다'로 끝낼 것. "
+    "예: summary 음성이 '김승원은 정책을 총괄하는 참모입니다. 3일 사퇴했습니다'면 "
+    "자막은 '김승원 정책실장 전격 사퇴'. {\"summary\":\"…\",\"what\":\"…\","
+    "\"factcheck\":\"…\",\"sides\":\"…\",\"outro\":\"…\"}\n\n"
     "title(화면 상단 2줄 제목): 실제 올라간 인기 영상 제목 형식을 따를 것 — "
     "1줄은 유명 인물/사건을 구체적으로(예: '한동훈 녹취록 공개', '이재명 대통령 임기 "
     "발언'), 2줄은 구어체 궁금증 종결(예: '유출 경위 조사할까?', '무슨 일일까요?', "
@@ -74,6 +80,7 @@ _SYSTEM = (
     "출력은 JSON 하나만: "
     '{"title": ["1줄","2줄"], "summary": "...", "what": "...", '
     '"factcheck": "...", "sides": "...", "outro": "...", '
+    '"subtitles": {"summary":"…","what":"…","factcheck":"…","sides":"…","outro":"…"}, '
     '"facts_table": {"사실":"...","주장":"...","전망":"..."}}. '
     "문자열 안 인용은 홑따옴표(')만."
 )
@@ -131,10 +138,11 @@ def _title_lines(v: Any) -> list[str]:
 _FC_TAGS = ("사실", "주장", "전망")
 
 
-def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
-    """-> ({role: narration}, [title1, title2], {사실/주장/전망: text}). Tolerates
-    the shapes a small model actually emits: flat {"hook": "..."}, nested
-    {"hook": {"narration": "..."}}, an echoed {"cards": [...]}, or a bare list.
+def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str], dict[str, str]]:
+    """-> ({role: narration}, [title1, title2], {사실/주장/전망: text},
+    {role: subtitle}). Tolerates the shapes a small model actually emits: flat
+    {"hook": "..."}, nested {"hook": {"narration": "..."}}, an echoed
+    {"cards": [...]}, or a bare list.
     """
     txt = raw.strip()
     if txt.startswith("```"):
@@ -157,7 +165,7 @@ def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
         except Exception:
             continue
     if obj is None:
-        return {}, [], {}
+        return {}, [], {}, {}
     title = _title_lines(obj.get("title")) if isinstance(obj, dict) else []
     ftab: dict[str, str] = {}
     _raw_ft = obj.get("facts_table") if isinstance(obj, dict) else None
@@ -166,6 +174,15 @@ def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
             kk = str(k).strip()
             if kk in _FC_TAGS and str(v).strip():
                 ftab[kk] = _norm(str(v))[:60]
+    subs: dict[str, str] = {}
+    _raw_sub = obj.get("subtitles") if isinstance(obj, dict) else None
+    if isinstance(_raw_sub, dict):
+        from .subtitle import valid_llm_subtitle
+        for k, v in _raw_sub.items():
+            kk = str(k).strip()
+            vv = valid_llm_subtitle(str(v))
+            if kk in _ROLE_KEYS and vv:
+                subs[kk] = vv
 
     def _text(v: Any) -> str:
         if isinstance(v, str):
@@ -192,7 +209,7 @@ def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
                 t = _text(v)
                 if t:
                     out[str(k)] = t
-    return out, title, ftab
+    return out, title, ftab, subs
 
 
 def rewrite_segments(
@@ -213,15 +230,16 @@ def rewrite_segments(
     new: dict[str, str] = {}
     title: list[str] = []
     ftab: dict[str, str] = {}
+    subs: dict[str, str] = {}
     last_exc = ""
     for attempt in range(3):                 # retry timeouts / unparseable re-gens
         try:
-            raw = complete(payload, cfg, max_tokens=1400, system=_SYSTEM)
+            raw = complete(payload, cfg, max_tokens=1500, system=_SYSTEM)
         except Exception as exc:  # pragma: no cover - network dependent
             last_exc = str(exc)
             log.info("llm rewrite: call %d failed (%s), retrying", attempt + 1, last_exc[:80])
             continue
-        new, title, ftab = _parse(raw)
+        new, title, ftab, subs = _parse(raw)
         if new:
             break
         log.info("llm rewrite: response %d unparseable, retrying", attempt + 1)
@@ -251,6 +269,8 @@ def rewrite_segments(
             continue
         s["narration"] = narr
         s.pop("caption", None)               # re-derived cleanly in script_gen
+        if subs.get(s["role"]):              # LLM-written on-screen subtitle
+            s["_llm_sub"] = subs[s["role"]]
         changed += 1
     if not changed:
         return segments, []
