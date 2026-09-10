@@ -323,11 +323,37 @@ def _overlay_png(
         widest = max((_lw(ln) for ln in lines), default=0)
         pad_x, pad_y = sst.get("panel_pad", [44, 34])
         px0 = max(20, int(w / 2 - widest / 2) - pad_x)
-        _round_rect(draw, [px0, y0 - pad_y, w - px0, y0 + block + pad_y - int(lh - bsize)],
-                    int(sst.get("panel_radius", 32)), tuple(sst.get("panel_rgba", (8, 10, 16, 222))))
-        # a short accent tab centred above the plate
-        draw.rectangle([int(w / 2 - 46), y0 - pad_y - 12, int(w / 2 + 46), y0 - pad_y - 4],
-                       fill=(*accent, 255))
+        plate = [px0, y0 - pad_y, w - px0, y0 + block + pad_y - int(lh - bsize)]
+        _round_rect(draw, plate, int(sst.get("panel_radius", 32)),
+                    tuple(sst.get("panel_rgba", (8, 10, 16, 222))))
+
+        # ---- light LAYOUT variant by scene_type (falls back to the plain tab)
+        stype = str(seg.get("scene_type") or "")
+        if stype == "QUOTE":
+            # a quote card: fat gold left edge + a big open-quote glyph
+            draw.rectangle([px0, y0 - pad_y, px0 + 8, plate[3]], fill=(*accent, 255))
+            fq = _font(cfg.font_title or cfg.font_bold_path, 120)
+            draw.text((px0 - 6, y0 - pad_y - 78), "“", font=fq, fill=(*accent, 230))
+            spk = clean_text(seg.get("speaker", ""))
+            if not spk:
+                m = re.search(r"([가-힣]{2,4})\s*(?:대통령|총리|장관|의원|대표|수석|실장|"
+                              r"위원장|청장|대변인|원내대표)?\s*(?:은|는|이|가|측은)?\s*[\"“']", cap)
+                spk = m.group(1) if m else ""
+            if spk:
+                fs = _font(cfg.font_label or cfg.font_bold_path, 34)
+                sw = draw.textlength(f"— {spk}", font=fs)
+                draw.text((w - px0 - sw, plate[3] + 12), f"— {spk}", font=fs, fill=(*SUBTLE, 235))
+        elif stype in ("NUMBER", "COMPARISON"):
+            lab = "숫자로 보면" if stype == "NUMBER" else "이렇게 갈립니다"
+            fl = _font(cfg.font_label or cfg.font_bold_path, 30)
+            lw = draw.textlength(lab, font=fl)
+            _round_rect(draw, [int(w / 2 - lw / 2 - 14), y0 - pad_y - 46,
+                               int(w / 2 + lw / 2 + 14), y0 - pad_y - 6], 8, (*accent, 235))
+            draw.text((int(w / 2 - lw / 2), y0 - pad_y - 44), lab, font=fl, fill=(12, 14, 20, 255))
+        else:
+            draw.rectangle([int(w / 2 - 46), y0 - pad_y - 12, int(w / 2 + 46), y0 - pad_y - 4],
+                           fill=(*accent, 255))
+
         yy = y0 + int(bsize * 0.82)          # first baseline
         for ln in lines:
             _draw_caption_line(draw, int(w / 2), yy, ln, f_body, f_hot, 5)
@@ -831,9 +857,13 @@ def _segment_video_clip(
     vbg = (f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=increase,"
            f"crop={w}:{h}:x='{px}':y='(ih-{h})/2',setsar=1,fps={fps}[bg]")
 
+    # loop the b-roll enough to cover the (possibly read-time-extended) scene —
+    # an explicit count is more reliable inside a filtergraph than -stream_loop -1
+    src = probe_duration(broll, cfg) or 0.0
+    loops = 0 if src <= 0 else max(0, int(duration / max(src, 0.2)) + 1)
     cmd = [
         ffmpeg, "-y", "-loglevel", "error",
-        "-stream_loop", "-1", "-i", str(broll),
+        "-stream_loop", str(loops), "-i", str(broll),
         "-loop", "1", "-i", str(overlay),
     ]
     if nar.wav_path:
@@ -1006,6 +1036,14 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                 _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i, zoom)
             clip_paths.append(clip)
             clip_durs.append(duration)
+
+        # MEASURE each rendered clip (ffprobe) and retime the timeline to what
+        # ffmpeg actually produced — the timeline must match the file, not a
+        # prediction (a short b-roll loop etc. would otherwise desync it).
+        thumb_n = len(clip_paths) - len(segments)
+        measured = [probe_duration(p, cfg) for p in clip_paths]
+        clip_durs = [m if m and m > 0.2 else clip_durs[k] for k, m in enumerate(measured)]
+        tl = _tl.retime(tl, clip_durs[thumb_n:]) if thumb_n >= 0 else tl
 
         # per-boundary transition kinds from the timeline. A leading "dissolve"
         # covers the poster -> scene 0.

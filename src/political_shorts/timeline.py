@@ -116,3 +116,34 @@ def build(segments: list[dict[str, Any]], narrations: list[Any], cfg: Any,
         s.end = starts[j + off + 1] if (j + off + 1) < len(starts) else total
         s.xfade_s = xfades[j + off + 1] if (j + off + 1) < len(xfades) else 0.0
     return Timeline(thumb_s=thumb_s, scenes=scenes, total_s=total)
+
+
+def retime(tl: Timeline, measured_scene_durs: list[float]) -> Timeline:
+    """Recompute start/end/total from the clips' ACTUALLY MEASURED durations
+    (ffprobe) so the timeline matches the rendered file exactly, whatever
+    ffmpeg did with a short b-roll loop etc."""
+    if len(measured_scene_durs) != len(tl.scenes):
+        return tl
+    for s, d in zip(tl.scenes, measured_scene_durs):
+        if d and d > 0.2:
+            s.clip_s = round(float(d), 3)
+    durs = ([tl.thumb_s] if tl.thumb_s else []) + [s.clip_s for s in tl.scenes]
+    kinds = (["dissolve"] if tl.thumb_s else []) + [s.transition for s in tl.scenes[:-1]]
+    if not durs:
+        return tl
+    starts = [0.0]
+    acc = durs[0]
+    xfades = [0.0]
+    for k in range(1, len(durs)):
+        t_k = _xf(kinds[k - 1], durs[k - 1], durs[k])
+        starts.append(round(acc - t_k, 3))
+        xfades.append(round(t_k, 3))
+        acc += durs[k] - t_k
+    total = round(acc, 3)
+    off = 1 if tl.thumb_s else 0
+    for j, s in enumerate(tl.scenes):
+        s.start = starts[j + off]
+        s.end = starts[j + off + 1] if (j + off + 1) < len(starts) else total
+        s.xfade_s = xfades[j + off + 1] if (j + off + 1) < len(xfades) else 0.0
+    tl.total_s = total
+    return tl
