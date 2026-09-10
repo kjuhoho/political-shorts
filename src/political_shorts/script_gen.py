@@ -590,7 +590,21 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     segments = _split_by_sentence(segments)
 
     est_seconds = round(sum(_seg_seconds(s) for s in segments), 1)
-    title = [_glyph_safe(t)[:14] for t in (llm_title or make_title(headline, entities, frame))]
+
+    # the bundled fonts have no CJK-Han glyph — 李/尹/文 render as tofu on the
+    # chip / title. Map the common ones back to Hangul, then drop anything else
+    # that isn't Hangul/digit/space.
+    _HANJA = {"李": "이", "尹": "윤", "文": "문", "朴": "박", "安": "안", "韓": "한",
+              "洪": "홍", "秋": "추", "與": "여", "野": "야", "北": "북", "美": "미",
+              "中": "중", "日": "일", "檢": "검"}
+
+    def _chip_safe(s: str) -> str:
+        s = "".join(_HANJA.get(c, c) for c in s)
+        s = re.sub(r"[^가-힣0-9%·\s]", " ", s)
+        return re.sub(r"\s+", " ", s).strip(" ·")
+
+    title = [_chip_safe(_glyph_safe(t))[:14]
+             for t in (llm_title or make_title(headline, entities, frame))]
     from .hook import pick_actor as _pa
     topic = _pa(headline, entities, frame)
     # the on-screen chip shouldn't say "이재명" for a poll/policy story that only
@@ -599,10 +613,11 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     _is_person = bool(topic) and (topic == (entities.president or "\0")
                                   or topic in (entities.politicians or []))
     if _is_person and topic not in _h:      # a politician the headline doesn't name
-        m = re.search(r"[‘'\"“]([^’'\"”]{2,16})[’'\"”]", headline) \
+        m = re.search(r"[‘'\"“]([^’'\"”]{2,16}?)(?=[,'’\"”])", headline) \
             or re.match(r"\s*([가-힣]{2,6}(?:\s?[가-힣]{2,6}){0,2})", clean_text(_headline(headline)))
         if m and m.group(1).strip():
             topic = m.group(1).strip()
+    topic = _chip_safe(topic) or "오늘의 이슈"
 
     # 7) images (keyless CC) + optional b-roll video -------------
     images: list[dict[str, Any]] = []
