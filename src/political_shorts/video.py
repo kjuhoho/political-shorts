@@ -290,74 +290,10 @@ def _overlay_png(
                 _text_stroke(draw, (tx, y + 2 + k * 52), ln, f_row, (*FG, 255), 3, (*STROKE_DARK, 220))
             y += 70 + 52 * len(wrapped)
     else:
-        # FULL-SCRIPT SUBTITLE — the words the voice is saying, verbatim, on a
-        # rounded dark plate. Large + high contrast + generous line spacing so
-        # any age reads it comfortably; hard floor on the size, max N lines.
-        sst = _style().get("subtitle", {})
-        cap = seg.get("caption", "")
-        clen = len(cap)
-        ladder = sst.get("size_ladder", [[14, 92], [24, 84], [34, 76], [46, 68], [999, 62]])
-        bsize = next((s for c, s in ladder if clen <= c), ladder[-1][1])
-        min_size = int(sst.get("min_size", 56))
-        max_lines = int(sst.get("max_lines", 3))
-        lh_mult = float(sst.get("line_height", 1.38))
-        wrap_w = int(w * sst.get("wrap_width_pct", 0.88))
-        _bf = lambda s: _font(cfg.font_body or cfg.font_bold_path, s)
-        f_body, f_hot = _bf(bsize), _bf(int(bsize * 1.16))
-        lines = _wrap(draw, cap, f_body, wrap_w)
-        while len(lines) > max_lines and bsize > min_size:
-            bsize -= 6
-            f_body, f_hot = _bf(bsize), _bf(int(bsize * 1.16))
-            lines = _wrap(draw, cap, f_body, wrap_w)
-        lines = lines[:max_lines]
-        lh = int(bsize * lh_mult)
-        block = lh * len(lines)
-        y0 = int(h * sst.get("y_center_pct", 0.46)) - block // 2
-
-        def _lw(ln: str) -> float:
-            parts = [t for t in ln.split(" ") if t]
-            return (sum(draw.textlength(t, font=(f_hot if _IMPACT_TOKEN.match(t) else f_body))
-                        for t in parts)
-                    + draw.textlength(" ", font=f_body) * max(0, len(parts) - 1))
-
-        widest = max((_lw(ln) for ln in lines), default=0)
-        pad_x, pad_y = sst.get("panel_pad", [44, 34])
-        px0 = max(20, int(w / 2 - widest / 2) - pad_x)
-        plate = [px0, y0 - pad_y, w - px0, y0 + block + pad_y - int(lh - bsize)]
-        _round_rect(draw, plate, int(sst.get("panel_radius", 32)),
-                    tuple(sst.get("panel_rgba", (8, 10, 16, 222))))
-
-        # ---- light LAYOUT variant by scene_type (falls back to the plain tab)
-        stype = str(seg.get("scene_type") or "")
-        if stype == "QUOTE":
-            # a quote card: fat gold left edge + a big open-quote glyph
-            draw.rectangle([px0, y0 - pad_y, px0 + 8, plate[3]], fill=(*accent, 255))
-            fq = _font(cfg.font_title or cfg.font_bold_path, 120)
-            draw.text((px0 - 6, y0 - pad_y - 78), "“", font=fq, fill=(*accent, 230))
-            spk = clean_text(seg.get("speaker", ""))
-            if not spk:
-                m = re.search(r"([가-힣]{2,4})\s*(?:대통령|총리|장관|의원|대표|수석|실장|"
-                              r"위원장|청장|대변인|원내대표)?\s*(?:은|는|이|가|측은)?\s*[\"“']", cap)
-                spk = m.group(1) if m else ""
-            if spk:
-                fs = _font(cfg.font_label or cfg.font_bold_path, 34)
-                sw = draw.textlength(f"— {spk}", font=fs)
-                draw.text((w - px0 - sw, plate[3] + 12), f"— {spk}", font=fs, fill=(*SUBTLE, 235))
-        elif stype in ("NUMBER", "COMPARISON"):
-            lab = "숫자로 보면" if stype == "NUMBER" else "이렇게 갈립니다"
-            fl = _font(cfg.font_label or cfg.font_bold_path, 30)
-            lw = draw.textlength(lab, font=fl)
-            _round_rect(draw, [int(w / 2 - lw / 2 - 14), y0 - pad_y - 46,
-                               int(w / 2 + lw / 2 + 14), y0 - pad_y - 6], 8, (*accent, 235))
-            draw.text((int(w / 2 - lw / 2), y0 - pad_y - 44), lab, font=fl, fill=(12, 14, 20, 255))
-        else:
-            draw.rectangle([int(w / 2 - 46), y0 - pad_y - 12, int(w / 2 + 46), y0 - pad_y - 4],
-                           fill=(*accent, 255))
-
-        yy = y0 + int(bsize * 0.82)          # first baseline
-        for ln in lines:
-            _draw_caption_line(draw, int(w / 2), yy, ln, f_body, f_hot, 5)
-            yy += lh
+        # FULL-SCRIPT SUBTITLE, framed by the LAYOUT ENGINE (one of six layouts
+        # by scene_type; the text is drawn the same in all of them).
+        from .layout import render_caption
+        render_caption(draw, seg, cfg, w, h, accent)
 
     # ---- 4) FOOTER ------------------------------------------------------
     srcs = [s["name"] for s in script.get("sources", [])[:3]]
