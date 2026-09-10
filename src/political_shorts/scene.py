@@ -58,6 +58,39 @@ _EMPH = re.compile(
     r"급증|급감|사퇴|경질|전격|취임"
 )
 
+_FIG = re.compile(r"\d[\d,.]*\s?(?:%|퍼센트|명|석|표|억|조|만|배|주년|위)")
+_QUOTED = re.compile(r"[\"“”'‘’][^\"“”'‘’]{4,}[\"“”'‘’]")
+_NAME_ROLE = re.compile(r"[가-힣]{2,4}\s*(?:대통령|국무총리|장관|차관|의원|대표|수석|실장|"
+                        r"위원장|청장|처장|대변인|원내대표)")
+_COMPARE = re.compile(r"\bvs\b|반면|한편으로|양쪽|양측|각각|엇갈|팽팽|대비하면|보다\s*(?:많|적|높|낮)")
+_PARTY2 = re.compile(r"(국민의힘|더불어민주당|민주당).{0,40}(국민의힘|더불어민주당|민주당|여당|야당)")
+
+
+def scene_type_of(role: str, text: str) -> str:
+    """A purpose label for the scene — used by the visual planner / layout /
+    quality checks. One of HOOK/CONTEXT/PERSON/QUOTE/FACT/NUMBER/COMPARISON/
+    REACTION/ISSUE/SOURCE/CONCLUSION."""
+    t = clean_text(text or "")
+    if role == "hook":
+        return "HOOK"
+    if role == "factcheck":
+        return "FACT"
+    if role == "outro":
+        return "CONCLUSION"
+    if role in ("sides", "reaction"):
+        return "COMPARISON" if (_PARTY2.search(t) or _COMPARE.search(t)) else "REACTION"
+    if _QUOTED.search(t) and _NAME_ROLE.search(t):
+        return "QUOTE"
+    if _PARTY2.search(t) or _COMPARE.search(t):
+        return "COMPARISON"
+    if _FIG.search(t):
+        return "NUMBER"
+    if role == "summary":
+        return "PERSON" if _NAME_ROLE.search(t) else "CONTEXT"
+    if role == "what":
+        return "ISSUE"
+    return "CONTEXT"
+
 
 def emphasis_of(text: str) -> list[str]:
     seen: list[str] = []
@@ -186,6 +219,7 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         if not nar:
             sc = dict(seg)
+            sc["scene_type"] = scene_type_of(role, seg.get("caption", ""))
             sc["scene"] = {"emphasis": emphasis_of(seg.get("caption", "")),
                            "hold_media": False, "min_s": SCENE_MIN_S, "max_s": SCENE_MIN_S}
             scenes.append(sc)
@@ -195,6 +229,7 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if role == "hook":
             sc = dict(seg)
             sc["caption"] = nar                      # full text, verbatim
+            sc["scene_type"] = "HOOK"
             sc["scene"] = {"emphasis": emphasis_of(nar), "hold_media": False,
                            "min_s": SCENE_MIN_S, "max_s": SCENE_MAX_S + 1.0,
                            "min_read_s": _read_seconds(nar),
@@ -219,6 +254,7 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             sc["narration"] = piece
             if role != "factcheck":
                 sc["caption"] = piece               # subtitle == the spoken words
+            sc["scene_type"] = scene_type_of(role, piece)
             emph = emphasis_of(piece)
             sc["scene"] = {
                 "emphasis": emph,

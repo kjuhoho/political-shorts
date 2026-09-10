@@ -731,12 +731,17 @@ def _assign_images(
     # take a context clip/photo so the video isn't the same still end to end.
     # No context media at all → subject face everywhere it can go. Nothing →
     # drawn backdrop.
+    # a PERSON/QUOTE scene should show a face; a CONTEXT/ISSUE scene should show
+    # context media, not a portrait held over from the setup pass.
+    _face_types = {"PERSON", "QUOTE", "HOOK", "FACT", "CONCLUSION"}
     for i, seg in enumerate(segments):
         if picks[i] is not None:
             continue
         role = seg.get("role")
+        stype = str(seg.get("scene_type") or "")
         pic = None
-        if lead_path and (role in setup_roles or not context):
+        want_face = (role in setup_roles) or (stype in _face_types)
+        if lead_path and (want_face or not context):
             pic = lead_path
         if pic is None:
             pic = _take_photo(fi); fi += 1
