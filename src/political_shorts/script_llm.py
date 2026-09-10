@@ -281,7 +281,12 @@ def rewrite_segments(
         fc = next((s for s in cand if s.get("role") == "factcheck"), None)
         if fc:
             tone = {"사실": "ok", "주장": "claim", "전망": "warn"}
-            new_rows = [{"tag": k, "tone": tone[k], "text": _clean_row(v)}
+            # carry the source attribution from the template rows the FACT CHECK
+            # ENGINE built, so the on-screen table + quality check keep it
+            _osrc = {r.get("tone"): r.get("source", "") for r in (fc.get("rows") or [])}
+            _allsrc = ", ".join(m.get("name", "") for m in (meta.get("sources") or []) if m.get("name"))
+            new_rows = [{"tag": k, "tone": tone[k], "text": _clean_row(v),
+                         "source": _osrc.get(tone[k]) or _allsrc or "여러 매체"}
                         for k, v in ftab.items() if k in tone and len(_clean_row(v)) >= 6]
             keep = next((r for r in (fc.get("rows") or []) if r.get("tone") == "info"), None)
             new_rows.append(keep or {"tag": "확인", "tone": "info",

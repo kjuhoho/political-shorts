@@ -87,21 +87,32 @@ def check(script: dict[str, Any], meta: dict[str, Any], video_path: Path,
                        "t_start": t0, "t_end": t1})
 
     # ---------- CONTENT ----------
+    # the grounded LLM legitimately paraphrases + adds background, so a low raw
+    # token overlap is fine; only TOTAL drift + actual FABRICATION are dinged.
     narr_all = " ".join(s.get("narration", "") for s in segs)
     if src_text and narr_all:
         overlap = len(_toks(narr_all) & _toks(src_text)) / max(1, len(_toks(narr_all)))
-        if overlap < 0.20:
-            ding("content", 10, "content-drift",
-                 f"대본이 기사 어휘와 거의 안 겹침 ({overlap:.0%}) — 근거 이탈 의심", sev="critical")
-        elif overlap < 0.38:
-            ding("content", 4, "content-thin", f"대본-기사 어휘 겹침 다소 낮음 ({overlap:.0%})")
-    # numbers in the narration must exist in the source
-    src_nums = set(re.findall(r"\d[\d,.]*", src_text))
-    bad_nums = [n for s in segs for n in re.findall(r"\d[\d,.]*", s.get("narration", ""))
-               if len(n) >= 2 and n not in src_text]
+        if overlap < 0.10:
+            ding("content", 8, "content-drift",
+                 f"대본이 기사와 거의 무관 ({overlap:.0%}) — 근거 이탈 의심", sev="critical")
+        elif overlap < 0.22:
+            ding("content", 3, "content-thin", f"대본-기사 어휘 겹침 낮음 ({overlap:.0%})")
+    # a NUMBER in the narration that isn't in the source == fabrication
+    bad_nums = sorted({n for s in segs for n in re.findall(r"\d[\d,.]*", s.get("narration", ""))
+                       if len(n) >= 2 and n not in src_text})
     if bad_nums:
-        ding("content", 8, "added-number",
-             f"기사에 없는 수치가 대본에 있음: {', '.join(sorted(set(bad_nums))[:4])}", sev="critical")
+        ding("content", 9, "added-number",
+             f"기사에 없는 수치가 대본에 있음: {', '.join(bad_nums[:4])}", sev="critical")
+    # a party / politician NAME in the narration that isn't in the source
+    _NAMES = ("이재명", "한동훈", "윤석열", "조국", "김민석", "이준석", "한덕수", "추경호",
+              "박찬대", "우원식", "장동혁", "국민의힘", "더불어민주당", "민주당",
+              "조국혁신당", "개혁신당", "정의당")
+    bad_names = sorted({n for s in segs for n in _NAMES
+                        if n in s.get("narration", "") and n not in src_text
+                        and (n[:-1] not in src_text)})
+    if bad_names:
+        ding("content", 8, "added-name",
+             f"기사에 없는 인물/정당이 대본에 있음: {', '.join(bad_names[:4])}", sev="critical")
     if not sources:
         ding("content", 6, "no-source", "출처가 하나도 없음", sev="critical")
 
