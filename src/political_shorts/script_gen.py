@@ -459,6 +459,10 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     headline = _headline(lead["title"])
     multi = n_sources >= cfg.min_sources_for_fact
 
+    # target length by story type (속보 25-40s … 복잡한 사건 70-90s)
+    from .storylen import classify_length
+    lp = classify_length(analysis, frame, entities, n_sources, leans)
+
     segments: list[dict[str, Any]] = []
 
     _actor = pick_actor(headline, entities, frame)
@@ -612,9 +616,11 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("llm rewrite errored, using template: %s", exc)
 
+    # trim to ~80% of the story-type target — subtitle read-time padding (video)
+    # spends the rest. Never below a sane floor for the LLM arc.
+    _budget = max(lp.target_s * 0.80, 26.0 if llm_on else 22.0)
     segments = _fit_duration(
-        segments,
-        budget=MAX_VIDEO_SECONDS_LLM if llm_on else MAX_VIDEO_SECONDS,
+        segments, budget=_budget,
         caps=_NARR_CAP_LLM if llm_on else _NARR_CAP,
     )
 
@@ -650,6 +656,21 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     #     each held long enough to read; per-scene camera move + transition. ---
     from .scene import plan as _plan_scenes
     segments = _plan_scenes(segments)
+
+    # keep the finished video within the story-type ceiling: estimate the total
+    # (spoken time OR subtitle read-time, whichever is longer, per scene) and, if
+    # it overruns lp.max_s, scale read-time down (never below 0.72).
+    def _scene_est(s: dict[str, Any]) -> float:
+        sc = s.get("scene", {})
+        return max(_seg_seconds(s), float(sc.get("min_read_s", 0.0))) + 0.14
+    _raw_total = sum(_scene_est(s) for s in segments) + float(getattr(cfg, "thumb_hold_seconds", 1.3))
+    read_scale = 1.0
+    if _raw_total > lp.max_s and _raw_total > 1:
+        read_scale = max(0.72, lp.target_s / _raw_total)
+        for s in segments:
+            sc = s.get("scene")
+            if sc and sc.get("min_read_s"):
+                sc["min_read_s"] = round(sc["min_read_s"] * read_scale, 2)
 
     est_seconds = round(sum(_seg_seconds(s) for s in segments), 1)
 
@@ -715,6 +736,10 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         "segments": segments,
         "images": images,
         "est_seconds": est_seconds,
+        "length_class": lp.cls,
+        "length_label": lp.label,
+        "target_seconds": lp.target_s,
+        "length_band": [lp.min_s, lp.max_s],
         "sources": _sources_from_rows(rows),
         "counts": {"facts": len(analysis.facts), "claims": len(analysis.claims),
                    "interpretations": len(analysis.interpretations)},
@@ -729,9 +754,11 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             log.warning("llm polish skipped: %s", exc)
 
     log.info(
-        "script cluster=%d segs=%d ~%.0fs frame=%s imgs=%d facts=%d claims=%d interp=%d src=%d",
-        cluster_id, len(segments), est_seconds, frame.kind, len(images),
-        len(analysis.facts), len(analysis.claims), len(analysis.interpretations), n_sources,
+        "script cluster=%d segs=%d ~%.0fs [%s tgt=%.0fs rs=%.2f] frame=%s imgs=%d "
+        "facts=%d claims=%d interp=%d src=%d",
+        cluster_id, len(segments), est_seconds, lp.cls, lp.target_s, read_scale,
+        frame.kind, len(images), len(analysis.facts), len(analysis.claims),
+        len(analysis.interpretations), n_sources,
     )
     return script
 
