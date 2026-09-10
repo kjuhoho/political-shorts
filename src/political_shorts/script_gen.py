@@ -22,8 +22,8 @@ from .analyze import analyze
 from .config import Settings, settings
 from .db import cluster_articles, connect
 from .hook import (
-    detect_entities, detect_frame, josa, make_factcheck, make_hook, make_title,
-    simplify, strip_wire_marks,
+    _NOT_TARGET, detect_entities, detect_frame, josa, make_factcheck, make_hook,
+    make_title, simplify, strip_wire_marks, to_polite,
 )
 from .logging_setup import get_logger
 from .textutil import clean_text, clip_sentence, strip_byline, truncate
@@ -37,16 +37,16 @@ MAX_WHAT = 1
 # Top-performing news shorts run tight — 20-38s. Aim ~30-36s: hook opens a
 # loop, the summary card is dropped, 4-5 fast cards.
 MAX_VIDEO_SECONDS = 38.0
-# with an LLM writing connected explanation, allow a little more room so it can
-# actually explain (still well under the 60s Shorts limit).
-MAX_VIDEO_SECONDS_LLM = 62.0     # the restructured ending needs room; still a Short
+# the LLM writes real background + explanation now, so a card can run longer
+# and the whole video too — a viewer who doesn't follow politics needs it.
+MAX_VIDEO_SECONDS_LLM = 82.0
 _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 46, "summary": 40, "what": 58, "reaction": 62,
              "factcheck": 70, "sides": 104, "outro": 0}
-_NARR_CAP_LLM = {"hook": 52, "summary": 56, "what": 130, "reaction": 76,
-                 "factcheck": 66, "sides": 132, "outro": 78}
+_NARR_CAP_LLM = {"hook": 66, "summary": 150, "what": 190, "reaction": 120,
+                 "factcheck": 170, "sides": 230, "outro": 88}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -369,18 +369,29 @@ _QUOTE_RE = re.compile(r"[\"'“”‘’]([^\"'“”‘’]{4,70})[\"'“”�
 _ATTRIB_TAIL = re.compile(
     r"\s*(?:라고|이라고|라며|이라며|고|며)\s*"
     r"(?:말했다|밝혔다|주장했다|지적했다|반박했다|강조했다|설명했다|촉구했다|비판했다|덧붙였다|전했다)\.?$")
+# a bare "…을/를 지적했다 / …라고 우려했다" tail with NO opening quote — trim it
+# so the sides line quotes the substance, not the reporting verb.
+_VERB_TAIL = re.compile(
+    r"\s*(?:[을를이가]\s*)?(?:지적|비판|우려|반박|강조|촉구|주장|반발|해명|경고|규탄|"
+    r"성토|일축|해석|평가|전망|관측|시사|부인|해석)(?:하고\s*나섰다|했다|한다|했습니다|하며)\.?$")
 _LEAD_NAME = re.compile(r"^[가-힣]{2,4}(?:\s?의원|\s?대표|\s?장관|\s?수석|\s?측)?\s*(?:은|는|이|가)\s+")
 
 
 def _one_quote(text: str, limit: int = 44) -> tuple[str, bool]:
     """(core of what someone said, was_it_a_real_quoted_span).
-    Prefers the quoted span; else the sentence minus its '…라고 밝혔다' tail."""
+    Prefers the quoted span; else the sentence minus its '…라고 밝혔다' /
+    '…을 지적했다' reporting tail and its leading '누구는 '."""
     t = clean_text(text)
     m = _QUOTE_RE.search(t)
     if m:
-        return clip_sentence(m.group(1), limit).rstrip(" .,…\"'"), True
+        return clip_sentence(m.group(1), limit).strip().rstrip(" .,…\"'"), True
     core = _LEAD_NAME.sub("", _ATTRIB_TAIL.sub("", t))
-    return clip_sentence(core, limit).rstrip(" .,…\"'"), False
+    for _ in range(2):
+        c2 = _VERB_TAIL.sub("", core).rstrip(" .,…\"'")
+        if c2 == core or len(c2) < 6:
+            break
+        core = c2
+    return clip_sentence(core, limit).strip().rstrip(" .,…\"'"), False
 
 
 def _reaction_line(claims: list) -> str:
@@ -389,38 +400,39 @@ def _reaction_line(claims: list) -> str:
     Never a faceless '한쪽 / 다른 쪽'."""
     if not claims:
         return ""
-    a = claims[0]
-    la = _lean_label(a.text)
-    c0, q0 = _one_quote(a.text)
-    if len(c0) < 5 or len(c0) > 48:
+    # side A = the first claim we can actually attribute (a party or a named
+    # person), NOT just claims[0] — that is often an unattributed "대통령실은…".
+    scored = []
+    for c in claims:
+        lab = _lean_label(c.text)
+        core, real = _one_quote(c.text)
+        if 5 <= len(core) <= 48:
+            scored.append((c, lab, core, real))
+    if not scored:
         return ""
-    b = next((c for c in claims[1:] if _lean_label(c.text) != la), None)
-    c1, q1 = _one_quote(b.text) if b else ("", False)
-    lb = _lean_label(b.text) if b else ""
-    ok1 = 5 <= len(c1) <= 48
-    if la and lb and ok1:
-        return f'{josa(la, ("은", "는"))} "{c0}", {josa(lb, ("은", "는"))} "{c1}" 입장입니다.'
-    if la and ok1:
-        return f'{josa(la, ("은", "는"))} "{c0}"라고 밝혔고, 반론도 나옵니다.'
+    a = next((x for x in scored if x[1]), scored[0])
+    _, la, c0, q0 = a
+    b = next((x for x in scored if x is not a and x[1] and x[1] != la), None)
+    lb, c1 = (b[1], b[2]) if b else ("", "")
+    if la and lb:
+        return f'{josa(la, ("은", "는"))} "{c0}", {josa(lb, ("은", "는"))} "{c1}" 쪽입니다.'
     if la:
-        return f'{josa(la, ("은", "는"))} "{c0}"라는 입장입니다.'
+        obj = josa(c0, ("을", "를"))[len(c0):]          # just the 을/를 particle for c0
+        return f'{josa(la, ("은", "는"))} "{c0}"{obj} 문제 삼고, 다른 목소리도 있습니다.'
     if not q0:                       # no party AND not a real quote — skip it
         return ""
-    if ok1:
-        return f'온라인에서는 "{c0}"라는 반응과 반대 목소리가 함께 나옵니다.'
     return f'온라인에서는 "{c0}"라는 반응이 나옵니다.'
 
 
 def _sides_line(claims: list, interps: list) -> str:
     """Seed for the closing 'where the sides differ' card. The LLM then adds a
-    one-line 'why' to each side. '' when there's no real dispute to lay out."""
+    one-line 'why' to each side. '' when there's no real dispute to lay out —
+    the card is non-essential and a skipped card beats an awkward one.
+    (`interps` was a fallback source but it echoed headlines into broken
+    grammar; the LLM rewrite handles the no-reaction case instead.)"""
     core = _reaction_line(claims)     # "국민의힘은 '…', 민주당은 '…' 입장입니다."
     if core:
         return "그런데 이 사안을 보는 눈은 이렇게 갈립니다. " + core
-    if interps:
-        it = clip_sentence(clean_text(interps[0].text), 70).rstrip(" .…")
-        if len(it) >= 10:
-            return f"확정된 건 아니지만, 정치권에서는 {it}는 전망이 나옵니다."
     return ""
 
 
@@ -496,8 +508,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     if cfg.factcheck_segment:
         fc_rows = make_factcheck(analysis, n_sources)
         fact_row = next((r for r in fc_rows if r["tone"] == "ok"), None)
-        fact_t = clip_sentence(fact_row["text"], 44).rstrip(" .…") if fact_row else ""
-        narr = f"확인된 사실은 이겁니다. {fact_t}." if fact_t else \
+        fact_t = to_polite(clip_sentence(fact_row["text"], 46).rstrip(" .…")) if fact_row else ""
+        narr = f"확인된 사실은 이겁니다. {fact_t.rstrip('.')}." if fact_t else \
                f"{n_sources}개 매체가 이 사안을 나란히 보도했습니다."
         segments.append({"role": "factcheck", "kicker": "확인된 사실",
                          "caption": "팩트체크", "rows": fc_rows, "narration": narr})
@@ -518,8 +530,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                  else "아직 보도가 많지 않아 추가 확인이 필요합니다.")
     segments.append({"role": "outro", "kicker": "",
                      "caption": "구독과 좋아요가 큰 힘이 됩니다",
-                     "narration": f"{lean_note} 이런 정치 이슈, 30초로 정리해 드립니다. "
-                                  "구독과 좋아요 눌러주시면 큰 힘이 됩니다."})
+                     "narration": f"{lean_note} 정치가 어렵게 느껴질 때, 이렇게 쉽게 풀어 "
+                                  "드리겠습니다. 구독과 좋아요 눌러주시면 큰 힘이 됩니다."})
 
     # 6b) optional — let a (free) LLM rewrite the narration into a natural,
     #     lay-friendly explanation that flows card to card. Falls back silently
@@ -603,21 +615,19 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         s = re.sub(r"[^가-힣0-9%·\s]", " ", s)
         return re.sub(r"\s+", " ", s).strip(" ·")
 
-    title = [_chip_safe(_glyph_safe(t))[:14]
+    title = [_chip_safe(_glyph_safe(t))[:16]
              for t in (llm_title or make_title(headline, entities, frame))]
     from .hook import pick_actor as _pa
-    topic = _pa(headline, entities, frame)
-    # the on-screen chip shouldn't say "이재명" for a poll/policy story that only
-    # mentions him in passing — use a short headline phrase instead.
-    _h = clean_text(headline)
-    _is_person = bool(topic) and (topic == (entities.president or "\0")
-                                  or topic in (entities.politicians or []))
-    if _is_person and topic not in _h:      # a politician the headline doesn't name
+    topic = _chip_safe(_pa(headline, entities, frame))
+    # famous names on the chip are GOOD (user wants 한동훈/이재명 up front) — only
+    # swap for a headline phrase when pick_actor returned junk (a bare noun like
+    # "논란"/"없다", or an institution that isn't really the subject).
+    if not topic or topic in _NOT_TARGET or topic in {"여야", "여당", "야당", "정부", "국회",
+                                                      "경찰청", "검찰청", "청와대", "대통령실"}:
         m = re.search(r"[‘'\"“]([^’'\"”]{2,16}?)(?=[,'’\"”])", headline) \
             or re.match(r"\s*([가-힣]{2,6}(?:\s?[가-힣]{2,6}){0,2})", clean_text(_headline(headline)))
-        if m and m.group(1).strip():
-            topic = m.group(1).strip()
-    topic = _chip_safe(topic) or "오늘의 이슈"
+        topic = _chip_safe(m.group(1)) if (m and m.group(1).strip()) else ""
+    topic = topic or "오늘의 이슈"
 
     # 7) images (keyless CC) + optional b-roll video -------------
     images: list[dict[str, Any]] = []

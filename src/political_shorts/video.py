@@ -497,7 +497,7 @@ def _thumbnail_png(script: dict[str, Any], bg_path: str | None, portrait_path: s
     ry = h - 150
     d.line([(margin, ry), (w - margin, ry)], fill=(255, 255, 255, 65), width=3)
     d.rectangle([margin, ry - 3, margin + 120, ry + 3], fill=(*GOLD, 255))
-    d.text((margin, ry + 16), "핵심만 30초, 여러 매체 종합",
+    d.text((margin, ry + 16), "정치 뉴스, 쉽게 풀어드립니다 · 여러 매체 종합",
            font=_font(cfg.font_path, 30), fill=(*PAPER, 230))
 
     base.convert("RGB").save(out_png, "JPEG", quality=92)

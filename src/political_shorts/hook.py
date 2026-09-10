@@ -197,7 +197,7 @@ HOOKS: dict[str, list[str]] = {
     "vote": [
         "'{issue}'가 {result}됐습니다. 그래서 뭐가 달라질까요?",
         "이 표결 하나로 바뀌는 것들, 짚어봤습니다.",
-        "'{issue}' {result}, 핵심만 요약했습니다.",
+        "'{issue}' {result}, 내 삶엔 뭐가 바뀔까요?",
     ],
     "poll": [
         "{a_ui} 지지율, 방향이 바뀌었습니다. 숫자를 봤습니다.",
@@ -209,7 +209,7 @@ HOOKS: dict[str, list[str]] = {
     ],
     "generic": [
         "오늘 정치권에서 가장 많이 오르내린 이야기입니다.",
-        "지금 이 이슈, 핵심만 30초로 정리했습니다.",
+        "이게 지금 왜 논란인지, 하나씩 풀어봤습니다.",
     ],
 }
 # used first when the story carries a strong short quote
@@ -288,6 +288,25 @@ _TITLE_RE = re.compile(
     r"원내대표|당대표|위원장|의원|청장|총장|처장|본부장|사장|회장|시장|지사|"
     r"변호사|교수|재판관|대법관|헌법재판관)"
 )
+# the "직책 이름" order — "대통령실 정책실장 김승원", "국무총리 김민석". The name
+# comes AFTER the role word (and any office prefix), so _TITLE_RE would wrongly
+# grab the office word ("대통령실") as the name. Capture the trailing name.
+_NAME_AFTER_ROLE = re.compile(
+    r"(?:대통령실|청와대|국회|정부|여당|야당|국민의힘|더불어민주당|민주당|"
+    r"조국혁신당|개혁신당|신임|전|前|초대|차기|새)?\s*"
+    r"(?:국무총리|부총리|정책실장|비서실장|안보실장|국정상황실장|정무수석|경제수석|"
+    r"사회수석|홍보수석|민정수석|시민사회수석|대변인|원내대표|사무총장|비서실장|"
+    r"장관|차관|수석|의장|위원장|처장|청장|본부장|원장|시장|지사|대표)\s+"
+    r"([가-힣]{2,4})(?=\s|$|[,.·…'\"”’)\]]|씨|은|는|이|가|을|를|와|과|의|도|만|께서)"
+)
+# nouns that can sit right after a role word but are NOT a person's name
+_NOT_A_NAME = {"사퇴", "사의", "교체", "경질", "내정", "지명", "임명", "발탁", "후보",
+               "논란", "파문", "의혹", "출신", "권한", "대행", "겸직", "인선", "임기",
+               "발언", "회의", "주재", "참석", "회견", "결정", "지시", "보고", "인사"}
+# office / institution words that a role regex can swallow as a fake "name"
+_OFFICE_WORD = {"대통령실", "청와대", "국회", "국회의장", "정부", "여당", "야당",
+                "정치권", "당정", "여야", "검찰", "경찰", "법원", "공수처", "헌재",
+                "감사원", "권익위", "선관위", "정부청사"}
 # name right before an appointment verb: "…후보에 김지용 변호사 지명"
 _NOMINEE_RE = re.compile(
     r"([가-힣]{2,4})\s*(?:변호사|교수|전\s*[가-힣]{2,4}|후보자?)?\s*"
@@ -299,9 +318,9 @@ _ORG_PREFIX = {"중수", "국세", "관세", "경찰", "소방", "산림", "특�
 
 # snappy second line — short, keeps the open loop, no hype
 HOOK_TAIL = [
-    "핵심만 짚어봤습니다.",
-    "30초로 정리했습니다.",
-    "무슨 일인지 보겠습니다.",
+    "왜 이렇게 됐는지 짚어봤습니다.",
+    "무슨 일인지 하나씩 보겠습니다.",
+    "쉽게 풀어서 설명해 드립니다.",
 ]
 
 
@@ -335,10 +354,16 @@ def pick_actor(headline: str, entities: Entities, frame: Frame) -> str:
         if m and m.group(1) not in _ORG_PREFIX:
             return m.group(1)
     if frame.kind in ("personnel", "appoint", "remark", "clash"):
-        # first name+title match whose "name" isn't actually part of an agency
-        # name ("중수청장" -> 중수, "국세청장" -> 국세). "김지용 변호사 지명" wins.
+        # "직책 이름" order first ("대통령실 정책실장 김승원" -> 김승원), so the
+        # office word isn't mistaken for the name.
+        m = _NAME_AFTER_ROLE.search(h)
+        if m and m.group(1) not in _NOT_A_NAME and m.group(1) not in _ORG_PREFIX \
+                and m.group(1) not in _OFFICE_WORD:
+            return m.group(1)
+        # then "이름 직책" order, skipping agency abbrevs ("국세청장" -> 국세) and
+        # office words ("대통령실 정책실장" -> 대통령실). "김지용 변호사 지명" wins.
         for m in _TITLE_RE.finditer(h):
-            if m.group(1) not in _ORG_PREFIX:
+            if m.group(1) not in _ORG_PREFIX and m.group(1) not in _OFFICE_WORD:
                 return m.group(1)
     # the politician named EARLIEST in the headline is the subject — not just the
     # first one that happens to sort first in the lexicon (that picked 이재명 for
@@ -387,31 +412,28 @@ def make_hook(headline: str, entities: Entities, frame: Frame, style: str = "pun
 # Mirrors "…재조명 / 무슨 일 / 되짚어봤습니다" endings of top neutral news shorts.
 # line 1 = the concrete subject, line 2 = a curiosity hook that makes the
 # thumbnail worth a tap (no 충격/발칵 hype, no slur, no false certainty).
+# line 1 = the concrete subject (a real name up front), line 2 = a spoken-style
+# curiosity ending — mirrors the user's own high-view titles ("한동훈 녹취록
+# 공개 / 유출 경위 조사할까?"). NEVER "핵심만 / 쟁점 정리 / 30초 정리".
 _TITLE_TMPL = {
-    "personnel": [("{actor} 물러났다", "왜?"),
-                  ("{actor} 사퇴", "무슨 일?"),
-                  ("{actor} 교체", "이유는")],
-    "appoint": [("{actor} 발탁", "누구?"),
-                ("{actor} 지명", "왜 이 사람?"),
-                ("새 인선 카드", "노림수는?")],
-    # every clash line is anchored on {actor} (the person under scrutiny) so an
-    # "A criticises B" headline can never leak A's name into the title via the
-    # free-text {issue} slot — see test_attack_headline_reframed_neutrally.
-    "clash": [("{actor} 정면 공방", "쟁점은?"),
-              ("{actor} 둘러싼 논쟁", "무엇이 진짜?"),
-              ("{actor} '{issueword}' 논란", "사실은?")],
-    "scandal": [("'{issue}' 의혹", "어디까지 사실?"),
-                ("{actor} 겨눈 의혹", "쟁점 정리"),
-                ("'{issue}'", "진짜 문제는")],
-    "vote": [("'{issue}' {result}", "뭐가 바뀌나"),
-             ("'{issue}' {result}", "쉽게 정리"),
-             ("이 법안 통과", "내 삶엔?")],
-    "poll": [("{actor} 지지율 요동", "숫자로 보면"),
-             ("여론조사 결과", "무엇을 읽나")],
-    "remark": [("{actor} 이 한마디", "왜 파장?"),
-               ("문제의 발언", "무슨 뜻이었나")],
-    "generic": [("이 소식 왜 화제?", "30초 정리"),
-                ("지금 이 이슈", "핵심만 콕")],
+    "personnel": [("{actor} 자리서 물러났다", "무슨 일일까?"),
+                  ("{actor} 사퇴", "왜 지금일까?"),
+                  ("{actor} 교체", "진짜 이유는?")],
+    "appoint": [("{actor} 발탁", "왜 이 사람일까?"),
+                ("{actor} 지명", "무슨 뜻일까?")],
+    "clash": [("{actor} 놓고 정면 충돌", "쟁점이 뭘까?"),
+              ("{actor} 둘러싼 공방", "누구 말이 맞을까?"),
+              ("{actor} '{issueword}' 논란", "사실일까?")],
+    "scandal": [("'{issue}' 의혹", "어디까지 사실일까?"),
+                ("{actor} 겨눈 의혹", "진짜 문제가 뭘까?")],
+    "vote": [("'{issue}' {result}", "내 삶엔 뭐가 바뀔까?"),
+             ("'{issue}' {result}", "무슨 뜻일까?")],
+    "poll": [("{actor} 지지율 출렁", "숫자가 말하는 건?"),
+             ("'{issue}' 여론조사", "국민 생각은 어떨까?")],
+    "remark": [("{actor} 이 한마디", "왜 이렇게 시끄러울까?"),
+               ("{actor} 발언 파장", "무슨 뜻이었을까?")],
+    "generic": [("{issue}", "무슨 일일까요?"),
+                ("{issue}", "왜 논란일까?")],
 }
 
 
@@ -421,12 +443,15 @@ def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
     ("김승원 '청탁' 논란 / 사실은?"), never "A의 의혹"."""
     actor = pick_actor(headline, entities, frame)
     iw = issue_word(headline)
-    # a bare-noun actor ("논란", "여야") or a generic issue word makes templates
-    # like "논란 '논란'" — fall back to a plain, always-sensible pair.
-    if actor in _NOT_TARGET or not (2 <= len(actor) <= 6) or actor in {"여야", "여당", "야당"}:
-        return ["오늘의 정치 이슈", "핵심만"]
-    tmpls = _TITLE_TMPL.get(frame.kind) or _TITLE_TMPL["generic"]
     h = clean_text(headline)
+    # headline's leading noun phrase — used for {issue} and when there's no
+    # usable actor. e.g. "국회 신속처리안건 90일 단축..." -> "국회 신속처리안건"
+    head_np = re.split(r"[…·\-—\"'“”,]|하며|라며|밝혀|주장|지적|공세|비판", h)[0].strip()
+    head_np = truncate(head_np, 16) or "오늘의 정치 이슈"
+    # a bare-noun actor ("논란", "여야") -> lead with the headline phrase instead
+    if actor in _NOT_TARGET or not (2 <= len(actor) <= 6) or actor in {"여야", "여당", "야당"}:
+        return [head_np, random.choice(["무슨 일일까요?", "왜 논란일까?", "진짜일까?"])]
+    tmpls = _TITLE_TMPL.get(frame.kind) or _TITLE_TMPL["generic"]
     if frame.kind == "clash" and iw == "논란":
         tmpls = [t for t in tmpls if "{issueword}" not in t[0]] or tmpls
     if frame.kind == "poll" and not re.search(r"지지율|지지도|여론|설문|조사", h):
@@ -436,11 +461,11 @@ def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
     parties = entities.parties + ["", ""]
     slots = {
         "actor": actor, "party": parties[0] or "여당", "partyB": parties[1] or "야당",
-        "issue": _issue_phrase(headline, frame), "result": _result_word(frame),
-        "issueword": iw,
+        "issue": _issue_phrase(headline, frame) if frame.kind != "generic" else head_np,
+        "result": _result_word(frame), "issueword": iw,
     }
     l1, l2 = random.choice(tmpls)
-    out = [truncate(l1.format(**slots), 14), truncate(l2.format(**slots), 14)]
+    out = [truncate(l1.format(**slots), 16), truncate(l2.format(**slots), 16)]
     return [x for x in out if x]
 
 
@@ -472,6 +497,28 @@ def strip_wire_marks(text: str) -> str:
     return _WIRE_MARK.sub("", text or "")
 
 
+_COPULA_PLAIN = (("이다", "입니다"), ("아니다", "아닙니다"), ("된다", "됩니다"),
+                 ("한다", "합니다"), ("있다", "있습니다"), ("없다", "없습니다"),
+                 ("낸다", "냅니다"), ("진다", "집니다"))
+
+
+def to_polite(s: str) -> str:
+    """Sentence-final plain style -> 합쇼체 so the narration is all one register
+    ('물러났다.' -> '물러났습니다.', '이례적이다' -> '이례적입니다'). Only the final
+    predicate; mid-sentence '다' ('찬성보다') and quotes are left alone."""
+    s = (s or "").rstrip()
+    tail = "." if s.endswith(".") else ""
+    core = s[:-1] if tail else s
+    core = core.rstrip()
+    m = re.search(r"([가-힣])다$", core)
+    if m and (ord(m.group(1)) - 0xAC00) % 28 == 20:   # penult syllable carries ㅆ 받침 = past tense
+        return core[:-1] + "습니다" + tail
+    for a, b in _COPULA_PLAIN:
+        if core.endswith(a):
+            return core[:-len(a)] + b + tail
+    return s
+
+
 def simplify(sentence: str, add_lead: bool = False, limit: int = 72) -> str:
     s = strip_wire_marks(clean_text(sentence))
     s = DROP_PREFIX.sub("", s)
@@ -479,6 +526,7 @@ def simplify(sentence: str, add_lead: bool = False, limit: int = 72) -> str:
     for jar, plain in JARGON.items():
         s = s.replace(jar, plain)
     s = clip_sentence(s, limit)          # end on a natural boundary, no mid-word cut
+    s = to_polite(s)
     if add_lead and not s.startswith(("쉽게", "한마디로", "정리하면")):
         s = "쉽게 말하면, " + s
     return s

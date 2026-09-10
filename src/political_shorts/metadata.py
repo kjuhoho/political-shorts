@@ -56,9 +56,10 @@ def build_metadata(
 
     lines: list[str] = []
     lines.append(headline)
-    lines.append(f"{date_str} 이슈, 통신·진보·보수 매체를 종합해 30초로 정리했습니다.")
+    lines.append(f"{date_str} 정치 이슈를 통신·진보·보수 매체를 종합해, "
+                 "정치를 잘 모르는 분도 이해하도록 쉽게 풀어 설명합니다.")
     lines.append("")
-    lines.append("▶ 30초 요약")
+    lines.append("▶ 한눈에 보기")
     _KLABEL = {"outro": "마무리", "hook": "오늘의 이슈",
                "factcheck": "확인된 사실", "sides": "갈리는 입장"}
     for seg in script.get("segments", []):

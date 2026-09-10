@@ -99,16 +99,35 @@ def _anthropic(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
 
 
 def _openai(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
-    from openai import OpenAI  # type: ignore
-
-    client = OpenAI(api_key=cfg.openai_api_key)
+    """OpenAI chat completions via REST (no SDK dependency). gpt-4o-mini is
+    cheap and far more reliable at instruction-following than the Gemini free
+    tier — a couple of cents a month at ~2 videos/day."""
+    key = (cfg.openai_api_key or "").strip()
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY not set")
     model = cfg.llm_model or "gpt-4o-mini"
-    resp = client.chat.completions.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": 0.5,
+        "response_format": {"type": "json_object"},
+        "messages": [
             {"role": "system", "content": system or "You are a careful, neutral Korean news editor."},
             {"role": "user", "content": prompt},
         ],
-    )
-    return resp.choices[0].message.content or ""
+    }
+    last = ""
+    for attempt in range(3):
+        r = requests.post("https://api.openai.com/v1/chat/completions",
+                          headers={"Authorization": f"Bearer {key}"}, json=body, timeout=60)
+        if r.status_code == 200:
+            return (r.json()["choices"][0]["message"]["content"] or "").strip()
+        try:
+            last = f"{r.status_code}: {(r.json().get('error') or {}).get('message', '')}"
+        except Exception:
+            last = f"HTTP {r.status_code}"
+        if r.status_code in (429, 500, 502, 503) and attempt < 2:
+            time.sleep(3.0)
+            continue
+        break
+    raise RuntimeError(f"openai call failed ({last})")

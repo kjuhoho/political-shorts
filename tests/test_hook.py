@@ -1,6 +1,33 @@
 from political_shorts.hook import (
-    detect_entities, detect_frame, make_factcheck, make_hook, simplify,
+    detect_entities, detect_frame, make_factcheck, make_hook, make_title,
+    pick_actor, simplify, to_polite,
 )
+
+
+def test_pick_actor_role_then_name_order():
+    # "직책 이름" order: the person is AFTER the role word (and office prefix),
+    # so the office word must not be taken as the actor.
+    h = "대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만"
+    a = pick_actor(h, detect_entities(h), detect_frame(h))
+    assert a == "김승원"
+    # "이름 직책" order still works
+    h2 = "한동훈 정책위의장 사퇴…지도부 흔들"
+    assert pick_actor(h2, detect_entities(h2), detect_frame(h2)) == "한동훈"
+
+
+def test_title_leads_with_real_name_not_office():
+    h = "대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만"
+    line1 = make_title(h, detect_entities(h), detect_frame(h))[0]
+    assert "김승원" in line1
+    assert "대통령실" not in line1
+
+
+def test_to_polite_normalizes_sentence_end():
+    assert to_polite("김승원이 3일 사퇴했다.") == "김승원이 3일 사퇴했습니다."
+    assert to_polite("정부 출범 초기라 이례적이다") == "정부 출범 초기라 이례적입니다"
+    assert to_polite("찬성보다 반대가 많았다") == "찬성보다 반대가 많았습니다"
+    # mid-sentence '다' must be untouched
+    assert to_polite('"찬성보다 많다"는 반응') == '"찬성보다 많다"는 반응'
 
 
 def test_detect_entities_president_and_party():

@@ -49,6 +49,7 @@ jobs:
           PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}
           PS_PEXELS_KEY: ${{ secrets.PS_PEXELS_KEY }}
           PS_GEMINI_KEY: ${{ secrets.PS_GEMINI_KEY }}
+          PS_OPENAI_KEY: ${{ secrets.PS_OPENAI_KEY }}
         run: |
           mkdir -p secrets
           echo "$PS_ENV_B64"        | base64 -d > .env
@@ -71,9 +72,13 @@ jobs:
             echo "PEXELS_API_KEY=$PS_PEXELS_KEY" >> .env
             echo "BROLL_ENABLED=true" >> .env
           fi
-          # Optional natural-narration rewrite: turns ON when the PS_GEMINI_KEY
-          # secret exists (free Gemini tier). No secret -> templated narration.
-          if [ -n "$PS_GEMINI_KEY" ]; then
+          # Natural-narration rewrite. Prefer OpenAI (gpt-4o-mini — reliable,
+          # ~cents/month) when PS_OPENAI_KEY is set; else the free Gemini tier.
+          # No key -> templated narration.
+          if [ -n "$PS_OPENAI_KEY" ]; then
+            echo "OPENAI_API_KEY=$PS_OPENAI_KEY" >> .env
+            echo "LLM_PROVIDER=openai" >> .env
+          elif [ -n "$PS_GEMINI_KEY" ]; then
             echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
             echo "LLM_PROVIDER=gemini" >> .env
           fi
