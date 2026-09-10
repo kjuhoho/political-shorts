@@ -28,10 +28,10 @@ from dataclasses import dataclass
 from .hook import Entities, Frame, josa, to_polite
 from .textutil import clean_text, clip_sentence
 
-# a figure worth opening on — deliberately NOT 일/월/년 (those are dates)
+# a figure worth opening on — deliberately NOT bare 일/월/년 (those are dates)
 _FIG_RE = re.compile(
-    r"\d[\d,]*(?:\.\d+)?\s?(?:%|퍼센트|명|석|표차|표|억\s?원|억|조\s?원|조|만\s?원|"
-    r"배|건|위|議席)"
+    r"\d[\d,]*(?:\.\d+)?\s?(?:%p|%포인트|%|퍼센트|명|석|표차|표|억\s?원|억|조\s?원|조|"
+    r"만\s?원|배|건|위|주년|주기|명선|여\s?명|만\s?명|천\s?명)"
 )
 _SPECIAL_FIG = ("과반", "절반", "만장일치", "전원 찬성", "전원 반대", "재적 과반")
 
@@ -221,13 +221,34 @@ def _number(ctx: HookContext) -> Hook | None:
                 kind="number", lead_number=fig)
 
 
+_INSTITUTION = {"국회", "정부", "여야", "정치권", "청와대", "대통령실", "여당", "야당",
+                "당정", "국무회의", "국가"}
+
+
+def _generic(ctx: HookContext) -> Hook | None:
+    """No strong pattern fired — lead on the top fact (NOT the headline) and
+    hand off to the explanation."""
+    f0 = _fact0(ctx, 40)
+    if not f0:
+        return None
+    return Hook(caption=_clip(f0, 24),
+                narration=f"{f0.rstrip('.')}. 무슨 의미인지, 왜 중요한지 하나씩 풀어보겠습니다.",
+                kind="question")
+
+
 def _fallback_question(ctx: HookContext) -> Hook:
-    who = ctx.actor or (ctx.entities.parties[0] if ctx.entities.parties else "정치권")
-    line = f"{josa(who, ('은', '는'))} 지금 왜 이렇게 주목받고 있을까요?"
+    who = ctx.actor
+    if not who or who in _INSTITUTION:
+        who = next((n for n in ctx.entities.politicians if n in ctx.headline),
+                   ctx.entities.parties[0] if ctx.entities.parties else "")
+    if who:
+        line = f"{josa(who, ('은', '는'))} 지금 왜 이렇게 주목받고 있을까요?"
+    else:
+        line = "오늘 정치권에서 가장 많이 오르내린 이야기, 쉽게 풀어보겠습니다."
     return Hook(caption=_clip(line, 24), narration=line, kind="question")
 
 
-_ORDER = (_surprise, _twist, _question, _outcome_first, _conflict, _number)
+_ORDER = (_surprise, _twist, _question, _outcome_first, _conflict, _number, _generic)
 
 
 def build_hook(ctx: HookContext) -> Hook:
