@@ -960,6 +960,15 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             duration = tl.scenes[i].clip_s          # from the TIMELINE ENGINE
             total_dur += duration
 
+            # a b-roll clip that can't cleanly cover this (read-time-extended)
+            # scene -> render it as a still instead. Looping/freezing a short
+            # source inside the filtergraph desynced the whole video.
+            if is_broll:
+                _src = probe_duration(Path(media), cfg)
+                if _src <= 0.2 or _src + 1.0 < duration:
+                    is_broll = False
+                    log.debug("b-roll %d too short (%.1fs < %.1fs) — using still", i, _src, duration)
+
             clip = workdir / f"clip_{i:02d}.mp4"
             if is_broll:
                 try:
@@ -969,9 +978,20 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
                     log.warning("b-roll clip %d failed (%s); using still", i, exc)
                     is_broll = False
             if not is_broll:
-                base, is_photo = _segment_bg(media if media not in video_set else None,
-                                             frame_kind, i, cfg.video_width,
-                                             cfg.video_height, workdir)
+                still_src = media if media not in video_set else None
+                if media in video_set and Path(media).exists():
+                    # grab a frame from the b-roll so the fallback still is at
+                    # least on-topic footage, not a blank backdrop
+                    fr = workdir / f"brollframe_{i:02d}.jpg"
+                    try:
+                        _run([ffmpeg, "-y", "-loglevel", "error", "-i", str(media),
+                              "-frames:v", "1", "-q:v", "3", str(fr)])
+                        if fr.exists() and fr.stat().st_size > 2048:
+                            still_src = str(fr)
+                    except Exception:
+                        pass
+                base, is_photo = _segment_bg(still_src, frame_kind, i,
+                                             cfg.video_width, cfg.video_height, workdir)
                 _segment_clip(ffmpeg, base, is_photo, overlay, nar, duration, clip, cfg, i, zoom)
             clip_paths.append(clip)
             clip_durs.append(duration)
