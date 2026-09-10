@@ -36,10 +36,11 @@ def test_timeline_is_contiguous_and_matches_the_offset_math():
         assert abs(b.start - a.end) < 1e-6            # no gap, no overlap in the model
     assert tl.scenes[0].start > 0                     # after the poster
     assert abs(tl.scenes[-1].end - tl.total_s) < 1e-6
-    # each clip is at least the read-time
-    for s, (_, _, _, mr) in zip(tl.scenes, [
-        ("hook", "", "", 3.0), ("what", "", "", 4.0), ("what", "", "", 2.0), ("outro", "", "", 2.5)]):
-        assert s.clip_s >= mr - 1e-6
+    # each clip covers its audio and never sits empty more than ~0.9s past it
+    for s in tl.scenes:
+        if s.audio_s:
+            assert s.clip_s >= s.audio_s - 1e-6
+            assert s.clip_s <= s.audio_s + 0.9 + 1e-6
 
 
 def test_silent_scene_gets_a_floor():

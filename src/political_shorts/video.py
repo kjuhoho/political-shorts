@@ -903,7 +903,7 @@ def _concat(ffmpeg: str, clips: list[Path], out_mp4: Path, fps: int) -> None:
 
 # seconds of cross-fade per transition kind (the Scene Duration Controller
 # tags each boundary): a hard beat-change is nearly a cut, a role change breathes.
-_XF = {"cut": 0.03, "dissolve": 0.14, "fade": 0.30}
+_XF = {"cut": 0.03, "dissolve": 0.12, "fade": 0.24}
 
 
 def _assemble(ffmpeg: str, clips: list[Path], durs: list[float],

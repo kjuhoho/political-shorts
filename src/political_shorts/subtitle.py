@@ -129,9 +129,10 @@ def readable_chunks(text: str, budget: int = _CHUNK_MAX) -> list[str]:
 
 
 def read_seconds(text: str) -> float:
-    """How long a subtitle chunk needs to be on screen to be comfortably read
-    (a touch slower than the TTS rate, with a floor)."""
-    return max(1.6, len(clean_text(text or "")) / 6.2 + 0.6)
+    """Comfortable on-screen read time for a subtitle chunk. Kept close to the
+    TTS speaking rate so a scene doesn't sit silent/empty after the voice ends —
+    the timeline caps the extra hold at ~0.9s anyway."""
+    return max(1.4, len(clean_text(text or "")) / 7.4 + 0.4)
 
 
 def _score(s: str) -> float:

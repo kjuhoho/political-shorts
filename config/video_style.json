@@ -56,7 +56,8 @@
     "off_rgba": [255, 255, 255, 70]
   },
 
-  "transition_ms": { "cut": 30, "dissolve": 140, "fade": 300, "slide": 200, "zoom": 180, "push": 200 },
+  "transition_ms": { "cut": 30, "dissolve": 120, "fade": 240, "slide": 180, "zoom": 160, "push": 180 },
 
-  "scene_seconds": { "short": [1.5, 3.0], "normal": [3.0, 5.0], "important": [4.0, 7.0] }
+  "scene_seconds": { "short": [1.35, 2.8], "normal": [2.8, 4.6], "important": [4.0, 6.5] },
+  "max_silent_tail_s": 0.9
 }

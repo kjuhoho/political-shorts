@@ -20,7 +20,7 @@ from .subtitle import readable_chunks, read_seconds as _read_seconds
 from .subtitle import _CHUNK_MAX
 from .textutil import clean_text
 
-SCENE_MIN_S = 1.5
+SCENE_MIN_S = 1.35
 SCENE_MAX_S = 3.5
 SCENE_TARGET_S = 2.6
 _SEC_PER_CHAR = 1.0 / 7.0          # matches script_gen._KR_CHARS_PER_SEC

@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # cross-fade seconds per transition kind (mirrors video._XF)
-_XF_S = {"cut": 0.03, "dissolve": 0.14, "fade": 0.30, "slide": 0.20, "zoom": 0.18, "push": 0.20}
-_TAIL = 0.16            # tiny hold after the voice before the cut
+_XF_S = {"cut": 0.03, "dissolve": 0.12, "fade": 0.24, "slide": 0.18, "zoom": 0.16, "push": 0.18}
+_TAIL = 0.10            # tiny hold after the voice before the cut
+_MAX_SILENT_TAIL = 0.9  # a scene never sits empty longer than this past the voice
 
 
 @dataclass
@@ -73,14 +74,16 @@ def build(segments: list[dict[str, Any]], narrations: list[Any], cfg: Any,
         nar = narrations[i] if i < len(narrations) else None
         audio_s = (nar.duration_s if (nar and getattr(nar, "wav_path", None)
                                       and nar.duration_s > 0.3) else 0.0)
-        if audio_s:
-            base = audio_s + _TAIL
-        elif seg.get("narration"):
-            base = estimate_caption_seconds(seg.get("caption", ""), cfg)
-        else:
-            base = 1.5
         read_s = float(sc.get("min_read_s", 0.0))
-        clip_s = max(base, read_s, float(sc.get("min_s", 0.0)))
+        if audio_s:
+            # hold for read-time, but cap the SILENT tail past the voice so the
+            # scene doesn't feel empty
+            base = min(max(audio_s + _TAIL, read_s), audio_s + _MAX_SILENT_TAIL)
+        elif seg.get("narration"):
+            base = min(estimate_caption_seconds(seg.get("caption", ""), cfg), read_s or 3.0)
+        else:
+            base = 1.4
+        clip_s = max(base, float(sc.get("min_s", 0.0)))
         src = seg.get("source")
         src = {"name": src} if isinstance(src, str) else (dict(src) if isinstance(src, dict) else {})
         scenes.append(TScene(

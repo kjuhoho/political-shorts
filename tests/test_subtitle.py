@@ -33,7 +33,7 @@ def test_no_clean_seam_stays_whole():
 
 
 def test_read_seconds_has_a_floor():
-    assert read_seconds("짧다") >= 1.6
+    assert read_seconds("짧다") >= 1.4
     assert read_seconds("아" * 40) > read_seconds("아" * 10)
 
 
