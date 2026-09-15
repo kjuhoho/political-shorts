@@ -183,6 +183,31 @@ def test_narration_ending_on_a_bare_noun_falls_back_to_template(monkeypatch):
     assert out[2]["narration"].startswith("쟁점과 원문")            # the other card still applied
 
 
+def test_facts_table_row_marked_incomplete_even_under_the_clip_budget(monkeypatch):
+    # a real shipped row: SHORT enough (under 52 chars) that clip_sentence
+    # never had anything to cut, but the model's own sentence stops on a bare
+    # verb stem with no predicate ("...협력이 더욱 깊어질"). Must be marked,
+    # not shipped as if it were a finished thought.
+    short_incomplete = "이번 정상 배우자의 만남을 계기로 한국과 우즈베키스탄의 문화 외교적 협력이 더욱 깊어질"
+    assert len(short_incomplete) < 52
+    payload = json.dumps({
+        "what": "여야가 막판까지 맞섰지만 결국 합의해 예산안을 통과시켰습니다.",
+        "facts_table": {"사실": "예산안이 3일 본회의를 통과했습니다.",
+                        "주장": "여당측: 민생을 위한 결정입니다.",
+                        "전망": short_incomplete},
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    segs = _segs() + [{"role": "factcheck", "kicker": "확인된 사실", "caption": "팩트체크",
+                       "narration": "확인된 사실은 이겁니다.",
+                       "rows": [{"tag": "사실", "tone": "ok", "text": "old"},
+                                {"tag": "확인", "tone": "info", "text": "2개 매체 종합"}]}]
+    out, _t = script_llm.rewrite_segments(segs, META, _cfg(), BASE)
+    fc = next(s for s in out if s["role"] == "factcheck")
+    outlook_row = next(r for r in fc["rows"] if r["tag"] == "전망")
+    assert outlook_row["text"].endswith("..")
+    assert outlook_row["text"] != short_incomplete    # visibly marked, not passed through
+
+
 def test_llm_facts_table_row_never_looks_complete_when_its_not(monkeypatch):
     # a real shipped row: the LLM's own "사실" sentence ran long and dense —
     # no comma/sentence-end near the old flat 52-char cut, so the previous

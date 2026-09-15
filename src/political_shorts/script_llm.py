@@ -437,7 +437,15 @@ def rewrite_segments(
         # trim so a row the LLM writes over budget doesn't silently end
         # mid-sentence with no predicate the way a raw space-cut did.
         v = re.sub(r"[·…—]", " ", re.sub(r"\s+", " ", v)).strip(" ·,")
-        return clip_sentence(v, 52, ell="..")
+        out = clip_sentence(v, 52, ell="..")
+        if not out.endswith("..") and not _ends_cleanly(out):
+            # short enough that clip_sentence never had to cut anything, but
+            # the model's own sentence still isn't grammatically finished
+            # ("...협력이 더욱 깊어질") — a real production case. Mark it the
+            # same way an actual truncation would be, rather than present a
+            # broken sentence as complete.
+            out = f"{out}.."
+        return out
 
     # apply — only where the model returned a sane narration for a card we have
     cand = [dict(s) for s in segments]
