@@ -26,6 +26,7 @@ from .hook import (
     make_title, pick_actor, simplify, strip_wire_marks, to_polite,
 )
 from .logging_setup import get_logger
+from .subtitle import _complete as _sentence_complete
 from .textutil import clean_text, clip_sentence, strip_byline, truncate
 
 log = get_logger("script_gen")
@@ -78,7 +79,15 @@ def _spoken(text: str) -> str:
     good = " ".join(m.group(0).strip() for m in _SENT_CHUNK.finditer(t)).strip()
     good = re.sub(r"\s+([.!?])", r"\1", good).strip(" ,·")
     if good and len(good) >= max(10, int(len(t) * 0.4)):
-        return good if good[-1] in ".!?" else good + "."
+        if good[-1] in ".!?":
+            return good
+        if _sentence_complete(good):
+            return good + "."
+        # long enough to pass the ratio check, but _SENT_CHUNK matched a
+        # fragment with no real predicate ("...전략과" — 과 has no verb) — a
+        # real shipped case where this blindly appended "." and shipped a
+        # fragment that read as finished. Fall through to the salvage path
+        # below instead of trusting length alone.
     # no complete sentence — salvage only if a clause-drop leaves a real
     # predicate ending; otherwise return '' so the caller drops the card.
     t = _TRAIL_JUNK.sub("", t).strip(" ,·")

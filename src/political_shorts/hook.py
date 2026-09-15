@@ -161,7 +161,11 @@ _TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
     "un": ("유엔", "안보리", "국제사회"),
     "us": ("미국", "한미", "백악관", "주한미군"),
     "china": ("중국", "한중"),
-    "economy": ("예산", "재정", "세제", "감세", "국채", "한국은행", "기준금리"),
+    # "예산"/"재정" deliberately excluded — common enough as an incidental
+    # mention (국정감사 season, committee reports) in stories that aren't
+    # actually ABOUT the economy that they false-fired on an unrelated
+    # criminal-justice-reform story and pulled 기획재정부 imagery for it.
+    "economy": ("세제", "감세", "국채", "한국은행", "기준금리"),
 }
 
 

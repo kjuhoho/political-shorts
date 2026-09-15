@@ -44,6 +44,18 @@ def test_detect_topic_empty_when_nothing_distinctive():
     assert detect_topic("정책실장 김승원 전격 사퇴") == ""
 
 
+def test_detect_topic_economy_ignores_incidental_budget_mentions():
+    # a real shipped case: a 형사사법 개혁 story mentioned "예산" once in
+    # passing (국정감사 season) and false-fired "economy", pulling 기획재정부
+    # imagery for an unrelated story. "예산"/"재정" are too generic to be a
+    # reliable topic signal on their own.
+    assert detect_topic("김승원 모욕에 몰두...진짜 표적은 형사사법 개혁",
+                        "국정감사에서 예산 심사도 함께 이뤄졌다") == ""
+    # but a real economy story (a specific policy lever, not just "예산")
+    # still resolves correctly
+    assert detect_topic("한국은행 기준금리 동결") == "economy"
+
+
 def test_title_leads_with_real_name_not_office():
     h = "대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만"
     line1 = make_title(h, detect_entities(h), detect_frame(h))[0]

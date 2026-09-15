@@ -51,6 +51,17 @@ def test_quote_ratio_flags_a_mostly_quoted_sentence():
     assert sg._quote_ratio(plain) == 0.0
 
 
+def test_spoken_never_appends_a_period_to_a_predicateless_fragment():
+    # a real shipped card: _SENT_CHUNK matched a fragment long enough to pass
+    # the 40%-length ratio check, but it had no predicate ("...전략과" — 과 is
+    # "and", not a verb) — the old code blindly appended "." and shipped it
+    # looking finished. Must now fall through and drop it instead.
+    assert sg._spoken("더불어민주당의 원내 전략과") == ""
+    # the untruncated original (real predicate) still passes straight through
+    full = "더불어민주당의 원내 전략과 국민의힘의 대응 방식이 이번 논란의 핵심 배경입니다."
+    assert sg._spoken(full) == full
+
+
 def test_context_score_deprioritizes_quote_heavy_sentences():
     quoted = ("김 대표는 이날 출연해 “‘괜히 탄핵 이야기를 꺼낸 것이 경솔했다’고 할 수 "
               "있다”고 말했다.")
