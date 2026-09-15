@@ -97,6 +97,25 @@ def _spoken(text: str) -> str:
     return ""
 
 
+def _mark_incomplete_factcheck_rows(segments: list[dict[str, Any]]) -> None:
+    """UNIVERSAL backstop for the factcheck table, mutating in place: whichever
+    path actually built a row (factcheck.rows()'s template _clip(), or the
+    LLM's facts_table via script_llm._clean_row — both independently fixed
+    for this same failure mode, and it still shipped once more in production
+    from a path neither of those traces could pin down), a row must never
+    look finished when it isn't. Skips the "확인" row — a fixed UI label
+    ("N개 매체 종합, 원문은 더보기란"), not a narrative claim."""
+    for s in segments:
+        if s.get("role") != "factcheck" or not s.get("rows"):
+            continue
+        for r in s["rows"]:
+            if r.get("tone") == "info":
+                continue
+            t = (r.get("text") or "").rstrip()
+            if t and not t.endswith("..") and not _sentence_complete(t):
+                r["text"] = f"{t}.."
+
+
 # connective / particle tails that must not be the last thing on a caption card
 _CAP_TAIL = re.compile(
     r"\s*[가-힣]{0,6}?(따르면|밝히며|말하며|라며|이라며|하며|면서|는데|지만|라고|"
@@ -653,6 +672,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             )
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("llm rewrite errored, using template: %s", exc)
+
+    _mark_incomplete_factcheck_rows(segments)
 
     # trim to ~80% of the story-type target — subtitle read-time padding (video)
     # spends the rest. Never below a sane floor for the LLM arc.

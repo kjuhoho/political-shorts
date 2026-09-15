@@ -51,6 +51,27 @@ def test_quote_ratio_flags_a_mostly_quoted_sentence():
     assert sg._quote_ratio(plain) == 0.0
 
 
+def test_factcheck_row_backstop_marks_incomplete_rows_but_spares_the_info_row():
+    # a real shipped case: two rows in the same table both ended without a
+    # predicate ("...꺾으려는 정치적" / "...싸움이 계속될") and neither of the
+    # two upstream fixes (factcheck._clip / script_llm._clean_row) could be
+    # pinned down as the source — this backstop runs on the FINAL rows
+    # regardless of which path built them.
+    segments = [{"role": "factcheck", "rows": [
+        {"tag": "사실", "tone": "ok", "text": "15일 국회에서 인사청문회가 열렸습니다."},
+        {"tag": "주장", "tone": "claim",
+         "text": "민주당 한병도 원내대표: 야당의 흑색선전은 동력을 꺾으려는 정치적"},
+        {"tag": "전망", "tone": "warn", "text": "여야의 주도권 싸움이 계속될"},
+        {"tag": "확인", "tone": "info", "text": "3개 매체 종합, 원문은 더보기란"},
+    ]}]
+    sg._mark_incomplete_factcheck_rows(segments)
+    rows = {r["tag"]: r["text"] for r in segments[0]["rows"]}
+    assert rows["사실"] == "15일 국회에서 인사청문회가 열렸습니다."       # untouched, already complete
+    assert rows["주장"].endswith("..")
+    assert rows["전망"].endswith("..")
+    assert rows["확인"] == "3개 매체 종합, 원문은 더보기란"              # info row untouched
+
+
 def test_spoken_never_appends_a_period_to_a_predicateless_fragment():
     # a real shipped card: _SENT_CHUNK matched a fragment long enough to pass
     # the 40%-length ratio check, but it had no predicate ("...전략과" — 과 is
