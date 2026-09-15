@@ -92,8 +92,11 @@ class FactCheck:
         if q:
             who = q.speaker or _lead_actor(q.text) or (q.sources[0] if q.sources else q.source_name)
             body = _QUOTE_RE.search(q.text)
-            said = _clip(body.group(1) if body else re.sub(
-                r"^[가-힣]{2,10}(?:은|는|이|가|측은|측이)\s+", "", q.text), 40)
+            raw_said = body.group(1) if body else re.sub(
+                r"^[가-힣]{2,10}(?:은|는|이|가|측은|측이)\s+", "", q.text)
+            # the "{who}: " prefix eats into the same on-screen budget as `said`,
+            # so clip what's left AFTER accounting for it, not a flat 40.
+            said = _clip(raw_said, max(24, _ROW_BUDGET - len(who) - 2))
             out.append({"tag": "주장", "tone": "claim", "text": f"{who}: {said}",
                         "source": q.source_name})
         it = next(iter(self.interpretations), None)
@@ -114,13 +117,24 @@ class FactCheck:
         }
 
 
-def _clip(s: str, n: int = 46) -> str:
-    # on-screen table rows are short-lived FactUnit text, often a sentence
-    # with an embedded quote — clip_sentence's clause/quote-safe trim keeps
-    # a row from ending mid-quotation ("…에 출연해 "'괜히 탄핵) the way a naive
-    # space-cut did.
+# the table row renders at 44px in a ~830px-wide column, wrapped to at most 2
+# lines (video._overlay_png: `_wrap(..., f_row, max_w - 122)[:2]`) — measured
+# against the actual bundled font, that's ~27-28 Korean chars/line, ~54-56
+# total. 52 leaves a small safety margin so a clip_sentence row never gets a
+# THIRD, silent truncation from the renderer's own 2-line cap.
+_ROW_BUDGET = 52
+
+
+def _clip(s: str, n: int = _ROW_BUDGET) -> str:
+    # on-screen table rows are short-lived FactUnit text — often a sentence
+    # with an embedded quote, or a dense run of numbers with no comma/clause
+    # break at all ("...100억원 규모 의료장비 166종 지원을 추진하고 유엔 제재
+    # 면제를"). clip_sentence handles both: it never ends mid-quotation, and
+    # when it truly has to hard-cut with nothing to break on, it marks the
+    # row with ".." (Jua has no … glyph) instead of leaving a fragment that
+    # LOOKS like a complete sentence but has no predicate.
     s = re.sub(r"[·…—]", " ", clean_text(s)).strip(" ·,")
-    return clip_sentence(s, n, ell="")
+    return clip_sentence(s, n, ell="..")
 
 
 def _key(text: str) -> frozenset:

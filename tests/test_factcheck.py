@@ -1,5 +1,5 @@
 """FACT CHECK ENGINE — structured, source-attributed units + a review gate."""
-from political_shorts.factcheck import extract
+from political_shorts.factcheck import _clip, extract
 
 
 def _row(name, url, title, summary):
@@ -46,3 +46,49 @@ def test_rows_carry_source_attribution():
     r = extract(rows).rows(2)
     fact_row = next(x for x in r if x["tag"] == "사실")
     assert "연합뉴스" in fact_row["source"] and "한겨레" in fact_row["source"]
+
+
+def test_clip_never_looks_complete_when_it_isnt():
+    # a real shipped row: dense with numbers, no comma/clause break at all in
+    # range -> the old flat 46-char space-cut with ell="" produced "...유엔
+    # 제재 면제를" (dangling object particle, no verb, no visible sign it was
+    # cut). Now it must either find a clause break or mark the cut visibly.
+    s = ("정부는 평양 강동군병원에 100억원 규모 의료장비 166종 지원 추진 유엔 제재 "
+         "면제 방안 검토 중이다")
+    out = _clip(s)
+    assert out != s                          # it is in fact shorter
+    assert out.endswith("..") or out.rstrip(".").endswith(("다", "요", "고", "며"))
+    assert not out.rstrip(".").endswith(("를", "을", "은", "는", "이", "가", "에"))
+
+
+def test_clip_prefers_a_clause_break_and_marks_it():
+    s = ("정부는 평양 강동군병원에 100억원 규모 의료장비 166종 지원을 추진하고 "
+         "유엔 제재 면제를 받는 방안도 검토하고 있다.")
+    out = _clip(s)
+    assert out.endswith("추진하고..")            # cuts cleanly on the "고" connective
+    assert "면제를" not in out                  # never reaches the dangling fragment
+
+
+def test_clip_keeps_a_short_complete_sentence_untouched():
+    s = "국회는 3일 본회의에서 예산안을 의결했다."
+    assert _clip(s) == s
+
+
+def test_claim_row_budget_accounts_for_the_speaker_prefix():
+    # "{who}: {said}" must fit the same on-screen budget as a plain _clip —
+    # a long speaker label must not push the whole row past the render limit.
+    # (a dated fact, corroborated by both sources, so it -- not the quote --
+    # becomes `f`, leaving the quote free to land in its own 주장 row.)
+    rows = [
+        _row("경향신문", "http://a", "협력 추진",
+             '정부는 3일 평양 강동군병원에 의료장비 지원을 추진한다고 밝혔다. '
+             '국민의힘측은 "정부의 대북 보건의료 협력 추진은 굴종적인 대북 정책이므로 '
+             '전면 재검토해야 한다"고 밝혔다.'),
+        _row("국민일보", "http://b", "협력 추진",
+             "정부는 3일 평양 강동군병원에 의료장비 지원을 추진한다고 밝혔다."),
+    ]
+    fc = extract(rows)
+    r = fc.rows(2)
+    claim_row = next((x for x in r if x["tag"] == "주장"), None)
+    assert claim_row is not None
+    assert len(claim_row["text"]) <= 56
