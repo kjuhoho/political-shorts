@@ -321,8 +321,16 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
             # keep the last complete sentence, or a clean clip, rather than lose
             # a load-bearing card
             whole = re.split(r"(?<=니다[.!?])\s+|(?<=[.!?])\s+", s["narration"])
-            clean = next((w for w in whole if w.strip().endswith(("니다", "니다.", ".", "!", "?"))),
-                         "") or clip_sentence(s["narration"], _NARR_CAP.get(s["role"], 60)).rstrip(" ,·.") + "."
+            clean = next((w for w in whole if w.strip().endswith(("니다", "니다.", ".", "!", "?"))), "")
+            if not clean:
+                # last resort: a straight clip. A real shipped case: this
+                # blindly appended "." to whatever clip_sentence returned —
+                # "법무부 장관 후보자 김승원은 판사 출신이자 국회." (no verb
+                # after "국회"). Only accept it if it genuinely ends on a
+                # predicate; otherwise fall through and drop the card below
+                # rather than fabricate a period onto a fragment.
+                clipped = clip_sentence(s["narration"], _NARR_CAP.get(s["role"], 60)).rstrip(" ,·.")
+                clean = f"{clipped}." if clipped and _sentence_complete(clipped) else ""
         if clean:
             s["narration"] = clean
             kept.append(s)

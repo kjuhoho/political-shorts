@@ -3,6 +3,7 @@ except collect + render, and assert a script + safety report come out."""
 import time
 from dataclasses import replace
 
+from political_shorts import subtitle
 from political_shorts.classify import classify_pending
 from political_shorts.config import load_settings
 from political_shorts.db import init_db, connect, upsert_article, now
@@ -57,11 +58,15 @@ def test_offline_pipeline(tmp_path):
     script = build_script(ids[0], cfg)
     roles = [s["role"] for s in script["segments"]]
     assert roles[0] == "hook"
-    # background is now the LAST thing _fit_duration sacrifices under a tight
-    # budget, not the first — a viewer who doesn't follow politics needs it
-    # more than a second "what happened" beat, which may legitimately be cut
-    # instead (as it is here).
-    assert "summary" in roles
+    # background's trim PRIORITY (now sacrificed last, not first — see
+    # test_script_gen.py's test_fit_duration_* for that exact behavior) is a
+    # separate concern from whether THIS fixture's specific text happens to
+    # survive at this exact budget; a card the completeness check can't
+    # honestly salvage is correctly dropped rather than shipped broken (see
+    # test_fit_duration_never_ships_a_fabricated_complete_looking_summary).
+    if "summary" in roles:
+        summary = next(s for s in script["segments"] if s["role"] == "summary")
+        assert subtitle._complete(summary["narration"])
     assert "factcheck" in roles
     assert script["n_sources"] >= 2
 

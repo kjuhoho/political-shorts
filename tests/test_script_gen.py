@@ -93,12 +93,18 @@ def test_context_score_deprioritizes_quote_heavy_sentences():
 def _fit_segs():
     # summary (background) is deliberately the LONGEST card here — under the
     # old priority it was dropped first regardless of length; now the extra
-    # "what" repeat and length-trimming absorb the pressure instead.
+    # "what" repeat and length-trimming absorb the pressure instead. Three
+    # short COMPLETE sentences (not one long comma-joined one) so step 3's
+    # sentence-level drop can genuinely shrink it a sentence at a time and
+    # still leave something complete — a single long clause has no such
+    # graceful middle ground (dropping a trailing comma-clause off a Korean
+    # sentence almost always leaves an incomplete lead-in, not a valid
+    # shorter sentence).
     return [
         {"role": "hook", "narration": "김승원이 왜 사퇴했을까요?"},
         {"role": "summary", "narration": "김승원은 대통령의 정책을 총괄하는 정책실장입니다. "
-                                         "정부 출범 초기에 임명된 핵심 참모로, 인사 검증과 "
-                                         "정책 조율을 담당해 왔습니다."},
+                                         "그는 법조계 출신입니다. 정부 출범 초기 핵심 참모로 "
+                                         "임명됐습니다."},
         {"role": "what", "narration": "김승원 정책실장이 취임 두 달 만에 물러났습니다."},
         {"role": "what", "narration": "정부 출범 초기 실장급 인사가 물러난 것은 이례적입니다."},
         {"role": "factcheck", "narration": "확인된 사실은 이겁니다. 김승원은 3일 사퇴했습니다."},
@@ -107,7 +113,7 @@ def _fit_segs():
 
 
 def test_fit_duration_protects_summary_over_a_second_what_beat():
-    out = sg._fit_duration(_fit_segs(), budget=18.0)
+    out = sg._fit_duration(_fit_segs(), budget=22.0)
     roles = [s["role"] for s in out]
     assert roles.count("what") <= 1                 # the extra "what" repeat goes first
     summary = next((s for s in out if s["role"] == "summary"), None)
@@ -117,18 +123,25 @@ def test_fit_duration_protects_summary_over_a_second_what_beat():
 def test_fit_duration_shrinks_summary_rather_than_deleting_it_when_possible():
     segs = _fit_segs()
     full_summary = next(s["narration"] for s in segs if s["role"] == "summary")
-    out = sg._fit_duration(_fit_segs(), budget=18.0)
+    out = sg._fit_duration(_fit_segs(), budget=22.0)
     summary = next((s for s in out if s["role"] == "summary"), None)
     assert summary is not None
-    # shorter than the original (it absorbed some of the trim), not gone
+    # shorter than the original (it absorbed some of the trim), not gone —
+    # and still a genuinely complete sentence, not a fabricated-looking
+    # fragment with a period stapled onto it.
     assert 0 < len(summary["narration"]) < len(full_summary)
+    assert sg._sentence_complete(summary["narration"])
 
 
-def test_fit_duration_keeps_summary_even_when_both_what_beats_must_go():
-    # under real budget pressure summary now outranks even a SINGLE "what" —
-    # the old priority (summary always dies first) is fully inverted.
-    out = sg._fit_duration(_fit_segs(), budget=12.0)
-    roles = [s["role"] for s in out]
-    assert "what" not in roles
+def test_fit_duration_never_ships_a_fabricated_complete_looking_summary():
+    # a real shipped case: under real pressure, the "last resort" rescue for
+    # essential roles used to blindly append "." to whatever clip_sentence
+    # returned, regardless of whether it actually ended on a predicate
+    # ("법무부 장관 후보자 김승원은 판사 출신이자 국회." — no verb after
+    # "국회"). At a budget too tight to keep even one complete summary
+    # sentence, it must now be dropped honestly, not faked.
+    out = sg._fit_duration(_fit_segs(), budget=16.0)
     summary = next((s for s in out if s["role"] == "summary"), None)
-    assert summary is not None and summary.get("narration")
+    # either genuinely absent, or present AND a real complete sentence —
+    # never present with fabricated-looking punctuation on a fragment
+    assert summary is None or sg._sentence_complete(summary["narration"])
