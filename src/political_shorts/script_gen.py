@@ -317,6 +317,16 @@ def _headline(lead_title: str) -> str:
 _CONTEXT_HINTS = ("후임", "후임자", "공석", "배경", "이유", "때문", "처음", "첫",
                   "만에", "논란", "앞서", "이어", "당분간", "대행", "겸직", "이날")
 
+# a sentence that's mostly a long embedded quotation reads badly chopped into
+# a 1.5-3.5s scene (nested quote marks, no natural clause break to split on) —
+# prefer a plainer narrative FACT sentence for the "what" card when one exists.
+_QUOTE_SPAN = re.compile(r"[“\"][^”\"]{10,}[”\"]|[‘'][^’']{10,}[’']")
+
+
+def _quote_ratio(t: str) -> float:
+    spans = _QUOTE_SPAN.findall(t)
+    return sum(len(s) for s in spans) / max(len(t), 1)
+
 
 def _tokens(t: str) -> set[str]:
     return {w for w in re.split(r"[^0-9A-Za-z가-힣]+", clean_text(t)) if len(w) > 1}
@@ -333,6 +343,8 @@ def _context_score(t: str) -> int:
     s = sum(1 for h in _CONTEXT_HINTS if h in t)
     if re.search(r"\d", t):
         s += 1
+    if _quote_ratio(t) >= 0.5:
+        s -= 2
     return s
 
 

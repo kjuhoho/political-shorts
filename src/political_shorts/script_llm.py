@@ -1,11 +1,24 @@
 """Optional narration rewrite — turns the templated card text into a natural,
 lay-friendly explanation that flows card to card.
 
+TWO STAGES, not one: a raw article sentence chopped to fit a card is still a
+raw article sentence — a viewer who doesn't follow politics needed it
+*explained*, not trimmed. So before any card gets written:
+  1. `analyze_story()` reads the source + the fact/claim/interp split and
+     writes a short structured "what did I just understand" — who each
+     person/institution actually is, what happened in plain terms, why it's
+     news *today*, which terms need glossing, where the sides disagree and
+     why. Best-effort: on any failure this simply returns None.
+  2. `rewrite_segments()` writes the actual cards FROM that understanding
+     (not from the raw article) via the existing `_SYSTEM` prompt. If stage 1
+     failed, it writes from the raw facts/claims/interps exactly as before —
+     stage 1 is a quality layer in front of stage 2, never a requirement.
+
 Hard rules, enforced in code (not just the prompt):
   * the LLM only ever REWRITES the `narration` of spoken cards; card structure,
     images, fact-check rows and sources are untouched;
-  * it is given ONLY the cluster's own source text + the fact/claim/interp split
-    from analyze.py — no outside knowledge is invited;
+  * both stages are given ONLY the cluster's own source text + the
+    fact/claim/interp split from analyze.py — no outside knowledge is invited;
   * the rewritten script must still pass `safety.review_script` with no new
     blocks, or the original template narration is kept;
   * ANY failure (no key, HTTP error, bad JSON, empty/oversized output, safety
@@ -25,32 +38,43 @@ log = get_logger("script_llm")
 
 # chars each spoken card may run to. GENEROUS on purpose — a viewer who doesn't
 # follow politics needs background + a plain-language explanation, not a
-# one-line headline. Longer video is fine.
+# one-line headline. Longer video is fine. Widened from the original
+# 120/150/190 — those were tight enough that "배경 한 줄 + 무슨 일 + 왜 중요"
+# (the SYSTEM prompt's own 3-beat rule) barely fit in one Korean sentence each.
 # NOTE: "hook" is deliberately absent — the first ~2s is owned by the dedicated
 # Hook Engine (hook_engine.py); the LLM never rewrites it.
-_LLM_LIMIT = {"summary": 120, "what": 150, "reaction": 110,
-              "factcheck": 130, "sides": 190, "outro": 80}
+_LLM_LIMIT = {"summary": 160, "what": 190, "reaction": 130,
+              "factcheck": 150, "sides": 220, "outro": 80}
 
 _SYSTEM = (
     "당신은 정치를 전혀 모르는 사람에게 오늘의 뉴스를 처음부터 풀어 설명하는 한국어 "
     "내레이션 작가입니다. 시청자는 이 사건도, 등장 인물도, 관련 제도도 모른다고 "
     "가정하세요. 주어진 '원문 기사'와 분류된 사실만 사용합니다.\n"
-    "가장 중요한 원칙: 절대 사실만 툭툭 던지지 말 것. 모든 카드에서 (1) 배경 — "
-    "왜 이런 일이 생겼는지, 이 사람·기관이 뭐 하는 곳인지 — 을 먼저 한 줄로 깔고, "
-    "(2) 그래서 무슨 일이 있었는지, (3) 그게 왜 문제이고 뭘 의미하는지까지 설명하세요. "
-    "'김승원이 사퇴했습니다' (X) → '대통령의 정책을 총괄하는 정책실장 김승원이, "
-    "취임 두 달 만에 물러났습니다. 정부 출범 초기라 이례적입니다' (O).\n"
+    "[분석 1단계] 블록이 함께 주어지면, 그건 당신이 이미 이 기사를 다 읽고 이해해서 "
+    "정리해 둔 내용입니다. 원문을 다시 해석할 필요 없이 그 이해를 바탕으로 곧장 "
+    "새 문장을 쓰세요.\n"
+    "가장 중요한 원칙 — 절대 원문 문장을 그대로 자르거나 이어붙이지 말 것. 기사에 "
+    "있는 표현을 요약·발췌하는 게 아니라, 이해한 내용을 처음부터 새로 풀어 씁니다. "
+    "'~고 할 수 있다'며 인용부호를 어중간하게 자르는 것 (X). 모든 카드에서 (1) "
+    "배경 — 왜 이런 일이 생겼는지, 이 사람·기관이 뭐 하는 곳인지 — 을 먼저 한 줄로 "
+    "깔고, (2) 그래서 무슨 일이 있었는지, (3) 그게 왜 문제이고 뭘 의미하는지까지 "
+    "설명하세요. '김승원이 사퇴했습니다' (X) → '대통령의 정책을 총괄하는 정책실장 "
+    "김승원이, 취임 두 달 만에 물러났습니다. 정부 출범 초기라 이례적입니다' (O).\n"
     "규칙:\n"
     "1) 인물·기관·전문용어는 처음 나올 때 반드시 짧게 풀 것: '정책실장(정부 정책을 "
-    "총괄하는 자리)', '인사청문회(장관 후보 자격을 국회가 검증하는 절차)'.\n"
+    "총괄하는 자리)', '인사청문회(장관 후보 자격을 국회가 검증하는 절차)'. [분석 1단계]의 "
+    "terms/who에 있는 풀이를 그대로 활용할 것.\n"
     "2) 카드가 이야기처럼 이어지게: 앞 카드 내용을 딛고 다음으로. '그런데', '문제는 "
     "이겁니다', '쉽게 말하면' 같은 연결을 쓰되 내용 있는 문장 안에 붙일 것.\n"
     "3) 쉬운 말, 한 문장 40자 안팎. 모든 문장을 '~습니다/~합니다/~됩니다'로 끝낼 것. "
-    "조사·연결어미('…에 따르면 / …라며 / …인데 / …곳이')로 끝내지 말 것.\n"
+    "조사·연결어미('…에 따르면 / …라며 / …인데 / …곳이')로 끝내지 말 것. 인용은 "
+    "필요할 때만 짧게, 반드시 여는 따옴표와 닫는 따옴표를 함께 쓸 것 — 절대 "
+    "따옴표를 연 채로 문장을 끝내지 말 것.\n"
     "4) 철저히 중립: 한쪽 편을 들거나 비꼬지 말 것. 단, 인물 이름은 그대로 쓸 것 — "
     "이재명 대통령, 한동훈, 윤석열 전 대통령처럼 유명 인물은 또렷하게 직접 언급.\n"
     "5) 입장을 옮길 땐 주체를 분명히: '국민의힘은 …, 민주당은 …', 특정인이면 이름. "
-    "불분명하면 '온라인에서는 …는 반응이 나옵니다'.\n"
+    "불분명하면 '온라인에서는 …는 반응이 나옵니다'. [분석 1단계]의 sides가 있으면 "
+    "그 이유(why)까지 살려 쓸 것 — 그냥 입장만 나열하지 말 것.\n"
     "6) 원문에 없는 사실·숫자·발언을 지어내지 말 것.\n\n"
     "카드별 역할 (유튜브 쇼츠 몰입 곡선):\n"
     "  - (hook 카드는 별도 엔진이 만듭니다. 당신은 hook을 쓰지 마세요.)\n"
@@ -86,7 +110,138 @@ _SYSTEM = (
 )
 
 
-def _payload(meta: dict[str, Any], cards: list[dict[str, Any]]) -> str:
+# --------------------------------------------------------------------------- #
+# STAGE 1 — understand the story before writing it.
+# --------------------------------------------------------------------------- #
+_ANALYSIS_SYSTEM = (
+    "당신은 정치부 데스크입니다. 대본을 쓰는 게 아니라, 아래 원문 기사와 사실/주장/"
+    "해석 분류를 읽고 '이해한 내용'만 구조화해서 정리합니다. 정치를 전혀 모르는 "
+    "시청자에게 이 사건을 설명하려면 무엇을 알아야 하는지 기준으로 생각하세요.\n"
+    "규칙:\n"
+    "1) who: 등장하는 인물·기관 각각이 '무엇을 하는 사람·곳인지' 한 문장으로. "
+    "예: {\"name\":\"김민석\",\"role\":\"더불어민주당 대표 — 여당 원내 1당의 대표\"}.\n"
+    "2) what_happened: 실제로 일어난 일을 사실관계만으로 2문장 이내, 인용부호 "
+    "없이 평서문으로 새로 쓸 것 (원문 문장을 그대로 옮기지 말 것).\n"
+    "3) why_now: 왜 하필 오늘 이게 뉴스가 됐는지(발단이 된 사건) 1문장.\n"
+    "4) why_it_matters: 이 사안이 시청자에게 구체적으로 왜 중요한지 1~2문장 — "
+    "'정치인의 말은 논란이 될 수 있다' 같은 일반론 말고, 이 사건 고유의 이유.\n"
+    "5) terms: 시청자가 모를 수 있는 용어·비유·과거 사건을 {\"용어\":\"한 줄 풀이\"}로, "
+    "있는 만큼만 — 없으면 빈 객체.\n"
+    "6) sides: 입장이 갈리면 [{\"who\":\"...\",\"position\":\"...\",\"why\":\"...\"}]로, "
+    "없으면 빈 배열.\n"
+    "7) confirmed_fact: 여러 출처가 교차 확인한 확실한 사실 한 문장, 완결형.\n"
+    "원문에 없는 사실을 지어내지 말 것. 출력은 JSON 하나만:\n"
+    '{"who":[{"name":"...","role":"..."}],"what_happened":"...","why_now":"...",'
+    '"why_it_matters":"...","terms":{"...":"..."},'
+    '"sides":[{"who":"...","position":"...","why":"..."}],"confirmed_fact":"..."}'
+)
+
+
+def _analysis_payload(meta: dict[str, Any]) -> str:
+    def _bullets(items: list[str], cap: int) -> str:
+        return "\n".join(f"- {re.sub(r'\\s+', ' ', t).strip()[:200]}" for t in items[:cap]) or "- (없음)"
+
+    ent = meta.get("entities", {})
+    who = ", ".join(
+        [f"{n}(대통령)" if n == ent.get("president") else n
+         for n in (ent.get("politicians") or [])][:8]
+        + (ent.get("parties") or [])[:4]
+    ) or "(특정 인물 없음)"
+    return (
+        f"[원문 기사]\n{meta.get('source_text', '').strip()[:3200]}\n\n"
+        f"[사실로 분류된 문장]\n{_bullets(meta.get('facts', []), 10)}\n\n"
+        f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []), 8)}\n\n"
+        f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 6)}\n\n"
+        f"[등장 인물·정당] {who}\n\n"
+        "위 내용을 다 읽고 이해한 대로 JSON 하나로 정리하세요."
+    )
+
+
+def _parse_understanding(raw: str) -> dict[str, Any] | None:
+    """-> the stage-1 structured understanding, or None if the model's output
+    wasn't usable JSON — the caller falls back to writing from raw facts."""
+    txt = raw.strip()
+    if txt.startswith("```"):
+        txt = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", txt).strip()
+    inner = (re.search(r"\{.*\}", txt, re.S) or [None])[0]
+
+    def _repair(s: str) -> str:
+        s = s.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+        s = re.sub(r",\s*([}\]])", r"\1", s)
+        s = re.sub(r"[\x00-\x1f]+", " ", s)
+        return s
+
+    obj = None
+    for cand in (txt, inner, _repair(txt), _repair(inner or "")):
+        if not cand:
+            continue
+        try:
+            obj = json.loads(cand)
+            break
+        except Exception:
+            continue
+    if not isinstance(obj, dict):
+        return None
+    if not (str(obj.get("what_happened") or "").strip()
+            or str(obj.get("confirmed_fact") or "").strip()):
+        return None                              # too empty to be useful
+    return obj
+
+
+def analyze_story(meta: dict[str, Any], cfg: Settings) -> dict[str, Any] | None:
+    """Stage 1: read the source once and understand it — who's who, what
+    actually happened, why it's news today, what needs glossing, where the
+    sides disagree and why. Best-effort: on ANY failure (no key, HTTP error,
+    unparseable/empty JSON) returns None, and the caller (`rewrite_segments`)
+    writes straight from the raw facts/claims/interps exactly as it did
+    before this existed."""
+    provider = (getattr(cfg, "llm_provider", "") or "").strip()
+    if not provider:
+        return None
+    from .llm import complete
+
+    payload = _analysis_payload(meta)
+    for attempt in range(2):
+        try:
+            raw = complete(payload, cfg, max_tokens=900, system=_ANALYSIS_SYSTEM)
+        except Exception as exc:  # pragma: no cover - network dependent
+            log.info("story analysis: call %d failed (%s)", attempt + 1, str(exc)[:80])
+            continue
+        obj = _parse_understanding(raw)
+        if obj:
+            return obj
+        log.info("story analysis: response %d unparseable, retrying", attempt + 1)
+    log.info("story analysis: gave up — writing from raw facts/claims instead")
+    return None
+
+
+def _understanding_block(u: dict[str, Any] | None) -> str:
+    """Stage 1's output, formatted for stage 2's prompt. Empty string when
+    stage 1 didn't run or didn't return anything usable."""
+    if not u:
+        return ""
+    who = [w for w in (u.get("who") or []) if isinstance(w, dict) and w.get("name")]
+    who_lines = "\n".join(f"- {w.get('name', '')}: {w.get('role', '')}" for w in who) or "- (없음)"
+    terms = u.get("terms") if isinstance(u.get("terms"), dict) else {}
+    term_lines = "\n".join(f"- {k}: {v}" for k, v in terms.items() if k and v) or "- (없음)"
+    sides = [s for s in (u.get("sides") or []) if isinstance(s, dict) and s.get("who")]
+    side_lines = "\n".join(
+        f"- {s.get('who', '')}: {s.get('position', '')} (이유: {s.get('why', '')})" for s in sides
+    ) or "- (없음)"
+    return (
+        "[분석 1단계 — 이미 이해해 정리해 둔 내용. 이걸 바탕으로 새 문장을 쓸 것]\n"
+        f"등장 인물/기관:\n{who_lines}\n"
+        f"실제로 있었던 일: {u.get('what_happened', '')}\n"
+        f"왜 하필 지금: {u.get('why_now', '')}\n"
+        f"왜 중요한지: {u.get('why_it_matters', '')}\n"
+        f"풀어줘야 할 용어:\n{term_lines}\n"
+        f"입장 차이:\n{side_lines}\n"
+        f"확인된 사실: {u.get('confirmed_fact', '')}\n\n"
+    )
+
+
+def _payload(meta: dict[str, Any], cards: list[dict[str, Any]],
+            understanding: dict[str, Any] | None = None) -> str:
     def _bullets(items: list[str], cap: int = 8) -> str:
         return "\n".join(f"- {re.sub(r'\\s+', ' ', t).strip()[:160]}" for t in items[:cap]) or "- (없음)"
 
@@ -96,20 +251,32 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]]) -> str:
          for n in (ent.get("politicians") or [])][:8]
         + (ent.get("parties") or [])[:4]
     ) or "(특정 인물 없음)"
-    ask = {"cards": [{"role": c["role"],
-                      "limit": _LLM_LIMIT.get(c["role"], 80),
-                      "draft": c.get("narration", "")} for c in cards]}
+    # once stage 1 has actually understood the story, the template's own
+    # narration draft is a distraction (it's sometimes just a chopped article
+    # quote) — keep it out entirely and lean on the understanding instead.
+    ub = _understanding_block(understanding)
+    ask = {"cards": [{"role": c["role"], "limit": _LLM_LIMIT.get(c["role"], 80)}
+                     if ub else
+                     {"role": c["role"], "limit": _LLM_LIMIT.get(c["role"], 80),
+                      "draft": c.get("narration", "")}
+                     for c in cards]}
+    src_excerpt = meta.get("source_text", "").strip()[: (1200 if ub else 2600)]
+    draft_note = ("" if ub else
+                  "각 카드의 draft는 참고용 초안일 뿐입니다 — 그대로 다듬지 말고, 규칙대로 "
+                  "(배경→무슨 일→왜 중요) 완전히 새 문장으로 풀어 쓸 것.\n")
     return (
-        f"[원문 기사]\n{meta.get('source_text', '').strip()[:2600]}\n\n"
+        f"{ub}"
+        f"[원문 기사{'  — 확인용, 문장을 그대로 옮기지 말 것' if ub else ''}]\n{src_excerpt}\n\n"
         f"[사실로 분류된 문장]\n{_bullets(meta.get('facts', []))}\n\n"
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []))}\n\n"
         f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 5)}\n\n"
         f"[등장 인물·정당] {who}\n"
         f"[보도 매체 성향] {', '.join(meta.get('leans', [])) or '(불명)'}\n"
         f"[이 기사의 핵심 인물/주제] {meta.get('topic', '') or '(없음)'}\n\n"
-        f"[다시 쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"
-        "각 카드의 draft를 규칙대로(배경→무슨 일→왜 중요) 풀어 쓰고, 인기 영상 "
-        "형식의 눈길 끄는 2줄 title도 지어 JSON으로만 답하세요. (hook은 쓰지 마세요.)\n"
+        f"[쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"
+        f"{draft_note}"
+        "각 카드를 규칙대로(배경→무슨 일→왜 중요) 새로 쓰고, 인기 영상 형식의 눈길 "
+        "끄는 2줄 title도 지어 JSON으로만 답하세요. (hook은 쓰지 마세요.)\n"
         '예: {"title":["한동훈 녹취록 공개","유출 경위 조사할까?"],'
         '"summary":"한동훈은 국민의힘 대표를 지낸 인물인데, ...",'
         '"what":"그런데 이번에 공개된 녹취록에는 ...","factcheck":"확인된 사실은 이겁니다. ... '
@@ -226,7 +393,10 @@ def rewrite_segments(
         return segments, []
 
     from .llm import complete
-    payload = _payload(meta, spoken)
+    # STAGE 1 — understand the story first. Best-effort; None just means
+    # stage 2 writes from the raw facts/claims/interps as it always did.
+    story = analyze_story(meta, cfg)
+    payload = _payload(meta, spoken, understanding=story)
     new: dict[str, str] = {}
     title: list[str] = []
     ftab: dict[str, str] = {}
@@ -324,5 +494,6 @@ def rewrite_segments(
         log.warning("llm rewrite: safety check errored (%s) — keeping template", exc)
         return segments, []
 
-    log.info("llm narration rewrite: %d/%d cards via %s", changed, len(spoken), provider)
+    log.info("llm narration rewrite: %d/%d cards via %s%s", changed, len(spoken), provider,
+             " (analyzed first)" if story else " (no analysis stage)")
     return cand, title

@@ -168,6 +168,97 @@ def test_llm_facts_table_replaces_factcheck_rows(monkeypatch):
     assert fc["rows"][-1]["text"] == "2개 매체 종합"     # template's 확인 row kept
 
 
+UNDERSTANDING = {
+    "who": [{"name": "김민석", "role": "더불어민주당 대표"}],
+    "what_happened": "김민석 대표가 탄핵 전조 발언을 한 데 대해 조국 원장이 비판했고, 김 대표가 재반박했다.",
+    "why_now": "전날 방송에서 나온 발언이 논란이 됐다.",
+    "why_it_matters": "여권 내 노선 갈등이 드러났다는 점에서 주목된다.",
+    "terms": {"탄핵 전조": "대통령을 국회가 파면하려는 조짐"},
+    "sides": [{"who": "김민석", "position": "걱정을 위장한 흔들기다", "why": "법적 하자가 없다는 이유"}],
+    "confirmed_fact": "김민석 대표는 15일 방송에서 관련 발언을 했다.",
+}
+
+
+def _two_stage_mock(monkeypatch, stage2_payload: str):
+    """`complete()` returns the stage-1 UNDERSTANDING when called with the
+    analysis system prompt, and `stage2_payload` for every other call —
+    mirrors how the two real calls are told apart in rewrite_segments."""
+    calls: list[dict] = []
+
+    def fake(prompt, cfg, max_tokens=400, system=""):
+        calls.append({"prompt": prompt, "system": system})
+        if system == script_llm._ANALYSIS_SYSTEM:
+            return json.dumps(UNDERSTANDING)
+        return stage2_payload
+
+    monkeypatch.setattr(llm, "complete", fake)
+    return calls
+
+
+def test_analyze_story_returns_none_without_a_provider():
+    assert script_llm.analyze_story(META, settings) is None   # provider ""
+
+
+def test_analyze_story_parses_a_valid_understanding(monkeypatch):
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps(UNDERSTANDING))
+    out = script_llm.analyze_story(META, _cfg())
+    assert out["what_happened"] == UNDERSTANDING["what_happened"]
+    assert out["sides"][0]["who"] == "김민석"
+
+
+def test_analyze_story_gives_up_on_unusable_json(monkeypatch):
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: "not json at all")
+    assert script_llm.analyze_story(META, _cfg()) is None
+
+
+def test_analyze_story_gives_up_on_empty_understanding(monkeypatch):
+    # parses fine but carries nothing usable -> treated as a miss
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps({"terms": {}}))
+    assert script_llm.analyze_story(META, _cfg()) is None
+
+
+def test_understanding_block_formats_the_key_fields():
+    block = script_llm._understanding_block(UNDERSTANDING)
+    assert "김민석: 더불어민주당 대표" in block
+    assert UNDERSTANDING["what_happened"] in block
+    assert "탄핵 전조: 대통령을 국회가 파면하려는 조짐" in block
+    assert block.startswith("[분석 1단계")
+
+
+def test_understanding_block_empty_when_no_understanding():
+    assert script_llm._understanding_block(None) == ""
+
+
+def test_payload_drops_template_draft_once_understood():
+    spoken = _segs()[1:2]                    # the "what" card, has a narration draft
+    with_ub = script_llm._payload(META, spoken, understanding=UNDERSTANDING)
+    without_ub = script_llm._payload(META, spoken, understanding=None)
+    assert "여야가 합의해 통과시켰습니다" not in with_ub   # draft text left out
+    assert "여야가 합의해 통과시켰습니다" in without_ub     # ...but present without stage 1
+    assert "[분석 1단계" in with_ub
+
+
+def test_rewrite_runs_analysis_stage_then_writes_from_it(monkeypatch):
+    stage2 = json.dumps({"what": "김민석 대표가 조국 원장의 비판에 재반박했습니다."})
+    calls = _two_stage_mock(monkeypatch, stage2)
+    out = _rw(_segs(), META, _cfg(), BASE)
+    assert "재반박" in out[1]["narration"]
+    # the analysis call happened, and its output reached the writing call
+    assert any(c["system"] == script_llm._ANALYSIS_SYSTEM for c in calls)
+    write_calls = [c for c in calls if c["system"] != script_llm._ANALYSIS_SYSTEM]
+    assert write_calls and "탄핵 전조" in write_calls[0]["prompt"]
+
+
+def test_rewrite_still_works_when_analysis_stage_fails(monkeypatch):
+    # complete() only ever returns a stage-2-shaped payload -> analyze_story
+    # can't parse it as an understanding and gives up; the rewrite must still
+    # go through on the raw facts/claims, exactly as before stage 1 existed.
+    payload = json.dumps({"what": "여야가 막판까지 맞섰지만 결국 합의해 통과시켰습니다."})
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    out = _rw(_segs(), META, _cfg(), BASE)
+    assert "합의해 통과" in out[1]["narration"]
+
+
 def test_gemini_request_shape(monkeypatch):
     seen = {}
 

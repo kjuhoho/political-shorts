@@ -138,9 +138,38 @@ def truncate(text: str, limit: int, ellipsis: str = "…") -> str:
 _CLAUSE_BREAK = re.compile(r"(?<=다)[\.\s]|(?<=요)[\.\s]|[!?]\s|(?<=[가-힣])[,、]\s|"
                            r"(?<=[가-힣])(며|고|면서|는데|지만)\s")
 
+# curly pairs count open vs close; straight marks double as both, so an ODD
+# count means "still inside a quote".
+_CURLY_QUOTE_PAIRS = (("“", "”"), ("‘", "’"))
+_STRAIGHT_QUOTES = ('"', "'")
+
+
+def _quote_safe_end(text: str, idx: int, lookahead: int = 40) -> int:
+    """Nudge a cut index so `text[:idx]` never ends mid-quotation — a spoken
+    line that trails off inside someone's quote ("...말을 꺼낸) reads as
+    broken, not just long. Extend to the nearby closing mark; if none is
+    close by, retreat to just before the quote opened instead."""
+    head = text[:idx]
+    for open_ch, close_ch in _CURLY_QUOTE_PAIRS:
+        if head.count(open_ch) > head.count(close_ch):
+            close_at = text.find(close_ch, idx, idx + lookahead)
+            if close_at != -1:
+                return close_at + 1
+            open_at = head.rfind(open_ch)
+            return open_at if open_at > 0 else idx
+    for q in _STRAIGHT_QUOTES:
+        if head.count(q) % 2 == 1:
+            close_at = text.find(q, idx, idx + lookahead)
+            if close_at != -1:
+                return close_at + 1
+            open_at = head.rfind(q)
+            return open_at if open_at > 0 else idx
+    return idx
+
 
 def clip_sentence(text: str, limit: int, ell: str = "…") -> str:
-    """Trim to <= limit chars but END ON A NATURAL BOUNDARY, never mid-word.
+    """Trim to <= limit chars but END ON A NATURAL BOUNDARY, never mid-word
+    and never mid-quote.
 
     Prefers a sentence end (…다. / …요. / ? / !), then a clause break
     (comma, 며/고/지만…). Only falls back to a hard cut + ``ell`` if nothing
@@ -153,10 +182,15 @@ def clip_sentence(text: str, limit: int, ell: str = "…") -> str:
     window = text[: limit + 1]
     ends = [m.end() for m in re.finditer(r"[다요][\.。]|[!?]|[다요](?=\s|$)", window)]
     if ends and ends[-1] >= limit * 0.55:
-        return text[: ends[-1]].rstrip(" ,·")
+        idx = _quote_safe_end(text, ends[-1])
+        return text[:idx].rstrip(" ,·")
     breaks = [m.start() for m in _CLAUSE_BREAK.finditer(window)]
     if breaks and breaks[-1] >= limit * 0.5:
-        return text[: breaks[-1] + 1].rstrip(" ,·") + ell
+        idx = _quote_safe_end(text, breaks[-1] + 1)
+        tail = "" if idx != breaks[-1] + 1 else ell
+        return text[:idx].rstrip(" ,·") + tail
     sp = window.rfind(" ")
     cut = sp if sp >= limit * 0.5 else limit - 1
-    return text[:cut].rstrip(" ,·") + ell
+    idx = _quote_safe_end(text, cut)
+    tail = "" if idx != cut else ell
+    return text[:idx].rstrip(" ,·") + tail

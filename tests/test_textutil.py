@@ -1,5 +1,6 @@
 from political_shorts.textutil import (
     canonical_url,
+    clip_sentence,
     normalize_title,
     split_sentences,
     strip_byline,
@@ -34,3 +35,33 @@ def test_canonical_url_drops_tracking():
 def test_split_sentences_korean():
     parts = split_sentences("국회가 열렸다. 여야가 충돌했다\n예산안은 가결됐다.")
     assert len(parts) == 3
+
+
+def _quote_balance(s: str) -> bool:
+    return (s.count("“") == s.count("”") and s.count("‘") == s.count("’")
+            and s.count('"') % 2 == 0 and s.count("'") % 2 == 0)
+
+
+def test_clip_sentence_never_ends_mid_quote():
+    # the real card that shipped broken: cut lands inside a nested quote with
+    # no comma/connective anywhere to break on, and the outer “ never closes
+    # within this fragment — must retreat before it, not trail off inside it.
+    s = ("김 대표는 이날 민주당 공식 유튜브 채널 '민주당 TV'에 출연해 "
+         "“'괜히 탄핵 이야기를 꺼낸 것이 경솔했다'고 할 수 있다.")
+    out = clip_sentence(s, 64)
+    assert _quote_balance(out)
+    assert not out.rstrip().endswith(("…", "'", "‘", "“"))
+
+
+def test_clip_sentence_extends_to_a_nearby_closing_quote():
+    # the close IS within reach -> extend to it rather than retreat past
+    # the whole quote (keeps more of the actual content than dropping it).
+    s = "김 대표는 “예산안을 이번 주 안에 반드시 처리하겠다” 라고 분명히 밝혔습니다."
+    out = clip_sentence(s, 24)
+    assert _quote_balance(out)
+    assert "예산안을 이번 주 안에 반드시 처리하겠다" in out
+
+
+def test_clip_sentence_still_prefers_a_clean_sentence_end():
+    s = "국회는 3일 예산안을 의결했다. 이어 다음 안건을 논의했다."
+    assert clip_sentence(s, 20) == "국회는 3일 예산안을 의결했다."

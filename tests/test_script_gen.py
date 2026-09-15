@@ -39,3 +39,20 @@ def test_sides_line_builds_from_party_split():
     line = sg._sides_line(claims, [])
     assert line.startswith("그런데 이 사안을 보는 눈은")
     assert "국민의힘" in line and "민주당" in line
+
+
+def test_quote_ratio_flags_a_mostly_quoted_sentence():
+    # the real "what" card that shipped broken: a nested-quote sentence with
+    # almost no plain narrative around it.
+    quoted = ("김 대표는 이날 출연해 “‘괜히 탄핵 이야기를 꺼낸 것이 경솔했다’고 할 수 "
+              "있다”고 말했다.")
+    plain = "국회는 3일 본회의를 열어 예산안을 의결했다."
+    assert sg._quote_ratio(quoted) > sg._quote_ratio(plain)
+    assert sg._quote_ratio(plain) == 0.0
+
+
+def test_context_score_deprioritizes_quote_heavy_sentences():
+    quoted = ("김 대표는 이날 출연해 “‘괜히 탄핵 이야기를 꺼낸 것이 경솔했다’고 할 수 "
+              "있다”고 말했다.")
+    plain = "국회는 처음으로 이례적인 절차를 밟아 예산안을 처리했다."   # hits _CONTEXT_HINTS
+    assert sg._context_score(plain) > sg._context_score(quoted)

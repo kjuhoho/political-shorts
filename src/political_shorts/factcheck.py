@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .analyze import Kind, analyze
-from .textutil import clean_text
+from .textutil import clean_text, clip_sentence
 
 _ALLEGATION = (
     "구속", "기소", "뇌물", "횡령", "배임", "성범죄", "성폭행", "성추행", "마약",
@@ -115,8 +115,12 @@ class FactCheck:
 
 
 def _clip(s: str, n: int = 46) -> str:
+    # on-screen table rows are short-lived FactUnit text, often a sentence
+    # with an embedded quote — clip_sentence's clause/quote-safe trim keeps
+    # a row from ending mid-quotation ("…에 출연해 "'괜히 탄핵) the way a naive
+    # space-cut did.
     s = re.sub(r"[·…—]", " ", clean_text(s)).strip(" ·,")
-    return s if len(s) <= n else s[:n].rsplit(" ", 1)[0].rstrip(" ,·")
+    return clip_sentence(s, n, ell="")
 
 
 def _key(text: str) -> frozenset:
