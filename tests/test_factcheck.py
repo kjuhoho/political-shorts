@@ -74,6 +74,17 @@ def test_clip_keeps_a_short_complete_sentence_untouched():
     assert _clip(s) == s
 
 
+def test_clip_marks_a_short_fragment_even_under_budget():
+    # a real shipped row: well under the 52-char budget (nothing for
+    # clip_sentence to cut), but the underlying FactUnit text is itself a
+    # fragment with no predicate ("...문화 교류를").
+    s = "김혜경 여사와 우즈벡 영부인이 14일 국립고궁박물관을 방문해 문화 교류를"
+    assert len(s) < 52
+    out = _clip(s)
+    assert out.endswith("..")
+    assert out != s
+
+
 def test_claim_row_budget_accounts_for_the_speaker_prefix():
     # "{who}: {said}" must fit the same on-screen budget as a plain _clip —
     # a long speaker label must not push the whole row past the render limit.

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .analyze import Kind, analyze
+from .subtitle import _complete as _sentence_complete
 from .textutil import clean_text, clip_sentence
 
 _ALLEGATION = (
@@ -134,7 +135,15 @@ def _clip(s: str, n: int = _ROW_BUDGET) -> str:
     # row with ".." (Jua has no … glyph) instead of leaving a fragment that
     # LOOKS like a complete sentence but has no predicate.
     s = re.sub(r"[·…—]", " ", clean_text(s)).strip(" ·,")
-    return clip_sentence(s, n, ell="..")
+    out = clip_sentence(s, n, ell="..")
+    if not out.endswith("..") and not _sentence_complete(out.rstrip()):
+        # short enough that clip_sentence had nothing to cut, but the
+        # underlying FactUnit text itself is a fragment ("...문화 교류를", no
+        # predicate) — a real case that shipped from the template row path
+        # even after the LLM row path (script_llm._clean_row) got this same
+        # check. Mark it the same way an actual truncation would be.
+        out = f"{out}.."
+    return out
 
 
 def _key(text: str) -> frozenset:
