@@ -286,7 +286,7 @@ _TITLE_RE = re.compile(
     r"([가-힣]{2,4})\s*(?:청와대|대통령실|신임|전|前)?\s*"
     r"(대통령|국무총리|부총리|장관|차관|정책실장|비서실장|안보실장|수석|대변인|"
     r"원내대표|당대표|위원장|의원|청장|총장|처장|본부장|사장|회장|시장|지사|"
-    r"변호사|교수|재판관|대법관|헌법재판관)"
+    r"변호사|교수|재판관|대법관|헌법재판관|여사)"
 )
 # the "직책 이름" order — "대통령실 정책실장 김승원", "국무총리 김민석". The name
 # comes AFTER the role word (and any office prefix), so _TITLE_RE would wrongly
@@ -387,6 +387,17 @@ def pick_actor(headline: str, entities: Entities, frame: Frame) -> str:
     named = [n for n in entities.politicians if n in h]
     if named:
         return min(named, key=h.find)
+    # last resort before defaulting to the president: a name+honorific/role in
+    # the headline ("김혜경 여사") is a reliable subject even outside the
+    # personnel/appoint/remark/clash frames above (e.g. "generic") — a real
+    # case that shipped wrong: 김혜경 isn't in the politicians lexicon (she
+    # holds no office), so a "generic"-frame story about her fell all the way
+    # through to entities.lead_actor, which defaults to "이재명 대통령" the
+    # moment his name is mentioned ANYWHERE in the body — producing a hook
+    # asking "왜 이재명이 주목받고 있을까요?" for a story that isn't about him.
+    for m in _TITLE_RE.finditer(h):
+        if m.group(1) not in _ORG_PREFIX and m.group(1) not in _OFFICE_WORD:
+            return m.group(1)
     return entities.lead_actor
 
 

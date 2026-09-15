@@ -15,6 +15,22 @@ def test_pick_actor_role_then_name_order():
     assert pick_actor(h2, detect_entities(h2), detect_frame(h2)) == "한동훈"
 
 
+def test_pick_actor_finds_a_non_politician_named_with_an_honorific():
+    # a real shipped case: a "generic"-frame story about the First Lady, who
+    # isn't in the politicians lexicon (she holds no office). The body text
+    # naturally mentions "이재명 대통령" to identify her, which used to make
+    # entities.lead_actor default to the PRESIDENT — producing a hook asking
+    # "왜 이재명이 주목받고 있을까요?" for a story that isn't about him at all.
+    h = "김혜경 여사, 우즈벡 영부인과 경복궁 방문...폭넓은 대화로 우의 다져"
+    body = ("이재명 대통령의 배우자 김혜경 여사가 우즈베키스탄 대통령 배우자와 "
+           "경복궁을 방문했다.")
+    ent = detect_entities(h, body)
+    fr = detect_frame(h, body)
+    assert fr.kind == "generic"
+    assert ent.president is True                 # 이재명 genuinely mentioned in the body
+    assert pick_actor(h, ent, fr) == "김혜경"      # but the STORY is about her, not him
+
+
 def test_title_leads_with_real_name_not_office():
     h = "대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만"
     line1 = make_title(h, detect_entities(h), detect_frame(h))[0]
