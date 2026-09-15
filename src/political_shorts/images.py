@@ -28,7 +28,7 @@ from urllib.parse import unquote
 import requests
 
 from .config import Settings, settings
-from .hook import Entities, Frame, pick_actor
+from .hook import Entities, Frame, detect_topic, pick_actor
 from .logging_setup import get_logger
 from .textutil import clean_text
 
@@ -66,6 +66,25 @@ _FRAME_LOCATION = {
     "personnel": ["대한민국 국회의사당", "서울특별시청"],
     "poll": ["서울광장", "광화문광장"],
     "remark": ["대한민국 국회의사당", "광화문광장"],
+}
+# topic-relevant establishing shots (hook.detect_topic), tried BEFORE the
+# frame pool above — a story about 북한/평양 gets DMZ/Panmunjom imagery
+# instead of a random Seoul landmark that has nothing to do with it (a real
+# shipped case: "Seoul Station" signage on screen while the subtitle talked
+# about a Pyongyang hospital). Every title here was verified by hand against
+# the live ko.wikipedia lead image, not just that it resolves — a bare
+# concept title can silently point at the WRONG country's building ("대법원"
+# -> US Supreme Court, "헌법재판소" -> Taiwan's Judicial Yuan on ko.wikipedia,
+# which is exactly why those two are still deliberately absent). "주한일본
+# 대사관" is deliberately excluded too — its verified lead photo includes a
+# comfort-women statue in frame, too charged for neutral filler on an
+# unrelated story.
+_TOPIC_LOCATION = {
+    "north_korea": ["판문점", "평양", "임진각", "통일전망대", "휴전선"],
+    "un": ["유엔본부"],
+    "us": ["주한미국대사관"],
+    "china": ["주한중국대사관"],
+    "economy": ["기획재정부", "한국은행"],
 }
 
 _S = requests.Session()
@@ -197,7 +216,8 @@ def _make_asset(info: dict, query: str, kind: str, cache_dir: Path) -> ImageAsse
 
 
 def collect_images(
-    entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None
+    entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None,
+    body_text: str = "",
 ) -> list[ImageAsset]:
     cfg = cfg or settings
     if not cfg.image_enabled:
@@ -207,6 +227,7 @@ def collect_images(
     want = max(2, cfg.image_max_count)
 
     h = clean_text(headline)
+    topic = detect_topic(headline, body_text)
     # People to try for a portrait, most-relevant first:
     #   1) the story's lead actor (the poster face — only if a real person named
     #      in the headline; pick_actor falls back to politicians[0] / an
@@ -241,13 +262,14 @@ def collect_images(
         if n and n not in names:
             names.append(n)
 
-    # location titles: frame-specific first, then the general pool SHUFFLED with
-    # a per-story seed so back-to-back videos don't show the same 4 photos.
+    # location titles: TOPIC-specific first (detect_topic — 북한/유엔/미국/…),
+    # then frame-specific, then the general pool SHUFFLED with a per-story
+    # seed so back-to-back videos don't show the same 4 photos.
     import random as _rnd
     pool = list(LOCATION_POOL)
     _rnd.Random(clean_text(headline)).shuffle(pool)
     locs: list[str] = []
-    for t in _FRAME_LOCATION.get(frame.kind, []) + pool:
+    for t in _TOPIC_LOCATION.get(topic, []) + _FRAME_LOCATION.get(frame.kind, []) + pool:
         if t not in locs:
             locs.append(t)
 
@@ -277,6 +299,7 @@ def collect_images(
                 assets.append(a)
                 used.add(info["url"])
 
-    log.info("images: %d [%s] for %s",
-             len(assets), ", ".join(a.query for a in assets) or "none", headline[:44])
+    log.info("images: %d [%s]%s for %s",
+             len(assets), ", ".join(a.query for a in assets) or "none",
+             f" topic={topic}" if topic else "", headline[:44])
     return assets

@@ -168,6 +168,37 @@ def test_assign_images_prefers_video_for_context_cards():
     assert out[1] == "V_assembly.webm"
 
 
+def test_collect_footage_tries_topic_terms_before_generic(monkeypatch, tmp_path):
+    # a real shipped case: a 북한/평양 story pulled generic "seoul south korea
+    # city" b-roll — nothing about the actual subject. Topic terms must be
+    # tried first, guaranteed, not just shuffled in with the frame/generic pool.
+    cfg = dataclasses.replace(settings, broll_enabled=True, pexels_api_key="k",
+                              broll_cache_dir=str(tmp_path))
+    seen_terms: list[str] = []
+
+    def fake_pexels(term, key, cap_bytes, cache_dir):
+        seen_terms.append(term)
+        return []                                    # no hit -> tries the next term
+
+    monkeypatch.setattr(footage, "_pexels_videos", fake_pexels)
+    ent, fr = _frame_entities()
+    footage.collect_footage(ent, fr, "정부, 평양 병원에 의료장비 지원 추진", cfg,
+                            body_text="북한 강동군병원에 지원한다")
+    assert seen_terms[0] in footage._TOPIC_PEXELS_TERMS["north_korea"]
+
+
+def test_collect_footage_falls_back_to_generic_with_no_topic(monkeypatch, tmp_path):
+    cfg = dataclasses.replace(settings, broll_enabled=True, pexels_api_key="k",
+                              broll_cache_dir=str(tmp_path))
+    seen_terms: list[str] = []
+    monkeypatch.setattr(footage, "_pexels_videos",
+                        lambda term, *a, **k: seen_terms.append(term) or [])
+    ent, fr = _frame_entities()
+    footage.collect_footage(ent, fr, HL, cfg)
+    assert seen_terms                                 # still tried something
+    assert not any(t in footage._TOPIC_PEXELS_TERMS.get("north_korea", []) for t in seen_terms)
+
+
 def test_assign_images_interleaves_video_and_photo_context():
     from political_shorts.video import _assign_images
 

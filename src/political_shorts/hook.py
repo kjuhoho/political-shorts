@@ -149,6 +149,33 @@ def detect_frame(*texts: str) -> Frame:
 
 
 # --------------------------------------------------------------------------- #
+# topic — a broad subject bucket so filler imagery can be topically relevant
+# instead of always a generic Seoul landmark. `frame` (scandal/vote/clash/…)
+# is about the SHAPE of the story; this is about what it's actually ABOUT.
+# A story with no distinctive topic keyword resolves to "" — callers fall
+# back to their own generic pool exactly as before this existed.
+# --------------------------------------------------------------------------- #
+_TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "north_korea": ("북한", "평양", "남북", "대북", "통일부", "판문점", "개성",
+                    "북측", "노동당", "김정은"),
+    "un": ("유엔", "안보리", "국제사회"),
+    "us": ("미국", "한미", "백악관", "주한미군"),
+    "china": ("중국", "한중"),
+    "economy": ("예산", "재정", "세제", "감세", "국채", "한국은행", "기준금리"),
+}
+
+
+def detect_topic(*texts: str) -> str:
+    """"" when nothing distinctive matches — callers fall back to a generic
+    pool exactly as before this function existed."""
+    t = clean_text(" ".join(texts))
+    for topic, keywords in _TOPIC_KEYWORDS.items():
+        if any(k in t for k in keywords):
+            return topic
+    return ""
+
+
+# --------------------------------------------------------------------------- #
 # particles — pick 이/가, 은/는, 을/를, 와/과 by the last syllable's 받침
 # --------------------------------------------------------------------------- #
 def _has_batchim(word: str) -> bool:

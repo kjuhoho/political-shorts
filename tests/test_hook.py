@@ -1,6 +1,6 @@
 from political_shorts.hook import (
-    detect_entities, detect_frame, make_factcheck, make_hook, make_title,
-    pick_actor, simplify, to_polite,
+    detect_entities, detect_frame, detect_topic, make_factcheck, make_hook,
+    make_title, pick_actor, simplify, to_polite,
 )
 
 
@@ -29,6 +29,19 @@ def test_pick_actor_finds_a_non_politician_named_with_an_honorific():
     assert fr.kind == "generic"
     assert ent.president is True                 # 이재명 genuinely mentioned in the body
     assert pick_actor(h, ent, fr) == "김혜경"      # but the STORY is about her, not him
+
+
+def test_detect_topic_north_korea_from_body_not_just_headline():
+    # a real shipped case: the headline alone didn't have to name it, but the
+    # keyword the caller cares about matters wherever it appears — images.py
+    # and footage.py pass headline+summary together.
+    assert detect_topic("정부, 평양 병원에 의료장비 지원 추진") == "north_korea"
+    assert detect_topic("정부, 병원 지원 확대", "북한 강동군병원에 의료장비를 지원한다") \
+        == "north_korea"
+
+
+def test_detect_topic_empty_when_nothing_distinctive():
+    assert detect_topic("정책실장 김승원 전격 사퇴") == ""
 
 
 def test_title_leads_with_real_name_not_office():

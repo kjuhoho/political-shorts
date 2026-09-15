@@ -29,7 +29,7 @@ import requests
 
 from .config import Settings, settings
 from .images import ImageAsset
-from .hook import Entities, Frame
+from .hook import Entities, Frame, detect_topic
 from .logging_setup import get_logger
 from .textutil import clean_text
 
@@ -72,6 +72,20 @@ _PEXELS_TERMS = {
 }
 _PEXELS_GENERIC = ["seoul south korea city", "korean flag waving",
                    "seoul cityscape", "seoul street aerial", "seoul skyline night"]
+# topic-relevant terms (hook.detect_topic), tried BEFORE the frame/generic
+# pools above — same fix as images.py's _TOPIC_LOCATION: a story about
+# 북한/평양 should pull DMZ/Panmunjom b-roll, not generic Seoul street
+# footage. Free-text search (unlike the Wikipedia title lookups in
+# images.py), so a term that returns nothing just falls through to the next
+# one — no risk of silently resolving to the wrong country's building.
+_TOPIC_PEXELS_TERMS = {
+    "north_korea": ["demilitarized zone korea", "panmunjom border",
+                    "pyongyang north korea"],
+    "un": ["united nations headquarters", "united nations flag"],
+    "us": ["united states embassy", "washington dc government"],
+    "china": ["beijing china government"],
+    "economy": ["stock market trading board", "bank of korea currency"],
+}
 
 _S = requests.Session()
 _S.headers["User-Agent"] = UA
@@ -218,7 +232,8 @@ def _pexels_videos(term: str, key: str, cap_bytes: int, cache_dir: Path) -> list
 # public
 # --------------------------------------------------------------------------- #
 def collect_footage(
-    entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None
+    entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None,
+    body_text: str = "",
 ) -> list[ImageAsset]:
     cfg = cfg or settings
     if not getattr(cfg, "broll_enabled", False):
@@ -228,10 +243,14 @@ def collect_footage(
     cap_bytes = max(4, int(getattr(cfg, "broll_max_mb", 40))) * 1_000_000
     want = max(1, int(getattr(cfg, "broll_max_count", 3)))
 
+    topic = detect_topic(headline, body_text)
     rnd = random.Random(clean_text(headline))
-    pexels_terms = list(dict.fromkeys(
-        _PEXELS_TERMS.get(frame.kind, []) + _PEXELS_GENERIC))
-    rnd.shuffle(pexels_terms)
+    # topic terms are NOT shuffled in with the rest — they lead, guaranteed,
+    # so a north_korea story tries DMZ/Panmunjom b-roll before ever touching
+    # generic Seoul street footage.
+    rest = list(dict.fromkeys(_PEXELS_TERMS.get(frame.kind, []) + _PEXELS_GENERIC))
+    rnd.shuffle(rest)
+    pexels_terms = list(dict.fromkeys(_TOPIC_PEXELS_TERMS.get(topic, []) + rest))
 
     assets: list[ImageAsset] = []
     seen: set[str] = set()
@@ -248,6 +267,10 @@ def collect_footage(
             time.sleep(0.3)
 
     # 2) Commons — opt-in only; thin + skewed to charged broadcast footage.
+    # Deliberately NOT given the same topic terms as Pexels above: Commons
+    # video is community-uploaded, and a raw "북한"/"평양" search is far more
+    # likely to surface unverified DPRK state-media footage than Pexels'
+    # curated stock is — not a safe source for this specific topic.
     if getattr(cfg, "broll_allow_commons", False) and len(assets) < want:
         commons_terms = list(dict.fromkeys(
             _COMMONS_TERMS.get(frame.kind, []) + _COMMONS_GENERIC))
@@ -259,8 +282,9 @@ def collect_footage(
                     assets.append(a); seen.add(a.path)
             time.sleep(0.3)
 
-    log.info("footage: %d clip(s) [%s] for %s",
-             len(assets), ", ".join(a.query for a in assets) or "none", headline[:44])
+    log.info("footage: %d clip(s) [%s]%s for %s",
+             len(assets), ", ".join(a.query for a in assets) or "none",
+             f" topic={topic}" if topic else "", headline[:44])
     return assets[:want]
 
 

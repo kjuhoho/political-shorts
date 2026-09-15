@@ -743,18 +743,23 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     topic = topic or "오늘의 이슈"
 
     # 7) images (keyless CC) + optional b-roll video -------------
+    # body text (not just the headline) so topic detection (북한/유엔/미국/…)
+    # catches a subject only named in the article body, not the headline.
+    _body_text = f"{titles}\n{summaries}"
     images: list[dict[str, Any]] = []
     try:
         from .images import collect_images
 
-        images = [a.__dict__ for a in collect_images(entities, frame, headline, cfg)]
+        images = [a.__dict__ for a in
+                  collect_images(entities, frame, headline, cfg, body_text=_body_text)]
     except Exception as exc:  # pragma: no cover - network dependent
         log.warning("image collection failed: %s", exc)
     if getattr(cfg, "broll_enabled", False):
         try:
             from .footage import collect_footage
 
-            images += [a.__dict__ for a in collect_footage(entities, frame, headline, cfg)]
+            images += [a.__dict__ for a in
+                      collect_footage(entities, frame, headline, cfg, body_text=_body_text)]
         except Exception as exc:  # pragma: no cover - network dependent
             log.warning("b-roll collection failed: %s", exc)
 
