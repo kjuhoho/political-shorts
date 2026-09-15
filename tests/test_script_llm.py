@@ -168,6 +168,32 @@ def test_llm_facts_table_replaces_factcheck_rows(monkeypatch):
     assert fc["rows"][-1]["text"] == "2개 매체 종합"     # template's 확인 row kept
 
 
+def test_llm_facts_table_row_never_looks_complete_when_its_not(monkeypatch):
+    # a real shipped row: the LLM's own "사실" sentence ran long and dense —
+    # no comma/sentence-end near the old flat 52-char cut, so the previous
+    # _clean_row (a separate, un-fixed truncator from textutil.clip_sentence)
+    # silently dropped "..승인받았습니다" and left "...유엔 제재 면제를" on
+    # screen with no verb and no sign it was cut.
+    long_fact = ("정부는 평양 강동군병원에 100억원 규모의 의료장비 지원을 추진하고 "
+                 "유엔 제재 면제를 승인받았습니다")
+    payload = json.dumps({
+        "what": "여야가 막판까지 맞섰지만 결국 합의해 예산안을 통과시켰습니다.",
+        "facts_table": {"사실": long_fact, "주장": "여당측: 민생을 위한 결정입니다.",
+                        "전망": "야당 반발로 후속 갈등이 예상됩니다."},
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    segs = _segs() + [{"role": "factcheck", "kicker": "확인된 사실", "caption": "팩트체크",
+                       "narration": "확인된 사실은 이겁니다.",
+                       "rows": [{"tag": "사실", "tone": "ok", "text": "old"},
+                                {"tag": "확인", "tone": "info", "text": "2개 매체 종합"}]}]
+    out, _t = script_llm.rewrite_segments(segs, META, _cfg(), BASE)
+    fc = next(s for s in out if s["role"] == "factcheck")
+    fact_row = next(r for r in fc["rows"] if r["tag"] == "사실")
+    assert fact_row["text"] != long_fact                 # it was in fact shortened
+    assert fact_row["text"].endswith("..")                # marked, not silently cut
+    assert "면제를" not in fact_row["text"]                 # never reaches the dangling tail
+
+
 UNDERSTANDING = {
     "who": [{"name": "김민석", "role": "더불어민주당 대표"}],
     "what_happened": "김민석 대표가 탄핵 전조 발언을 한 데 대해 조국 원장이 비판했고, 김 대표가 재반박했다.",

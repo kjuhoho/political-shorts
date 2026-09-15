@@ -32,7 +32,7 @@ from typing import Any
 
 from .config import Settings
 from .logging_setup import get_logger
-from .textutil import clean_text
+from .textutil import clean_text, clip_sentence
 
 log = get_logger("script_llm")
 
@@ -419,13 +419,12 @@ def rewrite_segments(
         return segments, []
 
     def _clean_row(v: str) -> str:
+        # same on-screen table as factcheck.rows() (44px, ~830px column, 2-line
+        # cap) — same _ROW_BUDGET-equivalent, and the same quote/clause-safe
+        # trim so a row the LLM writes over budget doesn't silently end
+        # mid-sentence with no predicate the way a raw space-cut did.
         v = re.sub(r"[·…—]", " ", re.sub(r"\s+", " ", v)).strip(" ·,")
-        if len(v) <= 52:
-            return v
-        # clip to the last sentence end / comma within the budget, never mid-word
-        head = v[:52]
-        cut = max(head.rfind("니다"), head.rfind(". "), head.rfind(", "))
-        return (head[:cut + 2] if cut >= 24 else head[:head.rfind(" ") or 52]).rstrip(" ,·")
+        return clip_sentence(v, 52, ell="..")
 
     # apply — only where the model returned a sane narration for a card we have
     cand = [dict(s) for s in segments]
