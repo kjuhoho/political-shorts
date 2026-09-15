@@ -168,6 +168,21 @@ def test_llm_facts_table_replaces_factcheck_rows(monkeypatch):
     assert fc["rows"][-1]["text"] == "2개 매체 종합"     # template's 확인 row kept
 
 
+def test_narration_ending_on_a_bare_noun_falls_back_to_template(monkeypatch):
+    # a real shipped card: within the ~40자 guideline, valid JSON, but the
+    # model stopped on a bare noun with no predicate ("...총괄하는 대한민국.")
+    # instead of finishing the sentence ("...정부 부처입니다."). Must not ship.
+    payload = json.dumps({
+        "what": "통일부는 남북관계와 통일 외교 정책을 총괄하는 대한민국.",
+        "outro": "쟁점과 원문은 더보기란에 정리해 뒀습니다.",
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    segs = _segs()
+    out = _rw(segs, META, _cfg(), BASE)
+    assert out[1]["narration"] == "여야가 합의해 통과시켰습니다."   # template kept, not the fragment
+    assert out[2]["narration"].startswith("쟁점과 원문")            # the other card still applied
+
+
 def test_llm_facts_table_row_never_looks_complete_when_its_not(monkeypatch):
     # a real shipped row: the LLM's own "사실" sentence ran long and dense —
     # no comma/sentence-end near the old flat 52-char cut, so the previous

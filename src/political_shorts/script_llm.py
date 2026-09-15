@@ -32,6 +32,7 @@ from typing import Any
 
 from .config import Settings
 from .logging_setup import get_logger
+from .subtitle import _complete as _sentence_complete
 from .textutil import clean_text, clip_sentence
 
 log = get_logger("script_llm")
@@ -66,7 +67,11 @@ _SYSTEM = (
     "terms/who에 있는 풀이를 그대로 활용할 것.\n"
     "2) 카드가 이야기처럼 이어지게: 앞 카드 내용을 딛고 다음으로. '그런데', '문제는 "
     "이겁니다', '쉽게 말하면' 같은 연결을 쓰되 내용 있는 문장 안에 붙일 것.\n"
-    "3) 쉬운 말, 한 문장 40자 안팎. 모든 문장을 '~습니다/~합니다/~됩니다'로 끝낼 것. "
+    "3) 쉬운 말, 한 문장 40자 안팎 — 단, 이건 참고용 목표일 뿐입니다. 40자를 지키려고 "
+    "문장을 완결하지 않은 채 끝내는 것은 절대 금지: 명사만 남기고 서술어를 "
+    "생략하지 말 것. '통일부는 남북관계를 총괄하는 대한민국.' (X, 명사로 뚝 끊김) "
+    "→ '통일부는 남북관계를 총괄하는 정부 부처입니다.' (O). 조금 길어지더라도 "
+    "'~습니다/~합니다/~됩니다'로 끝나는 완결된 문장이 글자 수보다 항상 우선입니다. "
     "조사·연결어미('…에 따르면 / …라며 / …인데 / …곳이')로 끝내지 말 것. 인용은 "
     "필요할 때만 짧게, 반드시 여는 따옴표와 닫는 따옴표를 함께 쓸 것 — 절대 "
     "따옴표를 연 채로 문장을 끝내지 말 것.\n"
@@ -203,7 +208,7 @@ def analyze_story(meta: dict[str, Any], cfg: Settings) -> dict[str, Any] | None:
     payload = _analysis_payload(meta)
     for attempt in range(2):
         try:
-            raw = complete(payload, cfg, max_tokens=900, system=_ANALYSIS_SYSTEM)
+            raw = complete(payload, cfg, max_tokens=1300, system=_ANALYSIS_SYSTEM)
         except Exception as exc:  # pragma: no cover - network dependent
             log.info("story analysis: call %d failed (%s)", attempt + 1, str(exc)[:80])
             continue
@@ -286,6 +291,14 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]],
 
 def _norm(v: str) -> str:
     return re.sub(r"\s+", " ", v).strip()
+
+
+def _ends_cleanly(narr: str) -> bool:
+    """A card the LLM wrote must end on a real predicate, not a bare noun
+    phrase — a real production case: within the ~40자 length guideline but
+    stopped at '...총괄하는 대한민국.' instead of '...정부 부처입니다.'. Reuses
+    subtitle._complete's sentence-final-form check (다/요/까/죠/네/?/!)."""
+    return _sentence_complete(narr.rstrip())
 
 
 # "hook" intentionally excluded — owned by hook_engine.py, never LLM-written
@@ -404,7 +417,7 @@ def rewrite_segments(
     last_exc = ""
     for attempt in range(3):                 # retry timeouts / unparseable re-gens
         try:
-            raw = complete(payload, cfg, max_tokens=1500, system=_SYSTEM)
+            raw = complete(payload, cfg, max_tokens=2200, system=_SYSTEM)
         except Exception as exc:  # pragma: no cover - network dependent
             last_exc = str(exc)
             log.info("llm rewrite: call %d failed (%s), retrying", attempt + 1, last_exc[:80])
@@ -435,6 +448,14 @@ def rewrite_segments(
         if not narr or lim is None:          # lim is None -> not LLM-owned (e.g. hook)
             continue
         if not (8 <= len(narr) <= int(lim * 1.8)):
+            continue
+        if not _ends_cleanly(narr):
+            # the model wrote a real sentence-length-wise but stopped on a bare
+            # noun with no predicate ("...총괄하는 대한민국.") — a real case seen
+            # in production. Falls back to the template's narration for just
+            # this card rather than ship a fragment that reads as finished.
+            log.info("llm card %r ends without a predicate (%r) — keeping template",
+                     s.get("role"), narr[-16:])
             continue
         s["narration"] = narr
         s.pop("caption", None)               # re-derived cleanly in script_gen
