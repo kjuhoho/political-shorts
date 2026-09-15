@@ -648,14 +648,19 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                          "narration": sides, "attributed": True,
                          "cues": analysis.claims[0].cues if analysis.claims else []})
 
-    # 6) outro — one-line wrap + a subscribe/like call to action
-    lean_note = ("여러 매체 보도를 종합했습니다."
-                 if len(set(leans) - {"wire"}) >= 2 or len(leans) >= 3
-                 else "아직 보도가 많지 않아 추가 확인이 필요합니다.")
+    # 6) outro — the story's real payoff, THEN the CTA. Used to lead with
+    #    "여러 매체 보도를 종합했습니다" — production-process commentary, not
+    #    a story payoff. That trust signal already lives on the factcheck
+    #    "확인" row; the outro now leads with why this actually matters
+    #    (explain.significance), so the video closes on the story, not on
+    #    how it was made. A thin-sourcing caveat still rides along when it's
+    #    genuinely warranted (real transparency, not filler).
+    payoff = explain.significance(frame).rstrip(" .")
+    caveat = ("" if len(set(leans) - {"wire"}) >= 2 or len(leans) >= 3
+              else " 아직 보도가 많지 않아 추가 확인이 필요합니다.")
     segments.append({"role": "outro", "kicker": "",
                      "caption": "구독과 좋아요가 큰 힘이 됩니다",
-                     "narration": f"{lean_note} 정치가 어렵게 느껴질 때, 이렇게 쉽게 풀어 "
-                                  "드리겠습니다. 구독과 좋아요 눌러주시면 큰 힘이 됩니다."})
+                     "narration": f"{payoff}.{caveat} 구독과 좋아요 눌러주시면 큰 힘이 됩니다."})
 
     # 6b) optional — let a (free) LLM rewrite the narration into a natural,
     #     lay-friendly explanation that flows card to card. Falls back silently

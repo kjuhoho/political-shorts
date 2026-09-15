@@ -70,6 +70,13 @@ def test_offline_pipeline(tmp_path):
     assert "factcheck" in roles
     assert script["n_sources"] >= 2
 
+    # the outro now leads with the story's actual stakes, not production-
+    # process commentary ("여러 매체 보도를 종합했습니다") — that trust
+    # signal already lives on the factcheck "확인" row.
+    outro = next(s for s in script["segments"] if s["role"] == "outro")
+    assert not outro["narration"].startswith("여러 매체 보도를 종합했습니다")
+    assert subtitle._complete(outro["narration"])
+
     rep = review_script(script, cfg)
     # multi-source, multi-lean, attributed reaction -> should pass
     assert rep.passed is True, rep.blocks
