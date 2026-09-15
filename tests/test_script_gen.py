@@ -123,7 +123,7 @@ def test_fit_duration_protects_summary_over_a_second_what_beat():
 def test_fit_duration_shrinks_summary_rather_than_deleting_it_when_possible():
     segs = _fit_segs()
     full_summary = next(s["narration"] for s in segs if s["role"] == "summary")
-    out = sg._fit_duration(_fit_segs(), budget=22.0)
+    out = sg._fit_duration(_fit_segs(), budget=17.0)
     summary = next((s for s in out if s["role"] == "summary"), None)
     assert summary is not None
     # shorter than the original (it absorbed some of the trim), not gone —
@@ -131,6 +131,28 @@ def test_fit_duration_shrinks_summary_rather_than_deleting_it_when_possible():
     # fragment with a period stapled onto it.
     assert 0 < len(summary["narration"]) < len(full_summary)
     assert sg._sentence_complete(summary["narration"])
+
+
+def test_fit_duration_spends_sides_and_what_before_ever_shrinking_summary():
+    # the user's explicit priority: background matters more than a full
+    # airing of every side's claims when something has to give. "sides" used
+    # to be fully protected (untouchable) — now it shares the pressure with
+    # "what" BEFORE summary is touched at all.
+    segs = [
+        {"role": "hook", "narration": "김승원이 왜 사퇴했을까요?"},
+        {"role": "summary", "narration": "김승원은 대통령의 정책을 총괄하는 정책실장입니다."},
+        {"role": "sides", "narration": "국민의힘은 인사 검증 부실을 지적했습니다. "
+                                       "더불어민주당은 절차에 문제가 없었다고 반박했습니다."},
+        {"role": "factcheck", "narration": "확인된 사실은 이겁니다. 김승원은 3일 사퇴했습니다."},
+        {"role": "outro", "narration": "구독과 좋아요 눌러주시면 큰 힘이 됩니다."},
+    ]
+    full_summary = segs[1]["narration"]
+    full_sides = segs[2]["narration"]
+    out = sg._fit_duration([dict(s) for s in segs], budget=18.0)
+    summary = next((s for s in out if s["role"] == "summary"), None)
+    sides = next((s for s in out if s["role"] == "sides"), None)
+    assert summary is not None and summary["narration"] == full_summary   # untouched
+    assert sides is not None and len(sides["narration"]) < len(full_sides)  # absorbed the cut
 
 
 def test_fit_duration_never_ships_a_fabricated_complete_looking_summary():

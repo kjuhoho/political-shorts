@@ -273,21 +273,21 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
                     segments.pop(i)
                     break
 
-    # 3) still over? drop a trailing sentence from the longest card — but never
-    #    from the hook or the closing 'sides'/'factcheck' (the payoff): trim
-    #    summary/what instead, and only touch sides/hook if nothing else is
-    #    left. Whichever of summary/what is carrying more excess length gets
-    #    shortened first — this lets the background card survive SHORTER
-    #    rather than disappear outright.
-    guard = 0
-    while total() > budget and guard < 12:
-        guard += 1
-        pool = [s for s in segments if s.get("narration")
-                and s["role"] not in ("hook", "sides", "factcheck", "outro")]
-        longest = max(pool or [s for s in segments if s.get("narration")],
-                      key=lambda s: len(s["narration"]), default=None)
+    # 3) still over? drop a trailing sentence from the longest card, one round
+    #    at a time — never from the hook or factcheck (the verified-fact
+    #    payload). TWO passes, so background pays LAST, not first or evenly:
+    #    3a) "sides"/"what" absorb the pressure first — "sides" used to be
+    #        fully protected as "the payoff", which meant a claim-heavy story
+    #        spent its whole budget there and squeezed summary out instead.
+    #        The user's own priority: background explanation matters more
+    #        than a full airing of every side's claims when something has to
+    #        give.
+    #    3b) only if that alone wasn't enough does summary itself start
+    #        shrinking — shorter, not gone (step 4 is the true last resort).
+    def _shrink_longest(pool: list[dict[str, Any]]) -> bool:
+        longest = max(pool, key=lambda s: len(s["narration"]), default=None)
         if not longest:
-            break
+            return False
         sents = re.split(r"(?<=[다요.!?])\s+", longest["narration"])
         if len(sents) > 1:
             longest["narration"] = " ".join(sents[:-1])
@@ -298,6 +298,20 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
             parts = re.split(r"(?<=[,·])\s+|(?<=[가-힣])(?:는데|지만|면서|고서|며)\s+", t)
             longest["narration"] = (" ".join(parts[:-1]).rstrip(" ,·") if len(parts) > 1
                                     else clip_sentence(t, int(len(t) * 0.8)))
+        return True
+
+    guard = 0
+    while total() > budget and guard < 12:
+        guard += 1
+        pool = [s for s in segments if s.get("narration") and s["role"] in ("what", "sides")]
+        if not _shrink_longest(pool):
+            break
+    guard = 0
+    while total() > budget and guard < 12:
+        guard += 1
+        pool = [s for s in segments if s.get("narration") and s["role"] == "summary"]
+        if not _shrink_longest(pool):
+            break
 
     # 4) TRUE last resort — drop the standalone summary/background card
     #    entirely. Only reached if shrinking everything else in step 3 (up to
