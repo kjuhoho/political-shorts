@@ -57,7 +57,11 @@ def test_offline_pipeline(tmp_path):
     script = build_script(ids[0], cfg)
     roles = [s["role"] for s in script["segments"]]
     assert roles[0] == "hook"
-    assert "what" in roles
+    # background is now the LAST thing _fit_duration sacrifices under a tight
+    # budget, not the first — a viewer who doesn't follow politics needs it
+    # more than a second "what happened" beat, which may legitimately be cut
+    # instead (as it is here).
+    assert "summary" in roles
     assert "factcheck" in roles
     assert script["n_sources"] >= 2
 

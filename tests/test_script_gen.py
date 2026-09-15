@@ -56,3 +56,47 @@ def test_context_score_deprioritizes_quote_heavy_sentences():
               "있다”고 말했다.")
     plain = "국회는 처음으로 이례적인 절차를 밟아 예산안을 처리했다."   # hits _CONTEXT_HINTS
     assert sg._context_score(plain) > sg._context_score(quoted)
+
+
+def _fit_segs():
+    # summary (background) is deliberately the LONGEST card here — under the
+    # old priority it was dropped first regardless of length; now the extra
+    # "what" repeat and length-trimming absorb the pressure instead.
+    return [
+        {"role": "hook", "narration": "김승원이 왜 사퇴했을까요?"},
+        {"role": "summary", "narration": "김승원은 대통령의 정책을 총괄하는 정책실장입니다. "
+                                         "정부 출범 초기에 임명된 핵심 참모로, 인사 검증과 "
+                                         "정책 조율을 담당해 왔습니다."},
+        {"role": "what", "narration": "김승원 정책실장이 취임 두 달 만에 물러났습니다."},
+        {"role": "what", "narration": "정부 출범 초기 실장급 인사가 물러난 것은 이례적입니다."},
+        {"role": "factcheck", "narration": "확인된 사실은 이겁니다. 김승원은 3일 사퇴했습니다."},
+        {"role": "outro", "narration": "구독과 좋아요 눌러주시면 큰 힘이 됩니다."},
+    ]
+
+
+def test_fit_duration_protects_summary_over_a_second_what_beat():
+    out = sg._fit_duration(_fit_segs(), budget=18.0)
+    roles = [s["role"] for s in out]
+    assert roles.count("what") <= 1                 # the extra "what" repeat goes first
+    summary = next((s for s in out if s["role"] == "summary"), None)
+    assert summary is not None and summary.get("narration")   # background survives
+
+
+def test_fit_duration_shrinks_summary_rather_than_deleting_it_when_possible():
+    segs = _fit_segs()
+    full_summary = next(s["narration"] for s in segs if s["role"] == "summary")
+    out = sg._fit_duration(_fit_segs(), budget=18.0)
+    summary = next((s for s in out if s["role"] == "summary"), None)
+    assert summary is not None
+    # shorter than the original (it absorbed some of the trim), not gone
+    assert 0 < len(summary["narration"]) < len(full_summary)
+
+
+def test_fit_duration_keeps_summary_even_when_both_what_beats_must_go():
+    # under real budget pressure summary now outranks even a SINGLE "what" —
+    # the old priority (summary always dies first) is fully inverted.
+    out = sg._fit_duration(_fit_segs(), budget=12.0)
+    roles = [s["role"] for s in out]
+    assert "what" not in roles
+    summary = next((s for s in out if s["role"] == "summary"), None)
+    assert summary is not None and summary.get("narration")

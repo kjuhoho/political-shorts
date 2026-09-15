@@ -232,11 +232,12 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
         elif cap and len(s.get("narration", "")) > cap:
             s["narration"] = clip_sentence(s["narration"], cap)
 
-    # 2) trim the deck for a short video: drop the standalone summary first,
-    #    then any extra what/reaction beats. hook / one what / factcheck / outro
-    #    are always kept.
-    if total() > budget:
-        segments[:] = [s for s in segments if s["role"] != "summary"]
+    # 2) trim the deck for a short video: drop any EXTRA what/reaction beats
+    #    beyond the first one. hook / one what / factcheck / outro are always
+    #    kept. The standalone summary (background) is NOT touched here —
+    #    a viewer who doesn't follow politics needs the background more than
+    #    a second "what happened" elaboration, so it's no longer the first
+    #    thing this function sacrifices (see step 4).
     for role in ("reaction", "what"):
         while total() > budget and sum(1 for s in segments if s["role"] == role) > 1:
             for i in range(len(segments) - 1, -1, -1):
@@ -246,7 +247,10 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
 
     # 3) still over? drop a trailing sentence from the longest card — but never
     #    from the hook or the closing 'sides'/'factcheck' (the payoff): trim
-    #    summary/what instead, and only touch sides/hook if nothing else is left.
+    #    summary/what instead, and only touch sides/hook if nothing else is
+    #    left. Whichever of summary/what is carrying more excess length gets
+    #    shortened first — this lets the background card survive SHORTER
+    #    rather than disappear outright.
     guard = 0
     while total() > budget and guard < 12:
         guard += 1
@@ -266,6 +270,12 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
             parts = re.split(r"(?<=[,·])\s+|(?<=[가-힣])(?:는데|지만|면서|고서|며)\s+", t)
             longest["narration"] = (" ".join(parts[:-1]).rstrip(" ,·") if len(parts) > 1
                                     else clip_sentence(t, int(len(t) * 0.8)))
+
+    # 4) TRUE last resort — drop the standalone summary/background card
+    #    entirely. Only reached if shrinking everything else in step 3 (up to
+    #    12 rounds, shared fairly with "what") genuinely wasn't enough.
+    if total() > budget:
+        segments[:] = [s for s in segments if s["role"] != "summary"]
 
     # 4) final polish: every spoken line is a clean, complete sentence.
     #    If trimming left a card with no complete sentence, drop it outright
