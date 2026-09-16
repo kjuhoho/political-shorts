@@ -125,9 +125,11 @@ _CAP_TAIL = re.compile(
 
 
 def _glyph_safe(s: str) -> str:
-    """The bundled caption fonts have no ·/…/— glyph (they render as tofu)."""
+    """The bundled caption fonts have no ·/…/—/→ glyph (they render as tofu
+    — a real shipped case: "20석→15석" rendered as "20석□15석" on screen)."""
     return (s.replace("·", ", ").replace("ㆍ", ", ").replace("…", " ")
-             .replace("—", "-").replace("–", "-").replace("~", "-"))
+             .replace("—", "-").replace("–", "-").replace("~", "-")
+             .replace("→", "->").replace("←", "<-"))
 
 
 def _tidy_caption(narration: str, limit: int) -> str:

@@ -429,6 +429,17 @@ def pick_actor(headline: str, entities: Entities, frame: Frame) -> str:
     for m in _TITLE_RE.finditer(h):
         if m.group(1) not in _ORG_PREFIX and m.group(1) not in _OFFICE_WORD:
             return m.group(1)
+    # the headline itself clearly signals the president as the actor via an
+    # honorific/office short form ("이 대통령", "청와대", "대통령실") that
+    # never literally contains his bare name — a real case that shipped
+    # wrong: "이 대통령, 18일 기자회견..." fell all the way through to ""
+    # (no bare "이재명", no party/institution match either), so the
+    # president got no portrait at all and an unrelated, only-incidentally-
+    # mentioned politician's photo silently became the video's dominant
+    # face. Safe to trust here — there's only one president, no "which
+    # person" ambiguity the way a bare `entities.politicians` mention has.
+    if entities.president and any(t in h for t in ("대통령", "청와대")):
+        return "이재명"
     # entities.lead_actor's politician branch trusts ANY mention anywhere in
     # the source text, even one incidental "OOO 정부는 …" boilerplate clause
     # deep in a fact sentence that has nothing to do with this specific

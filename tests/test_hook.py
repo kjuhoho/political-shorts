@@ -47,6 +47,32 @@ def test_pick_actor_ignores_an_incidental_president_mention_with_no_headline_act
     assert pick_actor(h, ent, fr) != "이재명"
 
 
+def test_pick_actor_recognizes_the_president_via_honorific_headline():
+    # a real shipped case: "이 대통령, 18일 기자회견..." never literally
+    # contains "이재명" (only the honorific short form) — pick_actor used to
+    # fall all the way through to "" (no bare name, no party/institution
+    # match either), so the president got no portrait at all and an
+    # unrelated, only-incidentally-mentioned politician's photo silently
+    # became the video's dominant face instead.
+    h = "이 대통령, 18일 기자회견...청와대 \"주요 현안에 분명한 입장 밝힐 것\""
+    body = "이재명 대통령은 18일 기자회견을 통해 주요 현안에 입장을 밝힐 예정이다."
+    ent = detect_entities(h, body)
+    fr = detect_frame(h, body)
+    assert "이재명" not in h                          # only the honorific form is present
+    assert pick_actor(h, ent, fr) == "이재명"
+
+
+def test_pick_actor_does_not_default_to_president_without_a_headline_signal():
+    # the new honorific check must stay scoped to "대통령"/"청와대" actually
+    # appearing in the headline — an incidental president mention deep in
+    # the body, with neither in the headline, must still resolve to "".
+    h = "'임신중지약' 합법화...임신 9주 이하 대상 병원서 처방·조제"
+    body = "이재명 정부는 16일 브리핑을 열고 임신중지약 도입 방침을 공식 발표했다."
+    ent = detect_entities(h, body)
+    fr = detect_frame(h, body)
+    assert pick_actor(h, ent, fr) == ""
+
+
 def test_detect_topic_north_korea_from_body_not_just_headline():
     # a real shipped case: the headline alone didn't have to name it, but the
     # keyword the caller cares about matters wherever it appears — images.py

@@ -154,6 +154,19 @@ def _commons_info(filename: str) -> dict | None:
 
 def _resolve(title: str, person: bool) -> dict | None:
     s = _wp_summary(title)
+    if person and s and s.get("type") == "disambiguation":
+        # a real shipped case: "김민석" alone is a disambiguation page (a
+        # dozen athletes/singers/actors share the name) — the sitting
+        # 더불어민주당 대표 (former PM) never got a portrait at all, so a
+        # co-mentioned but unrelated person's photo silently became the
+        # video's dominant face instead. "(정치인)" is Wikipedia's own
+        # standard disambiguator for "politician" — only trusted here when
+        # IT resolves to a genuine standard biography (never a guess: if the
+        # suffix is itself ambiguous or missing, this still correctly
+        # returns None below, same as before).
+        s2 = _wp_summary(f"{title} (정치인)")
+        if s2 and s2.get("type") == "standard":
+            s = s2
     if not s or s.get("type") != "standard":
         return None
     img = (s.get("originalimage") or {}).get("source") or (s.get("thumbnail") or {}).get("source", "")
@@ -253,8 +266,19 @@ def collect_images(
     # only ever surface on a card that names them (video._assign_images pass 1).
     in_body = [n for n in entities.politicians
                if n and n not in in_head and n != PRESIDENT_NAME and n != lead][:2]
-    want_pres = (bool(entities.president) and lead == PRESIDENT_NAME
-                 and PRESIDENT_NAME in h)
+    # `PRESIDENT_NAME in h` used to gate this too — a real shipped case: a
+    # presidential press-conference headline read "이 대통령, 18일
+    # 기자회견..." (an honorific short form), which never literally contains
+    # "이재명", so the president got NO portrait at all and an unrelated
+    # politician's photo silently became assets[0] instead. Safe to drop
+    # here specifically: there is only ever ONE president, so once
+    # `lead == PRESIDENT_NAME` is already true there's no "which person"
+    # ambiguity left to guard against the way there still is for `subject`
+    # below (entities.lead_actor's politicians[0] fallback can pick a
+    # DIFFERENT politician than the one actually in this headline when
+    # several are mentioned in the cluster's combined text — that ambiguity
+    # is why `subject` still requires `lead in h`).
+    want_pres = bool(entities.president) and lead == PRESIDENT_NAME
     subject = lead if (lead_is_person and lead in h) else ""   # the poster face
     names: list[str] = []
     for n in ([subject] if subject else []) + \
@@ -284,7 +308,11 @@ def collect_images(
         if info and info["url"] not in used:
             a = _make_asset(info, name, "portrait", cache_dir)
             if a:
-                a.is_lead = (name == subject)
+                # the president counts as the lead face whenever want_pres
+                # fired, even on stories where `subject` itself stayed ""
+                # (headline used an honorific short form) — no ambiguity
+                # left to guard against once we already know it's him.
+                a.is_lead = (name == subject) or (want_pres and name == PRESIDENT_NAME)
                 assets.append(a)
                 used.add(info["url"])
                 n_portraits += 1
