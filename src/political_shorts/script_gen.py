@@ -685,49 +685,82 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     #     lay-friendly explanation that flows card to card. Falls back silently
     #     to the templated lines on any problem; every fact still traces to the
     #     source and the result must pass safety.review_script.
+    #
+    #     AI QUALITY AGENT: a second, semantic gate layered on top of
+    #     quality.py's mechanical checks (sync/length/layout). This session
+    #     found repeatedly that a script can pass every mechanical check —
+    #     complete sentences, in-budget length — while still asking about the
+    #     wrong person, missing all background, or closing on a banned vague
+    #     cliché; quality.py has no "does this story make sense" check. Below
+    #     the score bar, its own critique is fed back into ONE more rewrite
+    #     and re-graded, up to 4 total attempts, before giving up honestly.
+    #     `script["quality_agent"]` records the outcome either way — pipeline
+    #     skips the cluster if it never cleared the bar.
+    from . import quality_agent
+
     llm_title: list[str] = []
-    llm_on = bool((getattr(cfg, "llm_provider", "") or "").strip())
+    # pipeline._process_story skips a cluster this thin outright once
+    # build_script returns (n_sources<=1 and facts+claims+interp<=3) — no
+    # point burning up to 4 quality-agent LLM calls polishing a script that
+    # will be discarded anyway regardless of how good the rewrite is.
+    _material = len(analysis.facts) + len(analysis.claims) + len(analysis.interpretations)
+    material_thin = n_sources <= 1 and _material <= 3
+    llm_on = bool((getattr(cfg, "llm_provider", "") or "").strip()) and not material_thin
+    template_segments = [dict(s) for s in segments]
+    agent_report = None
+    agent_attempts = 0
     if llm_on:
-        try:
-            from .hook import pick_actor as _pick_actor
-            from .script_llm import rewrite_segments
+        from .hook import pick_actor as _pick_actor
+        from .script_llm import rewrite_segments
 
-            _LEAN_KO = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송", "center": "중도"}
-            meta = {
-                "source_text": f"{titles}\n{summaries}",
-                # classified + cross-source-verified view (FACT CHECK ENGINE)
-                "facts": [u.text for u in fc.facts] or [f.text for f in analysis.facts],
-                "claims": [u.text for u in fc.quotes] or [c.text for c in analysis.claims],
-                "interps": [u.text for u in fc.interpretations] or [i.text for i in analysis.interpretations],
-                "entities": {"president": entities.president,
-                             "politicians": entities.politicians,
-                             "parties": entities.parties},
-                "leans": [_LEAN_KO.get(x, x) for x in leans],
-                "topic": _pick_actor(headline, entities, frame),
-            }
-            segments, llm_title = rewrite_segments(
-                segments, meta, cfg,
-                base_script={
-                    "headline": headline, "frame": frame.kind,
-                    "n_sources": n_sources, "sources": _sources_from_rows(rows),
-                    "entities": {"president": entities.president,
-                                 "politicians": entities.politicians,
-                                 "parties": entities.parties,
-                                 "institutions": entities.institutions},
-                },
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            log.warning("llm rewrite errored, using template: %s", exc)
+        _LEAN_KO = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송", "center": "중도"}
+        meta = {
+            "source_text": f"{titles}\n{summaries}",
+            # classified + cross-source-verified view (FACT CHECK ENGINE)
+            "facts": [u.text for u in fc.facts] or [f.text for f in analysis.facts],
+            "claims": [u.text for u in fc.quotes] or [c.text for c in analysis.claims],
+            "interps": [u.text for u in fc.interpretations] or [i.text for i in analysis.interpretations],
+            "entities": {"president": entities.president,
+                         "politicians": entities.politicians,
+                         "parties": entities.parties},
+            "leans": [_LEAN_KO.get(x, x) for x in leans],
+            "topic": _pick_actor(headline, entities, frame),
+        }
+        base_script_meta = {
+            "headline": headline, "frame": frame.kind,
+            "n_sources": n_sources, "sources": _sources_from_rows(rows),
+            "entities": {"president": entities.president,
+                         "politicians": entities.politicians,
+                         "parties": entities.parties,
+                         "institutions": entities.institutions},
+        }
+        feedback = ""
+        _budget = max(lp.target_s * 0.80, 26.0)
+        for agent_attempts in range(1, 5):
+            try:
+                cand, cand_title = rewrite_segments(
+                    [dict(s) for s in template_segments], meta, cfg,
+                    base_script=base_script_meta, feedback=feedback,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("llm rewrite errored, using template: %s", exc)
+                cand, cand_title = [dict(s) for s in template_segments], []
 
-    _mark_incomplete_factcheck_rows(segments)
+            cand = [dict(s) for s in cand]
+            _mark_incomplete_factcheck_rows(cand)
+            cand = _fit_duration(cand, budget=_budget, caps=_NARR_CAP_LLM)
 
-    # trim to ~80% of the story-type target — subtitle read-time padding (video)
-    # spends the rest. Never below a sane floor for the LLM arc.
-    _budget = max(lp.target_s * 0.80, 26.0 if llm_on else 22.0)
-    segments = _fit_duration(
-        segments, budget=_budget,
-        caps=_NARR_CAP_LLM if llm_on else _NARR_CAP,
-    )
+            segments, llm_title = cand, cand_title
+            agent_report = quality_agent.review({"headline": headline, "segments": segments}, cfg)
+            if not agent_report.available or agent_report.score >= quality_agent.PASS_SCORE:
+                break
+            feedback = agent_report.feedback_text()
+            log.info("quality agent attempt %d scored %s — regenerating (%s)",
+                     agent_attempts, agent_report.score, feedback[:160])
+    else:
+        _mark_incomplete_factcheck_rows(segments)
+        _budget = max(lp.target_s * 0.80, 22.0)
+        segments = _fit_duration(segments, budget=_budget, caps=_NARR_CAP)
 
     # --- FULL-SCRIPT SUBTITLE: the on-screen caption IS the narration (the words
     #     the voice is saying), verbatim — never compressed. It is split into
@@ -863,6 +896,13 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         "factcheck": fc.to_dict(),
         "disclaimer": DISCLAIMER,
         "style": cfg.headline_style,
+        "quality_agent": {
+            "available": bool(agent_report and agent_report.available),
+            "score": agent_report.score if agent_report else 0,
+            "attempts": agent_attempts,
+            "passed": bool(agent_report.passed) if agent_report else True,
+            "issues": agent_report.issues if agent_report else [],
+        },
     }
 
     if cfg.llm_available:
@@ -873,10 +913,12 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
 
     log.info(
         "script cluster=%d segs=%d ~%.0fs [%s tgt=%.0fs rs=%.2f] frame=%s imgs=%d "
-        "facts=%d claims=%d interp=%d src=%d",
+        "facts=%d claims=%d interp=%d src=%d qagent=%s/%d(%d attempt%s)",
         cluster_id, len(segments), est_seconds, lp.cls, lp.target_s, read_scale,
         frame.kind, len(images), len(analysis.facts), len(analysis.claims),
         len(analysis.interpretations), n_sources,
+        agent_report.score if agent_report else "n/a", quality_agent.PASS_SCORE if llm_on else 0,
+        agent_attempts, "" if agent_attempts == 1 else "s",
     )
     return script
 

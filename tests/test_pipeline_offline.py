@@ -3,7 +3,9 @@ except collect + render, and assert a script + safety report come out."""
 import time
 from dataclasses import replace
 
-from political_shorts import pipeline, subtitle
+import json
+
+from political_shorts import llm, pipeline, quality_agent, subtitle
 from political_shorts.classify import classify_pending
 from political_shorts.config import load_settings
 from political_shorts.db import init_db, connect, upsert_article, now
@@ -81,6 +83,113 @@ def test_offline_pipeline(tmp_path):
     rep = review_script(script, cfg)
     # multi-source, multi-lean, attributed reaction -> should pass
     assert rep.passed is True, rep.blocks
+
+
+def _llm_cfg(tmp_path, name="qa.sqlite3"):
+    return replace(load_settings(), db_path=tmp_path / name,
+                   output_dir=tmp_path, data_dir=tmp_path, image_enabled=False,
+                   llm_provider="gemini", gemini_api_key="k")
+
+
+def _seed_rich_cluster(cfg):
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        for name, lean, w, title, summary in FAKE:
+            url = f"https://example.com/{url_hash(title)[:10]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": summary, "published_ts": now(), "collected_ts": now(),
+                "raw": {},
+            })
+    classify_pending(cfg)
+    ids = build_clusters(cfg)
+    return ids[0]
+
+
+def test_quality_agent_regenerates_with_feedback_then_passes(tmp_path, monkeypatch):
+    # a below-bar first attempt must trigger exactly one regenerate pass,
+    # and the second (passing) attempt must be the one that ships.
+    cfg = _llm_cfg(tmp_path, "qa1.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+
+    calls = {"n": 0}
+
+    def fake_review(script, cfg):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return quality_agent.AgentReport(
+                available=True, score=60,
+                issues=[{"role": "hook", "problem": "훅이 본문과 무관합니다."}])
+        return quality_agent.AgentReport(available=True, score=97, issues=[])
+
+    monkeypatch.setattr(quality_agent, "review", fake_review)
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps(
+        {"what": "여야가 합의해 예산안을 통과시켰습니다."}))
+
+    script = build_script(cluster_id, cfg)
+    qa = script["quality_agent"]
+    assert qa["available"] is True
+    assert qa["passed"] is True
+    assert qa["attempts"] == 2
+    assert calls["n"] == 2
+
+
+def test_quality_agent_gives_up_after_4_attempts(tmp_path, monkeypatch):
+    cfg = _llm_cfg(tmp_path, "qa2.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+
+    monkeypatch.setattr(quality_agent, "review", lambda script, cfg: quality_agent.AgentReport(
+        available=True, score=50, issues=[{"role": "outro", "problem": "막연합니다."}]))
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps(
+        {"what": "여야가 합의해 예산안을 통과시켰습니다."}))
+
+    script = build_script(cluster_id, cfg)
+    qa = script["quality_agent"]
+    assert qa["available"] is True
+    assert qa["passed"] is False
+    assert qa["attempts"] == 4
+
+
+def test_pipeline_skips_a_cluster_the_quality_agent_never_passed(tmp_path, monkeypatch):
+    cfg = _llm_cfg(tmp_path, "qa3.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+
+    monkeypatch.setattr(quality_agent, "review", lambda script, cfg:
+                        quality_agent.AgentReport(available=True, score=40, issues=[]))
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps(
+        {"what": "여야가 합의해 예산안을 통과시켰습니다."}))
+
+    out = _process_story(cluster_id, cfg, do_publish=False, report=RunReport())
+    assert out.status == "skipped"
+    assert "품질 평가" in out.reason
+
+
+def test_thin_material_never_even_calls_the_quality_agent(tmp_path, monkeypatch):
+    # the pipeline-level thin-material gate makes the quality-agent loop's
+    # work moot for this cluster — build_script shouldn't burn LLM calls on
+    # a script that's getting discarded regardless of how it scores.
+    cfg = _llm_cfg(tmp_path, "qa4.sqlite3")
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        title = "국회, 새 법안 처리"
+        url = f"https://example.com/{url_hash(title)[:10]}"
+        upsert_article(conn, {
+            "url_hash": url_hash(url), "url": url, "source_name": "연합뉴스",
+            "source_lean": "wire", "source_weight": 1.0, "title": title,
+            "summary": "국회는 3일 본회의를 열어 새 법안을 처리했다.",
+            "published_ts": now(), "collected_ts": now(), "raw": {},
+        })
+    classify_pending(cfg)
+    ids = build_clusters(cfg)
+
+    calls = {"n": 0}
+    monkeypatch.setattr(quality_agent, "review",
+                        lambda script, cfg: calls.__setitem__("n", calls["n"] + 1) or
+                        quality_agent.AgentReport(available=True, score=99, issues=[]))
+    script = build_script(ids[0], cfg)
+    assert calls["n"] == 0
+    assert script["quality_agent"]["available"] is False
 
 
 def test_thin_sourced_story_is_skipped_before_it_can_ship_undercontextualized(tmp_path, monkeypatch):

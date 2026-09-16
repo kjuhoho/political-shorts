@@ -66,6 +66,34 @@ def test_valid_rewrite_is_applied(monkeypatch):
     assert out[2]["narration"].startswith("쟁점과 원문")
 
 
+def test_feedback_is_folded_into_the_prompt_sent_to_the_model(monkeypatch):
+    # the quality agent's critique on a prior attempt must actually reach the
+    # model on a regenerate pass, not just be accepted and ignored.
+    captured = {}
+
+    def fake_complete(payload, cfg, **k):
+        captured["payload"] = payload
+        return json.dumps({"what": "여야가 결국 합의해 예산안을 통과시켰습니다."})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    _rw(_segs(), META, _cfg(), BASE,
+        feedback="- (hook) 훅이 본문과 무관한 인물을 언급합니다.")
+    assert "훅이 본문과 무관한 인물" in captured["payload"]
+    assert "편집장 피드백" in captured["payload"]
+
+
+def test_no_feedback_leaves_the_prompt_unchanged(monkeypatch):
+    captured = {}
+
+    def fake_complete(payload, cfg, **k):
+        captured["payload"] = payload
+        return json.dumps({"what": "여야가 결국 합의해 예산안을 통과시켰습니다."})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    _rw(_segs(), META, _cfg(), BASE)
+    assert "편집장 피드백" not in captured["payload"]
+
+
 def test_tolerates_nested_and_cards_shapes(monkeypatch):
     # a small model may echo {"cards":[{role,narration}]} or nest {narration:...}
     payload = json.dumps({"cards": [

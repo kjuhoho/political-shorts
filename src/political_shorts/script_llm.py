@@ -435,10 +435,14 @@ def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str], dict[st
 
 def rewrite_segments(
     segments: list[dict[str, Any]], meta: dict[str, Any], cfg: Settings,
-    base_script: dict[str, Any] | None = None,
+    base_script: dict[str, Any] | None = None, feedback: str = "",
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """(`segments` with narration rewritten by the LLM, a punchy 2-line title)
-    — or (unchanged input, []) on any problem."""
+    — or (unchanged input, []) on any problem.
+
+    `feedback`: when the quality agent (quality_agent.py) graded a PRIOR
+    attempt below its bar, its specific critique is passed here so this
+    rewrite can actually fix what was wrong instead of blindly retrying."""
     provider = (getattr(cfg, "llm_provider", "") or "").strip()
     if not provider:
         return segments, []
@@ -451,6 +455,11 @@ def rewrite_segments(
     # stage 2 writes from the raw facts/claims/interps as it always did.
     story = analyze_story(meta, cfg)
     payload = _payload(meta, spoken, understanding=story)
+    if feedback.strip():
+        payload += (
+            "\n\n[이전 시도에 대한 편집장 피드백 — 이번엔 반드시 고쳐서 다시 쓸 것]\n"
+            f"{feedback.strip()}\n"
+        )
     new: dict[str, str] = {}
     title: list[str] = []
     ftab: dict[str, str] = {}

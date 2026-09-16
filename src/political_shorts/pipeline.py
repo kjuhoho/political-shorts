@@ -120,6 +120,22 @@ def _process_story(
                      counts.get("claims", 0), counts.get("interpretations", 0))
             return out
 
+        # AI QUALITY AGENT gate: build_script already gave the script up to 4
+        # attempts to clear quality_agent.PASS_SCORE (95), feeding its own
+        # critique back into a rewrite each time it fell short. If it still
+        # never cleared the bar, don't publish it — skip and move on, same as
+        # any other unusable cluster. An agent that couldn't run at all (no
+        # provider, gave up after retries) never blocks — `passed` is True.
+        qa = script.get("quality_agent", {}) or {}
+        if qa.get("available") and not qa.get("passed"):
+            out.status = "skipped"
+            out.reason = f"AI 품질 평가 미달 ({qa.get('score', 0)}점, {qa.get('attempts', 0)}회 시도)"
+            with connect(cfg.db_path) as conn:
+                set_cluster_status(conn, cluster_id, "skipped")
+            log.info("cluster %d SKIPPED (quality agent): score=%s attempts=%d issues=%d",
+                     cluster_id, qa.get("score"), qa.get("attempts", 0), len(qa.get("issues", [])))
+            return out
+
         # Skip a story we've already turned into a short in the last few days —
         # ongoing issues keep re-clustering, but the channel should move on.
         sig = story_signature(script["headline"], script.get("entities"), script.get("frame", ""))
