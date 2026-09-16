@@ -286,5 +286,23 @@
   "frame": "generic",
   "remote_id": "MGqd-1p8P-o",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1789477402,
+  "signature": "18일 기자회견 김승원 밝힐 분명한 용혜인 이재명 주요 현안에",
+  "actor": "이재명",
+  "headline": "이 대통령, 18일 기자회견...청와대 \"주요 현안에 분명한 입장 밝힐 것\"",
+  "frame": "remark",
+  "remote_id": "wlcIrfFpG0g",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1789517121,
+  "signature": "국회 내년까지 민주당 실거주 여당 연장을 유예 의무 토허구역",
+  "actor": "민주당",
+  "headline": "여당 “토허구역 내 실거주 의무 유예, 내년까지 연장을”",
+  "frame": "poll",
+  "remote_id": "dGH8tVdd2OI",
+  "platform": "youtube"
  }
 ]
