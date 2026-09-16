@@ -151,6 +151,62 @@ def test_quality_agent_gives_up_after_4_attempts(tmp_path, monkeypatch):
     assert qa["attempts"] == 4
 
 
+def test_quality_agent_ships_the_best_attempt_not_the_last(tmp_path, monkeypatch):
+    # a real observed failure mode: scores don't climb monotonically
+    # (45->85->85->45). When nothing reaches PASS_SCORE, the highest-scoring
+    # attempt actually tried must ship — not whichever happened to run last.
+    cfg = _llm_cfg(tmp_path, "qa5.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+
+    scores = [45, 85, 70, 45]                     # attempt 2 is the peak
+    calls = {"n": 0}
+
+    def fake_review(script, cfg):
+        i = calls["n"]
+        calls["n"] += 1
+        return quality_agent.AgentReport(
+            available=True, score=scores[i],
+            issues=[{"role": "hook", "problem": f"문제 {i + 1}"}])
+
+    monkeypatch.setattr(quality_agent, "review", fake_review)
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps(
+        {"what": "여야가 합의해 예산안을 통과시켰습니다."}))
+
+    script = build_script(cluster_id, cfg)
+    qa = script["quality_agent"]
+    assert qa["passed"] is False
+    assert qa["score"] == 85                       # the peak, not scores[-1] (45)
+
+
+def test_quality_agent_feedback_accumulates_across_attempts(tmp_path, monkeypatch):
+    # a real observed failure mode: passing only the LATEST critique let a
+    # rewrite silently re-break something an earlier attempt already fixed.
+    # Every rewrite must see every problem ever flagged, not just the last.
+    cfg = _llm_cfg(tmp_path, "qa6.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+
+    seen_feedback = []
+
+    def fake_complete(payload, cfg, **k):
+        # stage-1 analyze_story() also calls complete() (a different system
+        # prompt) — only the stage-2 rewrite call carries the feedback block.
+        if "카드별 역할" not in k.get("system", ""):
+            return "not json"                       # stage-1: let it fail, harmless
+        seen_feedback.append(payload.split("편집장 피드백]")[-1] if "편집장 피드백" in payload else "")
+        return json.dumps({"what": "여야가 합의해 예산안을 통과시켰습니다."})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    monkeypatch.setattr(quality_agent, "review", lambda script, cfg: quality_agent.AgentReport(
+        available=True, score=50,
+        issues=[{"role": "hook", "problem": f"문제 {len(seen_feedback)}"}]))
+
+    build_script(cluster_id, cfg)
+    assert len(seen_feedback) == 4
+    assert seen_feedback[0] == ""                              # attempt 1: nothing yet
+    assert "문제 1" in seen_feedback[1]                         # attempt 2 sees attempt 1's issue
+    assert "문제 1" in seen_feedback[3] and "문제 2" in seen_feedback[3] and "문제 3" in seen_feedback[3]
+
+
 def test_pipeline_skips_a_cluster_the_quality_agent_never_passed(tmp_path, monkeypatch):
     cfg = _llm_cfg(tmp_path, "qa3.sqlite3")
     cluster_id = _seed_rich_cluster(cfg)

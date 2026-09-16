@@ -734,13 +734,24 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
                          "parties": entities.parties,
                          "institutions": entities.institutions},
         }
-        feedback = ""
+        # feedback ACCUMULATES across attempts rather than being replaced —
+        # a real observed failure mode: passing only the latest critique let
+        # a rewrite silently re-break something an earlier attempt had
+        # already fixed (scores oscillating 45->85->85->45 instead of
+        # climbing). Every rewrite now sees every problem ever flagged.
+        # Attempts don't always improve monotonically either, so the BEST-
+        # scoring attempt is what ships — even one that never reaches
+        # PASS_SCORE still gets the highest-quality version actually tried,
+        # never just whatever the last, possibly-worse, attempt produced.
+        feedback_history: list[str] = []
+        best_score = -1
+        best_segments, best_title, best_report = segments, llm_title, None
         _budget = max(lp.target_s * 0.80, 26.0)
         for agent_attempts in range(1, 5):
             try:
                 cand, cand_title = rewrite_segments(
                     [dict(s) for s in template_segments], meta, cfg,
-                    base_script=base_script_meta, feedback=feedback,
+                    base_script=base_script_meta, feedback="\n".join(feedback_history),
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning("llm rewrite errored, using template: %s", exc)
@@ -750,13 +761,24 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             _mark_incomplete_factcheck_rows(cand)
             cand = _fit_duration(cand, budget=_budget, caps=_NARR_CAP_LLM)
 
-            segments, llm_title = cand, cand_title
-            agent_report = quality_agent.review({"headline": headline, "segments": segments}, cfg)
+            agent_report = quality_agent.review({"headline": headline, "segments": cand}, cfg)
+            cand_score = agent_report.score if agent_report.available else -1
+            if cand_score > best_score:
+                best_score, best_segments, best_title, best_report = (
+                    cand_score, cand, cand_title, agent_report)
+
             if not agent_report.available or agent_report.score >= quality_agent.PASS_SCORE:
+                segments, llm_title = cand, cand_title
                 break
-            feedback = agent_report.feedback_text()
-            log.info("quality agent attempt %d scored %s — regenerating (%s)",
-                     agent_attempts, agent_report.score, feedback[:160])
+            issue_line = agent_report.feedback_text()
+            if issue_line:
+                feedback_history.append(f"[{agent_attempts}차 시도 문제점]\n{issue_line}")
+            log.info("quality agent attempt %d scored %s (best so far %d) — regenerating",
+                     agent_attempts, agent_report.score, best_score)
+        else:
+            # exhausted every attempt without ever reaching PASS_SCORE — use
+            # the best-scoring one tried, not necessarily the last.
+            segments, llm_title, agent_report = best_segments, best_title, best_report
     else:
         _mark_incomplete_factcheck_rows(segments)
         _budget = max(lp.target_s * 0.80, 22.0)
