@@ -51,3 +51,15 @@ def test_no_hype_words():
                          ["국민의힘은 위헌이라고 반발했다.", "민주당은 노동자 보호라고 맞섰다."]))
     for bad in ("충격", "발칵", "경악", "사실상 확정"):
         assert bad not in hk.narration
+
+
+def test_hook_glosses_regulatory_jargon():
+    # a real user complaint: the hook is the ONE card with no LLM pass and
+    # no per-card term glossing — "토허구역 실거주" shipped completely
+    # unexplained as the literal first thing a viewer sees and hears.
+    h = "강남 토허구역 실거주 의무 위반 무더기 적발"
+    hk = build_hook(_ctx(h, ["국토부는 강남 토허구역에서 실거주 의무 위반 사례를 적발했다고 밝혔다."]))
+    if "토허구역" in hk.narration:
+        assert "토허구역(" in hk.narration
+    if "토허구역" in hk.caption:
+        assert "토허구역(" in hk.caption

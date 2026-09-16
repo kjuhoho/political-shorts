@@ -74,6 +74,15 @@ def test_non_factcheck_scenes_never_get_a_table_scene_flag():
     assert all("table_scene" not in s for s in out)
 
 
+def test_regulatory_jargon_is_glossed_regardless_of_which_role_carries_it():
+    # backstop for cards written by the raw template (not just the LLM path,
+    # which only has a best-effort instruction to gloss unfamiliar terms):
+    # a real user complaint was "토허구역 실거주" shipping unexplained.
+    out = _plan("이 아파트는 토허구역에 속해 실거주 의무가 있습니다.", role="what")
+    assert any("토허구역(" in s["narration"] for s in out)
+    assert all(s["caption"] == s["narration"] for s in out)
+
+
 def test_continuation_chunk_holds_the_media():
     out = _plan("이재명 대통령이 임기 중 연임 개헌 논의를 꺼내면서, "
                 "정치권에서 논란이 커지고 있습니다.")

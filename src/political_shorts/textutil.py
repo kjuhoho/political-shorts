@@ -41,6 +41,34 @@ def dehanja(text: str) -> str:
     return _HANJA_RE.sub(lambda m: _HANJA[m.group(0)], text or "")
 
 
+# Regulatory / legal abbreviations that read as pure jargon to someone who
+# doesn't follow politics — a real viewer complaint ("토허구역 실거주 이런 표현이
+# 일반 사람들한테 바로 인지될수 있다고 생각해?"): nothing downstream can be trusted
+# to gloss these on its own. The LLM rewrite is told to explain unfamiliar
+# terms on first use (script_llm.py rule 1) but that's best-effort and never
+# reaches the deterministic template fallback or the Hook Engine (which has
+# no LLM pass at all). Glossed once, short, applied to already-assembled
+# text (never to a fragment still headed for clipping) so nothing cuts a
+# gloss off mid-parenthesis.
+JARGON = {
+    "토지거래허가구역": "토지거래허가구역(집을 사면 실제로 살아야 하는 규제 지역)",
+    "토허구역": "토허구역(집을 사면 실제로 살아야 하는 규제 지역)",
+    "종부세": "종부세(비싼 부동산 보유자에게 매기는 세금)",
+    "공수처": "공수처(고위공직자 비리를 수사하는 독립 기관)",
+}
+_JARGON_RE = re.compile(
+    "(?:" + "|".join(re.escape(k) for k in sorted(JARGON, key=len, reverse=True)) + r")(?!\()"
+)
+
+
+def gloss_jargon(text: str) -> str:
+    """Expand a known jargon abbreviation into 'term(짧은 뜻풀이)' the first —
+    and, since this is stateless, every — time it appears. Only call this on
+    text that is already in its final, assembled form; calling it before a
+    length-budget clip risks the clip cutting the gloss in half."""
+    return _JARGON_RE.sub(lambda m: JARGON[m.group(0)], text or "")
+
+
 _BULLET = re.compile(r"\s*[▲△▶▷◀◁◆◇■□●○◦※★☆∙・]\s*")
 
 

@@ -18,7 +18,7 @@ from typing import Any
 
 from .subtitle import readable_chunks, read_seconds as _read_seconds
 from .subtitle import _CHUNK_MAX
-from .textutil import clean_text
+from .textutil import clean_text, gloss_jargon
 
 SCENE_MIN_S = 1.35
 SCENE_MAX_S = 3.5
@@ -255,6 +255,11 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             piece = re.sub(r"\s+", " ", piece).strip(" ·")
             if not piece:
                 continue
+            # backstop, not a duplicate of the LLM's own "gloss unfamiliar
+            # terms" instruction: this runs whether the card came from the
+            # LLM or the raw template, and only ever touches the already-
+            # split, already-clipped piece — so it can't get cut off.
+            piece = gloss_jargon(piece)
             sc = dict(seg)
             sc["narration"] = piece
             sc["caption"] = piece                    # subtitle == the spoken words, always

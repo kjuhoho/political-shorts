@@ -26,7 +26,7 @@ import re
 from dataclasses import dataclass
 
 from .hook import Entities, Frame, josa, to_polite
-from .textutil import clean_text, clip_sentence
+from .textutil import clean_text, clip_sentence, gloss_jargon
 
 # a figure worth opening on — deliberately NOT bare 일/월/년 (those are dates)
 _FIG_RE = re.compile(
@@ -251,6 +251,19 @@ def _fallback_question(ctx: HookContext) -> Hook:
 _ORDER = (_surprise, _twist, _question, _outcome_first, _conflict, _number, _generic)
 
 
+def _gloss(h: Hook) -> Hook:
+    """The hook is the ONE place in the pipeline with no LLM pass and no
+    per-card glossing (script_llm's Stage-1 "terms" never reaches it — it
+    explicitly never writes the hook) — a raw fact clip can ship a term like
+    "토허구역" completely unexplained as the very first thing a viewer sees,
+    hears, AND reads (scene.py sets the hook's on-screen caption to this same
+    narration, verbatim). Applied AFTER the sentence is assembled, so a
+    generator's own clip budget never cuts the gloss off mid-parenthesis."""
+    h.narration = gloss_jargon(h.narration)
+    h.caption = gloss_jargon(h.caption)
+    return h
+
+
 def build_hook(ctx: HookContext) -> Hook:
     for gen in _ORDER:
         try:
@@ -260,5 +273,5 @@ def build_hook(ctx: HookContext) -> Hook:
         if h and h.narration and _grounded(h.narration, ctx):
             h.narration = re.sub(r"\s+", " ", h.narration).strip()
             h.caption = re.sub(r"\s+", " ", h.caption).strip() or h.narration[:24]
-            return h
-    return _fallback_question(ctx)
+            return _gloss(h)
+    return _gloss(_fallback_question(ctx))

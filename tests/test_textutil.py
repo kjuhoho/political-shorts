@@ -1,6 +1,7 @@
 from political_shorts.textutil import (
     canonical_url,
     clip_sentence,
+    gloss_jargon,
     normalize_title,
     split_sentences,
     strip_byline,
@@ -35,6 +36,24 @@ def test_canonical_url_drops_tracking():
 def test_split_sentences_korean():
     parts = split_sentences("국회가 열렸다. 여야가 충돌했다\n예산안은 가결됐다.")
     assert len(parts) == 3
+
+
+def test_gloss_jargon_explains_regulatory_abbreviation():
+    # a real user complaint: "토허구역 실거주" means nothing to someone who
+    # doesn't follow real-estate policy news — it must never appear bare.
+    out = gloss_jargon("이 아파트는 토허구역에 속해 실거주 의무가 있다.")
+    assert "토허구역(" in out and "규제 지역" in out
+
+
+def test_gloss_jargon_does_not_double_up():
+    once = gloss_jargon("토허구역 지정 소식이 전해졌다.")
+    twice = gloss_jargon(once)
+    assert once == twice
+
+
+def test_gloss_jargon_leaves_plain_text_untouched():
+    s = "국회는 3일 본회의에서 예산안을 처리했다."
+    assert gloss_jargon(s) == s
 
 
 def _quote_balance(s: str) -> bool:
