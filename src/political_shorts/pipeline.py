@@ -99,6 +99,27 @@ def _process_story(
         script = build_script(cluster_id, cfg)
         out.headline = script["headline"]
 
+        # Skip a story with too little material to actually explain, not just
+        # summarize — a real case that shipped: 1 source, 1 extracted fact, 1
+        # claim, 1 interpretation. There wasn't enough to write a background
+        # card OR a "what happened" card OR a "sides" card from, so all three
+        # got silently dropped by the length-budget trim, leaving hook -> a
+        # raw fact dump -> outro with zero context for a viewer who doesn't
+        # follow politics. Better to skip it and wait for more coverage than
+        # publish something with nothing to explain.
+        counts = script.get("counts", {}) or {}
+        material = (counts.get("facts", 0) + counts.get("claims", 0)
+                   + counts.get("interpretations", 0))
+        if script.get("n_sources", 0) <= 1 and material <= 3:
+            out.status = "skipped"
+            out.reason = f"소재 부족 (출처 {script.get('n_sources', 0)}개, 사실/주장/해석 합계 {material}개)"
+            with connect(cfg.db_path) as conn:
+                set_cluster_status(conn, cluster_id, "skipped")
+            log.info("cluster %d SKIPPED (thin material): src=%d facts=%d claims=%d interp=%d",
+                     cluster_id, script.get("n_sources", 0), counts.get("facts", 0),
+                     counts.get("claims", 0), counts.get("interpretations", 0))
+            return out
+
         # Skip a story we've already turned into a short in the last few days —
         # ongoing issues keep re-clustering, but the channel should move on.
         sig = story_signature(script["headline"], script.get("entities"), script.get("frame", ""))

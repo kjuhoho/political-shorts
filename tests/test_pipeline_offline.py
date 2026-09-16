@@ -3,11 +3,12 @@ except collect + render, and assert a script + safety report come out."""
 import time
 from dataclasses import replace
 
-from political_shorts import subtitle
+from political_shorts import pipeline, subtitle
 from political_shorts.classify import classify_pending
 from political_shorts.config import load_settings
 from political_shorts.db import init_db, connect, upsert_article, now
 from political_shorts.dedupe import build_clusters
+from political_shorts.pipeline import RunReport, _process_story
 from political_shorts.safety import review_script
 from political_shorts.script_gen import build_script
 from political_shorts.textutil import url_hash
@@ -80,3 +81,40 @@ def test_offline_pipeline(tmp_path):
     rep = review_script(script, cfg)
     # multi-source, multi-lean, attributed reaction -> should pass
     assert rep.passed is True, rep.blocks
+
+
+def test_thin_sourced_story_is_skipped_before_it_can_ship_undercontextualized(tmp_path, monkeypatch):
+    # a real shipped case: 1 source, 1 fact, 1 claim, 1 interpretation — not
+    # enough material for a background/what/sides card, so all three got
+    # silently dropped by the length-budget trim, leaving hook -> a raw fact
+    # dump -> outro with zero context. Better to skip it up front than ship
+    # something with nothing to actually explain.
+    cfg = replace(load_settings(), db_path=tmp_path / "t2.sqlite3",
+                  output_dir=tmp_path, data_dir=tmp_path)
+    init_db(cfg.db_path)
+    thin_script = {
+        "headline": "정부, 새 정책 발표", "entities": {}, "frame": "vote",
+        "topic": "정부", "n_sources": 1,
+        "counts": {"facts": 1, "claims": 1, "interpretations": 1},
+        "segments": [], "factcheck": {},
+    }
+    monkeypatch.setattr(pipeline, "build_script", lambda *a, **k: thin_script)
+    out = _process_story(1, cfg, do_publish=False, report=RunReport())
+    assert out.status == "skipped"
+    assert "소재 부족" in out.reason
+
+
+def test_well_sourced_story_is_not_caught_by_the_thin_material_gate(tmp_path, monkeypatch):
+    cfg = replace(load_settings(), db_path=tmp_path / "t3.sqlite3",
+                  output_dir=tmp_path, data_dir=tmp_path)
+    init_db(cfg.db_path)
+    rich_script = {
+        "headline": "국회, 예산안 통과", "entities": {}, "frame": "vote",
+        "topic": "국회", "n_sources": 3,
+        "counts": {"facts": 4, "claims": 3, "interpretations": 2},
+        "segments": [{"role": "hook", "narration": "예산안이 통과됐습니다."}],
+        "factcheck": {},
+    }
+    monkeypatch.setattr(pipeline, "build_script", lambda *a, **k: rich_script)
+    out = _process_story(1, cfg, do_publish=False, report=RunReport())
+    assert "소재 부족" not in out.reason

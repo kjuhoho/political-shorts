@@ -248,6 +248,10 @@ def _seg_seconds(seg: dict[str, Any]) -> float:
 def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECONDS,
                   caps: dict[str, int] | None = None) -> list[dict[str, Any]]:
     caps = caps or _NARR_CAP
+    # the UNTOUCHED background text, captured before any trimming below can
+    # mangle it — step 4's floor falls back to THIS, not to whatever step 3
+    # left behind, so a floor clip is always taken from a clean sentence.
+    _summary_seed = next((s.get("narration", "") for s in segments if s["role"] == "summary"), "")
 
     def total() -> float:
         return sum(_seg_seconds(s) for s in segments)
@@ -313,11 +317,26 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
         if not _shrink_longest(pool):
             break
 
-    # 4) TRUE last resort — drop the standalone summary/background card
-    #    entirely. Only reached if shrinking everything else in step 3 (up to
-    #    12 rounds, shared fairly with "what") genuinely wasn't enough.
-    if total() > budget:
-        segments[:] = [s for s in segments if s["role"] != "summary"]
+    # 4) previously a TRUE last resort that dropped the standalone summary/
+    #    background card entirely once step 3 left it too mangled to voice. A
+    #    real user complaint: on a thin "brief" story this left hook -> raw
+    #    fact dump -> outro with NO background at all for a viewer who
+    #    doesn't follow politics — "이게 무슨 소리야". Summary now has a hard
+    #    floor instead: whenever what step 3 left behind isn't a genuinely
+    #    complete clause (broken fragment, or trimmed away to nothing), it's
+    #    restored from the UNTOUCHED original, clipped to one short complete
+    #    clause — never just removed. Runs regardless of whether we're still
+    #    over budget: a few seconds over on a thin story beats zero context.
+    if _summary_seed:
+        for s in segments:
+            if s["role"] != "summary":
+                continue
+            cur = s.get("narration", "")
+            if cur and _sentence_complete(cur):
+                continue                        # step 3 already left something usable
+            floor = clip_sentence(_summary_seed, 44)
+            if _sentence_complete(floor):
+                s["narration"] = floor
 
     # 4) final polish: every spoken line is a clean, complete sentence.
     #    If trimming left a card with no complete sentence, drop it outright

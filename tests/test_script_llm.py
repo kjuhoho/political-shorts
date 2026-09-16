@@ -183,6 +183,21 @@ def test_narration_ending_on_a_bare_noun_falls_back_to_template(monkeypatch):
     assert out[2]["narration"].startswith("쟁점과 원문")            # the other card still applied
 
 
+def test_vague_watch_and_see_outro_falls_back_to_template(monkeypatch):
+    # a real shipped outro: complete sentence, on-topic, but closes on nothing
+    # but the exact cliché the prompt already bans — "...지켜봐야 합니다." A
+    # prompt instruction alone didn't stop it from shipping; this must be
+    # rejected in code too, the same way an incomplete sentence is.
+    payload = json.dumps({
+        "outro": "오랫동안 비어 있던 법적 공백 속에서 여성 건강권과 직결된 약물 기준이 "
+                 "어떻게 안착할지 지켜봐야 합니다.",
+    })
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    segs = _segs()
+    out = _rw(segs, META, _cfg(), BASE)
+    assert out[2]["narration"] == "자세한 내용은 더보기란에 있습니다."   # template kept
+
+
 def test_facts_table_row_marked_incomplete_even_under_the_clip_budget(monkeypatch):
     # a real shipped row: SHORT enough (under 52 chars) that clip_sentence
     # never had anything to cut, but the model's own sentence stops on a bare

@@ -88,7 +88,16 @@ _SYSTEM = (
     "한다고 말하지 말고, 사실 자체가 가진 구체적인 무게(숫자, 결과, 파장)를 "
     "명확한 언어로 전달하면 그것으로 충분합니다. 추상적인 정치 용어("
     "'정국 주도권', '정치적 함의')보다 시청자가 바로 실감할 수 있는 구체적 표현을 "
-    "쓸 것.\n\n"
+    "쓸 것.\n"
+    "8) 실제 방송 기자가 카메라 앞에서 말하듯 쓸 것 — 보도자료·통신문 특유의 "
+    "명사 나열식 긴 수식어 뭉치는 절대 금지. '임신 9주 이하 임신부를 대상으로 한 "
+    "임신중지약 도입 및 초기 2년간 병원 처방, 조제 방침을 공식 발표했습니다' (X, "
+    "명사를 계속 붙여 쓴 보도자료 문장) → '정부가 임신중지약을 도입하기로 했습니다. "
+    "대상은 임신 9주 이하 임신부이고, 처음 2년은 병원에서만 처방받을 수 있습니다' "
+    "(O, 짧은 문장 여러 개로 나눠 말하듯). 한 문장에 수식어가 두 개 이상 겹치면 "
+    "무조건 문장을 끊어서 새로 시작할 것. 전망/마무리는 특히 '~지켜봐야 합니다', "
+    "'~주목됩니다' 같은 막연한 관망형 문장으로 절대 끝내지 말 것 — 무엇이 어떻게 "
+    "바뀌는지, 누구에게 어떤 영향인지를 구체적인 서술어로 끝맺을 것.\n\n"
     "카드별 역할 (유튜브 쇼츠 몰입 곡선):\n"
     "  - (hook 카드는 별도 엔진이 만듭니다. 당신은 hook을 쓰지 마세요.)\n"
     "  - summary: 이 사건의 '배경'. 이 인물·기관이 뭐 하는 곳인지, 왜 지금 이게 "
@@ -315,6 +324,24 @@ def _ends_cleanly(narr: str) -> bool:
     return _sentence_complete(narr.rstrip())
 
 
+# The outro prompt (_SYSTEM above) explicitly bans "두루뭉술한 전망" endings —
+# but that's a prompt instruction, not a guarantee, and a real production
+# case shipped one anyway ("...안착할지 지켜봐야 합니다."). Enforced in code
+# now: an outro that closes on nothing but a bare watch-and-see cliché, with
+# no concrete "why/what happens next" attached, is rejected the same way an
+# incomplete sentence is — falling back to the template's payoff-led outro
+# instead of a filler line dressed as a conclusion.
+_VAGUE_OUTRO_END = re.compile(
+    r"(?:지켜봐야\s*(?:겠습니다|합니다|할\s*것입니다|하는지도\s*모릅니다)|"
+    r"주목됩니다|주목할\s*만합니다|주목받고\s*있습니다|"
+    r"관심이\s*집중되고\s*있습니다|귀추가\s*주목됩니다)\s*\.?\s*$"
+)
+
+
+def _is_vague_outro(narr: str) -> bool:
+    return bool(_VAGUE_OUTRO_END.search(clean_text(narr)))
+
+
 # "hook" intentionally excluded — owned by hook_engine.py, never LLM-written
 _ROLE_KEYS = {"summary", "what", "reaction", "factcheck", "sides", "outro"}
 
@@ -478,6 +505,10 @@ def rewrite_segments(
             # this card rather than ship a fragment that reads as finished.
             log.info("llm card %r ends without a predicate (%r) — keeping template",
                      s.get("role"), narr[-16:])
+            continue
+        if s.get("role") == "outro" and _is_vague_outro(narr):
+            log.info("llm outro is a vague watch-and-see filler (%r) — keeping template",
+                     narr[-20:])
             continue
         s["narration"] = narr
         s.pop("caption", None)               # re-derived cleanly in script_gen

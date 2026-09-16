@@ -155,6 +155,18 @@ def test_fit_duration_spends_sides_and_what_before_ever_shrinking_summary():
     assert sides is not None and len(sides["narration"]) < len(full_sides)  # absorbed the cut
 
 
+def test_fit_duration_restores_a_floor_summary_instead_of_dropping_it():
+    # a real user complaint: on a thin story, summary used to be dropped
+    # ENTIRELY once step 3's own trimming left it too mangled to voice,
+    # leaving hook -> raw fact dump -> outro with zero background. At a
+    # budget where the old code produced None, it must now come back as a
+    # short, genuinely complete clause restored from the untouched original.
+    out = sg._fit_duration(_fit_segs(), budget=12.0)
+    summary = next((s for s in out if s["role"] == "summary"), None)
+    assert summary is not None and summary.get("narration")
+    assert sg._sentence_complete(summary["narration"])
+
+
 def test_fit_duration_never_ships_a_fabricated_complete_looking_summary():
     # a real shipped case: under real pressure, the "last resort" rescue for
     # essential roles used to blindly append "." to whatever clip_sentence

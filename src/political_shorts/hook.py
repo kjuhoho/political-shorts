@@ -429,6 +429,28 @@ def pick_actor(headline: str, entities: Entities, frame: Frame) -> str:
     for m in _TITLE_RE.finditer(h):
         if m.group(1) not in _ORG_PREFIX and m.group(1) not in _OFFICE_WORD:
             return m.group(1)
+    # entities.lead_actor's politician branch trusts ANY mention anywhere in
+    # the source text, even one incidental "OOO 정부는 …" boilerplate clause
+    # deep in a fact sentence that has nothing to do with this specific
+    # story. A real case that shipped wrong: a health-policy announcement
+    # (no personal actor at all) got "이재명은 지금 왜 이렇게 주목받고
+    # 있을까요?" because his name appeared once, only as the sitting
+    # president, nowhere near the headline. Only trust that fallback when
+    # the SAME name is also in the headline; otherwise prefer a party or
+    # institution the headline itself actually names.
+    if entities.politicians and not any(p in h for p in entities.politicians):
+        for p in entities.parties:
+            if p in h:
+                return p
+        for i in entities.institutions:
+            if i in h:
+                return i
+        # no headline-grounded actor at all — better to return nothing than a
+        # specific person who is only in the source text incidentally.
+        # Downstream (hook_engine's `_fallback_question`, explain.background)
+        # both handle an empty actor gracefully with a generic line instead
+        # of confidently naming the wrong person.
+        return ""
     return entities.lead_actor
 
 

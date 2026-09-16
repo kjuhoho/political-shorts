@@ -31,6 +31,22 @@ def test_pick_actor_finds_a_non_politician_named_with_an_honorific():
     assert pick_actor(h, ent, fr) == "김혜경"      # but the STORY is about her, not him
 
 
+def test_pick_actor_ignores_an_incidental_president_mention_with_no_headline_actor():
+    # a real shipped case: a health-policy announcement with NO personal actor
+    # at all — the headline never names anyone — got "이재명은 지금 왜 이렇게
+    # 주목받고 있을까요?" because a fact sentence happened to say "이재명
+    # 정부는 16일 브리핑을 열고 …", pure boilerplate framing, not the actual
+    # subject. entities.lead_actor's old fallback trusted ANY mention of a
+    # politician anywhere in the source text, regardless of relevance.
+    h = "'임신중지약' 합법화...임신 9주 이하 대상 병원서 처방·조제"
+    body = "이재명 정부는 16일 브리핑을 열고 임신중지약 도입 방침을 공식 발표했다."
+    ent = detect_entities(h, body)
+    fr = detect_frame(h, body)
+    assert "이재명" in ent.politicians              # genuinely present in the text
+    assert "이재명" not in h                        # but not in the headline itself
+    assert pick_actor(h, ent, fr) != "이재명"
+
+
 def test_detect_topic_north_korea_from_body_not_just_headline():
     # a real shipped case: the headline alone didn't have to name it, but the
     # keyword the caller cares about matters wherever it appears — images.py
