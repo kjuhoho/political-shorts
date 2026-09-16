@@ -47,6 +47,33 @@ def test_event_lead_gets_a_hard_cut_into_it():
     assert out[0]["scene"]["transition"] == "cut"
 
 
+def test_factcheck_caption_follows_the_narration_like_every_other_role():
+    # a real user complaint: factcheck used to show a static table the whole
+    # time while the narration kept talking past it — the viewer had to
+    # either read the table or listen, never both. Every factcheck scene
+    # must now carry the flowing caption too.
+    out = _plan("확인된 사실은 이겁니다. 김승원은 3일 사퇴했습니다. "
+                "이게 무슨 뜻이냐면, 인사 검증 논란이 이어질 수 있다는 뜻입니다.",
+                role="factcheck")
+    assert len(out) >= 2
+    for s in out:
+        assert s["caption"] == s["narration"]
+
+
+def test_factcheck_table_scene_is_only_the_last_piece():
+    out = _plan("확인된 사실은 이겁니다. 김승원은 3일 사퇴했습니다. "
+                "이게 무슨 뜻이냐면, 인사 검증 논란이 이어질 수 있다는 뜻입니다.",
+                role="factcheck")
+    assert len(out) >= 2
+    assert not any(s.get("table_scene") for s in out[:-1])
+    assert out[-1]["table_scene"] is True
+
+
+def test_non_factcheck_scenes_never_get_a_table_scene_flag():
+    out = _plan("정부가 오늘 새로운 개헌 논의를 공식적으로 시작했습니다.", role="what")
+    assert all("table_scene" not in s for s in out)
+
+
 def test_continuation_chunk_holds_the_media():
     out = _plan("이재명 대통령이 임기 중 연임 개헌 논의를 꺼내면서, "
                 "정치권에서 논란이 커지고 있습니다.")

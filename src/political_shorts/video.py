@@ -278,7 +278,12 @@ def _overlay_png(
                       fill=tuple(st_top.get("chip_ink", (12, 14, 20, 255))))
 
     # ---- 3) BODY / CAPTION ------------------------------------------------
-    if role == "factcheck" and seg.get("rows"):
+    # the 사실/주장/전망 table is now the CLOSING recap only (`table_scene`,
+    # set by scene.plan() on the last factcheck piece) — every other
+    # factcheck scene shows the normal flowing FULL-SCRIPT SUBTITLE below,
+    # same as every other role, so the caption never goes silent while the
+    # narration keeps talking.
+    if role == "factcheck" and seg.get("rows") and seg.get("table_scene"):
         rows = seg["rows"][:4]
         y = int(h * 0.42)
         for r in rows:
@@ -1010,7 +1015,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             tl.scenes[i].media = _kind
             try:
                 from .layout import layout_id
-                tl.scenes[i].layout = "table" if seg.get("role") == "factcheck" \
+                tl.scenes[i].layout = "table" if seg.get("table_scene") \
                     else f"LAYOUT_{layout_id(seg.get('scene_type', ''))}"
             except Exception:
                 pass

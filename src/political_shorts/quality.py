@@ -117,7 +117,9 @@ def check(script: dict[str, Any], meta: dict[str, Any], video_path: Path,
         ding("content", 6, "no-source", "출처가 하나도 없음", sev="critical")
 
     # ---------- SUBTITLE ----------
-    spoken = [s for s in segs if s.get("narration") and s.get("role") != "factcheck"]
+    # factcheck now follows the same caption==narration rule as every other
+    # role — only its closing table_scene (the 사실/주장/전망 recap) is exempt.
+    spoken = [s for s in segs if s.get("narration") and not s.get("table_scene")]
     missing_cap = [s for s in spoken if not clean_text(s.get("caption", ""))]
     if missing_cap:
         ding("subtitle", 8, "caption-missing",
@@ -144,9 +146,10 @@ def check(script: dict[str, Any], meta: dict[str, Any], video_path: Path,
         ding("visual", 6, "too-few-scenes", f"장면이 너무 적음 ({n_scenes})")
     if n_scenes > 34:
         ding("visual", 4, "too-many-scenes", f"장면이 너무 많음 ({n_scenes}) — 컷이 잘게 쪼개짐")
-    # static span
+    # static span — the table_scene (closing recap) is the one exemption:
+    # it's meant to sit still and be read.
     for t in tl:
-        if (t.get("dur", 0) > 7.5 and t.get("role") != "factcheck"):
+        if (t.get("dur", 0) > 7.5 and t.get("layout") != "table"):
             ding("visual", 3, "static-span",
                  f"{t['start']}s 장면이 {t['dur']}s로 김 — 정지 느낌", t.get("start"), t.get("end"))
     # ---------- repetition detector ----------

@@ -21,7 +21,7 @@ def _script(**over):
              "caption": "예산안이 3일 국회 본회의를 통과했습니다."},
             {"role": "what", "narration": "찬성 210표로 가결됐습니다.",
              "caption": "찬성 210표로 가결됐습니다."},
-            {"role": "factcheck", "caption": "팩트체크",
+            {"role": "factcheck", "caption": "팩트체크", "table_scene": True,
              "narration": "확인된 사실은 이겁니다.",
              "rows": [{"tag": "사실", "text": "국회 예산안 처리", "source": "연합뉴스, 한겨레"}]},
             {"role": "outro", "narration": "구독과 좋아요 부탁드립니다.",
@@ -68,6 +68,31 @@ def test_caption_not_verbatim_is_flagged(tmp_path):
     sc["segments"][0]["caption"] = "예산안 통과"          # compressed, not the full line
     qr = check(sc, _meta(sc), tmp_path / "x.mp4", type("C", (), {"ffmpeg_path": "ffmpeg"})())
     assert any(i["code"] == "caption-not-verbatim" for i in qr.issues)
+
+
+def test_table_scene_is_exempt_from_caption_verbatim_but_others_arent(tmp_path):
+    # a real user complaint: factcheck used to be blanket-exempt from the
+    # "caption must match narration" rule, hiding a real problem — only the
+    # CLOSING table_scene (the 사실/주장/전망 recap) should be exempt; every
+    # other factcheck piece needs to show the words being spoken, same as
+    # any other role.
+    sc = _script()
+    sc["segments"].insert(2, {"role": "factcheck", "caption": "팩트체크",
+                              "narration": "확인된 사실은 이겁니다.",
+                              "rows": sc["segments"][2]["rows"]})
+    qr = check(sc, _meta(sc), tmp_path / "x.mp4", type("C", (), {"ffmpeg_path": "ffmpeg"})())
+    assert any(i["code"] == "caption-not-verbatim" for i in qr.issues)
+
+
+def test_table_scene_exempt_from_static_span_others_arent(tmp_path):
+    sc = _script()
+    meta = _meta(sc)
+    for t in meta["timeline"]:
+        t["dur"] = 8.0                                  # over the 7.5s static-span threshold
+        t["layout"] = "table" if t["role"] == "factcheck" else "LAYOUT_01"
+    qr = check(sc, meta, tmp_path / "x.mp4", type("C", (), {"ffmpeg_path": "ffmpeg"})())
+    static_spans = [i for i in qr.issues if i["code"] == "static-span"]
+    assert static_spans and all(i["t_start"] != meta["timeline"][2]["start"] for i in static_spans)
 
 
 def test_fact_review_blocks_publish(tmp_path):

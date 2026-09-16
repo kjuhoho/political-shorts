@@ -241,7 +241,12 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # FULL-SCRIPT SUBTITLE: split the sentence into clean READABLE chunks
         # (2-3 lines each) — never compressed, never cut mid-word. One chunk per
         # scene; the caption IS the chunk (the words the voice is saying).
-        # factcheck keeps its 사실/주장/전망 table, so its chunks stay coarser.
+        # factcheck now follows the SAME rule as every other role — a viewer
+        # who doesn't follow politics needs the words on screen while they're
+        # being spoken, not a static table they have to read on their own
+        # while the narration moves on without them. The 사실/주장/전망 table
+        # still shows, but only on the LAST piece (`table_scene`) — as the
+        # closing recap, not the whole factcheck experience.
         budget = 56 if role == "factcheck" else _CHUNK_MAX
         pieces = readable_chunks(nar, budget) or [nar]
         if role == "factcheck" and len(pieces) > 4:
@@ -252,8 +257,9 @@ def plan(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             sc = dict(seg)
             sc["narration"] = piece
-            if role != "factcheck":
-                sc["caption"] = piece               # subtitle == the spoken words
+            sc["caption"] = piece                    # subtitle == the spoken words, always
+            if role == "factcheck":
+                sc["table_scene"] = j == len(pieces) - 1
             sc["scene_type"] = scene_type_of(role, piece)
             emph = emphasis_of(piece)
             sc["scene"] = {
