@@ -100,10 +100,25 @@ def _theme_saturated(conn, sig, actor: str, cfg: Settings) -> str:
 def _process_story(
     cluster_id: int, cfg: Settings, do_publish: bool, report: RunReport,
     enforce_variety: bool = True, min_agent_score: int | None = None,
+    script_cache: dict[int, Any] | None = None, forced_script: Any | None = None,
 ) -> StoryOutcome:
     out = StoryOutcome(cluster_id=cluster_id)
     try:
-        script = build_script(cluster_id, cfg)
+        # `forced_script`, when given, skips build_script() entirely and
+        # reuses an exact script object from an earlier call THIS run — the
+        # fallback-of-the-day retry below passes the cached script that
+        # actually scored best, instead of calling build_script() again.
+        # That earlier call already burned its own regenerate-on failure
+        # attempts to LAND on that score; calling build_script() a second
+        # time would re-roll the whole quality-agent lottery (the LLM's
+        # hook/outro phrasing varies run to run) and could easily come back
+        # LOWER — a real, CI-observed case: a cluster that scored 85 on its
+        # first pass scored only 80 on a fresh rebuild, missing its own
+        # floor. Reusing the actual best-scoring script makes the gate below
+        # trivially pass (out.agent_score is already >= floor by construction).
+        script = forced_script if forced_script is not None else build_script(cluster_id, cfg)
+        if script_cache is not None:
+            script_cache[cluster_id] = script
         out.headline = script["headline"]
 
         # Skip a story with too little material to actually explain, not just
@@ -362,12 +377,19 @@ def run_pipeline(
         def _attempts_left() -> bool:
             return len(report.stories) < _MAX_ATTEMPTS
 
+        # Every built script THIS run, keyed by cluster_id — lets the
+        # fallback-of-the-day retry below reuse the exact script object that
+        # earned a candidate its score, instead of calling build_script()
+        # again and re-rolling the quality agent's run-to-run variance.
+        script_cache: dict[int, Any] = {}
+
         # Walk clusters hottest-first, skipping stories we've already covered /
         # that get blocked, until `limit` publishable shorts are found.
         for cid in cluster_ids:
             if _ready() >= limit or not _attempts_left():
                 break
-            report.stories.append(_process_story(cid, cfg, do_publish, report))
+            report.stories.append(_process_story(cid, cfg, do_publish, report,
+                                                  script_cache=script_cache))
 
         # Nothing publishable yet (nothing fresh, everything a duplicate, or
         # every candidate held on quality)? Fall back to a generally-
@@ -383,7 +405,8 @@ def run_pipeline(
                 for cid in gen_ids:
                     if _ready() >= limit or not _attempts_left():
                         break
-                    report.stories.append(_process_story(cid, cfg, do_publish, report))
+                    report.stories.append(_process_story(cid, cfg, do_publish, report,
+                                                          script_cache=script_cache))
 
         # Still nothing publishable — the variety filter may have held
         # everything back (a week where every top story is one saga). Re-walk
@@ -394,7 +417,8 @@ def run_pipeline(
                 if _ready() >= limit or not _attempts_left():
                     break
                 report.stories.append(
-                    _process_story(cid, cfg, do_publish, report, enforce_variety=False))
+                    _process_story(cid, cfg, do_publish, report, enforce_variety=False,
+                                   script_cache=script_cache))
 
         # FALLBACK-OF-THE-DAY: nothing reached the 95 bar across every
         # candidate tried above. User: "평가를 진행하는 것은 두고 평가진행
@@ -407,13 +431,14 @@ def run_pipeline(
         # separately, not "any score": batch 28's diagnostic run showed a
         # real, observed defect in every 40-84-scored candidate that day —
         # 85 is the line below which nothing ships, full stop).
-        # Re-runs build_script() for that cluster rather than reusing the
-        # earlier script object (simpler; the alternative is threading the
-        # exact script through every skip path) — accepted trade-off: the
-        # quality agent has real run-to-run variance, so this SECOND
-        # attempt's score can differ from the one that made it "best" the
-        # first time, and `_process_story`'s own gate re-checks it fairly
-        # either way.
+        # Reuses the CACHED script that actually earned that score
+        # (`forced_script`) rather than calling build_script() again — a
+        # first real CI dry-run of this exact fallback caught the rebuild
+        # approach red-handed: cluster 91 scored 85 the first time, then
+        # only 80 on a fresh rebuild, missing its own floor and shipping
+        # nothing that day. Reusing the exact script makes the outcome
+        # deterministic: the promoted candidate is provably the one that
+        # earned the score it was picked for.
         _FALLBACK_FLOOR = 85
         if _ready() == 0:
             candidates = [s for s in report.stories
@@ -421,11 +446,12 @@ def run_pipeline(
             best = max(candidates, key=lambda s: s.agent_score, default=None)
             if best is not None and best.agent_score >= _FALLBACK_FLOOR:
                 log.info("no candidate reached the AI bar today (best=%d/95) — "
-                         "retrying cluster %d as the day's fallback-best publish (floor=%d)",
+                         "promoting cluster %d as the day's fallback-best publish (floor=%d)",
                          best.agent_score, best.cluster_id, _FALLBACK_FLOOR)
                 report.stories.append(_process_story(
                     best.cluster_id, cfg, do_publish, report,
-                    enforce_variety=False, min_agent_score=_FALLBACK_FLOOR))
+                    enforce_variety=False, min_agent_score=_FALLBACK_FLOOR,
+                    forced_script=script_cache.get(best.cluster_id)))
 
         report.skipped = sum(1 for s in report.stories if s.status == "skipped")
 

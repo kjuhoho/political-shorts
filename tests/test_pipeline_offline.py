@@ -255,6 +255,45 @@ def test_min_agent_score_lets_a_lower_score_through_the_same_gate(tmp_path, monk
     assert "_ReachedRendering" in out_floored.reason
 
 
+def test_forced_script_skips_build_script_entirely(tmp_path, monkeypatch):
+    # the fallback-of-the-day retry passes `forced_script` (the cached
+    # script that actually earned the promoted candidate its score) instead
+    # of letting _process_story rebuild from scratch — build_script() must
+    # not be called at all in that path, since calling it again is exactly
+    # what let a real 85-scoring cluster slip to 80 on a live CI dry-run.
+    cfg = _llm_cfg(tmp_path, "qa9b.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+
+    def _should_not_be_called(*a, **k):
+        raise AssertionError("build_script() was called despite forced_script being given")
+
+    monkeypatch.setattr(pipeline, "build_script", _should_not_be_called)
+
+    class _ReachedRendering(Exception):
+        pass
+
+    monkeypatch.setattr(pipeline, "render_video",
+                        lambda *a, **k: (_ for _ in ()).throw(_ReachedRendering()))
+
+    forced = {
+        "cluster_id": cluster_id, "headline": "헤드라인", "title": ["a", "b"],
+        "topic": "정치", "frame": "clash", "entities": {}, "segments": [],
+        "n_sources": 3, "counts": {"facts": 3, "claims": 2, "interpretations": 2},
+        "sources": [{"name": "연합뉴스", "url": "u", "lean": "wire"}],
+        "factcheck": {}, "disclaimer": "공개 보도를 정리한 자동 제작물입니다.",
+        "length_band": [25, 60], "style": "punchy",
+        "quality_agent": {"available": True, "score": 85, "passed": False,
+                          "attempts": 4, "issues": []},
+    }
+
+    out = _process_story(cluster_id, cfg, do_publish=False, report=RunReport(),
+                         min_agent_score=85, forced_script=forced)
+    assert out.status == "error"
+    assert "_ReachedRendering" in out.reason        # reached rendering — gate passed
+    assert out.agent_score == 85
+    assert out.headline == "헤드라인"                 # came from forced_script, not a rebuild
+
+
 def test_run_pipeline_promotes_the_best_candidate_when_nothing_hits_95(tmp_path, monkeypatch):
     # user: "평가진행 후 실패하더라도, 가장 높은 점수의 영상을 올리는 것으로
     # 변경하자" — with two candidates, neither reaching 95 (60 and 90), the
@@ -284,12 +323,26 @@ def test_run_pipeline_promotes_the_best_candidate_when_nothing_hits_95(tmp_path,
             })
 
     id_to_score: dict[int, int] = {}
+    call_count: dict[int, int] = {}
     score_seq = [60, 90]
 
     def fake_build_script(cluster_id, _cfg=None):
+        call_count[cluster_id] = call_count.get(cluster_id, 0) + 1
         if cluster_id not in id_to_score:
             id_to_score[cluster_id] = score_seq[min(len(id_to_score), len(score_seq) - 1)]
         score = id_to_score[cluster_id]
+        # Simulate real run-to-run LLM variance: a THIRD build_script() call
+        # for the SAME cluster scores much lower — this is exactly the real
+        # defect a live CI dry-run exposed (a cluster that scored 85 on its
+        # first pass scored only 80 on a rebuild, missing its own floor).
+        # Two legitimate calls per cluster are expected from the pipeline's
+        # OWN pre-existing retry structure in this scenario (the initial
+        # politics walk, then the variety-off re-walk once nothing clears
+        # the 95 bar) — a THIRD call would only happen if the fallback-of-
+        # the-day step rebuilt instead of reusing the cached script, which
+        # is exactly what this test must prove it no longer does.
+        if call_count[cluster_id] > 2:
+            score = 10
         return {
             "cluster_id": cluster_id, "headline": f"헤드라인 {cluster_id}", "title": ["a", "b"],
             "topic": "정치", "frame": "clash", "entities": {}, "segments": [],
@@ -320,6 +373,12 @@ def test_run_pipeline_promotes_the_best_candidate_when_nothing_hits_95(tmp_path,
     built = next(s for s in report.stories if s.status == "built")
     assert built.agent_score == 90                # the promoted fallback, not the 60-scorer
     assert built.held is False
+    # proves the fix: the fallback promotion step never called build_script()
+    # a THIRD time for the winning cluster — it reused the cached 90-scoring
+    # script instead of rebuilding (a rebuild would have scored 10 per the
+    # variance simulation above and been rejected even by the lowered floor,
+    # which is exactly the failure a live CI dry-run exposed).
+    assert call_count[built.cluster_id] <= 2
 
 
 def test_run_pipeline_publishes_nothing_when_best_is_below_the_fallback_floor(tmp_path, monkeypatch):
