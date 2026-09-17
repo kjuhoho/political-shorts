@@ -542,6 +542,14 @@ def make_title(headline: str, entities: Entities, frame: Frame) -> list[str]:
     # a bare-noun actor ("논란", "여야") -> lead with the headline phrase instead
     if actor in _NOT_TARGET or not (2 <= len(actor) <= 6) or actor in {"여야", "여당", "야당"}:
         return [head_np, random.choice(["무슨 일일까요?", "왜 논란일까?", "진짜일까?"])]
+    # two genuinely named, opposing parties -> a short "A vs B" line reads
+    # the conflict at a glance, no need to name a single actor first. A
+    # real example the user pointed to as a strong performer: "대통령 vs
+    # 대법원장 정면충돌?". Only fires with two REAL parties (never the
+    # "여당"/"야당" placeholder fallback below) — a generic "여당 vs 야당"
+    # title says nothing a reader couldn't already guess.
+    if frame.kind == "clash" and len(entities.parties) >= 2:
+        return [f"{entities.parties[0]} vs {entities.parties[1]}", "정면충돌?"]
     tmpls = _TITLE_TMPL.get(frame.kind) or _TITLE_TMPL["generic"]
     if frame.kind == "clash" and iw == "논란":
         tmpls = [t for t in tmpls if "{issueword}" not in t[0]] or tmpls

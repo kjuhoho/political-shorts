@@ -33,9 +33,16 @@ def _now_local(cfg: Settings) -> datetime:
 def _title(script: dict[str, Any], date_str: str, style: str) -> str:
     headline = clean_text(script.get("headline", "정치 뉴스 요약"))
     tl = [clean_text(x) for x in (script.get("title") or []) if clean_text(x)]
+    # ONE clean line, not "{on-screen title} | {raw headline in quotes}" —
+    # a real user complaint: '실거주 유예 내년까지 연장할까? | 여당 "내년
+    # 까지 연장을"#shorts' reads as two unrelated things stitched together
+    # and is hard to parse on a phone. tl (the punchy 2-line on-screen
+    # title) is already the whole title on its own; the raw headline used
+    # to be appended purely for search-keyword coverage, but that's not
+    # worth the readability cost on a Shorts title. tags[]/description
+    # still carry the full headline+keywords for search.
     if style == "punchy" and tl:
-        # the big on-screen thumbnail title + the real headline for search
-        t = f"{' '.join(tl)} | {headline}"
+        t = " ".join(tl)
     else:
         t = f"[{date_str} 정치] {headline}"
     # YouTube titles cap at 100 chars; keep room for the tag, which the user

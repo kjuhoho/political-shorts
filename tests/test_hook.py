@@ -105,6 +105,28 @@ def test_title_leads_with_real_name_not_office():
     assert "대통령실" not in line1
 
 
+def test_title_uses_vs_format_when_two_real_parties_clash():
+    # user: a "A vs B 정면충돌?" title was their strongest performer —
+    # prefer it whenever the story genuinely names two opposing parties.
+    h = "국민의힘과 더불어민주당, 예산안 두고 정면충돌"
+    ent = detect_entities(h)
+    assert len(ent.parties) >= 2
+    title = make_title(h, ent, detect_frame(h))
+    assert " vs " in title[0]
+    assert all(p in title[0] for p in ent.parties[:2])
+
+
+def test_title_never_uses_vs_with_placeholder_parties():
+    # only fires with two REAL named parties — never falls back to a
+    # generic, says-nothing "여당 vs 야당"
+    h = "대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만"
+    ent = detect_entities(h)
+    fr = detect_frame(h)
+    if fr.kind == "clash":
+        title = make_title(h, ent, fr)
+        assert " vs " not in title[0]
+
+
 def test_to_polite_normalizes_sentence_end():
     assert to_polite("김승원이 3일 사퇴했다.") == "김승원이 3일 사퇴했습니다."
     assert to_polite("정부 출범 초기라 이례적이다") == "정부 출범 초기라 이례적입니다"
