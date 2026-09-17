@@ -45,6 +45,31 @@ def test_always_returns_a_hook():
     assert hk.narration.endswith(("?", "다.", "요.", "니다."))
 
 
+def test_personnel_question_never_fires_without_an_actual_departure():
+    # a real shipped case: FRAMES["personnel"] also fires on a bare
+    # "후보자"/"지명" mention — a confirmation-hearing-report dispute about
+    # a NOMINEE, with nobody stepping down, still landed on "왜 갑자기
+    # 자리에서 내려왔을까요?", flatly asserting a departure that never
+    # happened.
+    h = "여당, 김승원 청문보고서 채택 강행…국민의힘 상임위 보이콧"
+    facts = ["여당은 김승원 인사청문경과보고서 채택을 단독으로 강행했다.",
+             "국민의힘은 이에 반발해 상임위원회 일정을 전면 보이콧했다."]
+    hk = build_hook(_ctx(h, facts))
+    assert "내려왔을까요" not in hk.narration
+    assert "자리에서" not in hk.narration
+
+
+def test_personnel_question_still_fires_on_a_genuine_departure():
+    h = "대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만"
+    facts = ["김승원 대통령실 정책실장이 3일 사퇴했다."]
+    hk = build_hook(_ctx(h, facts))
+    # a genuine departure is free to use the question form (or another
+    # grounded generator may fire first — the point is it's never banned)
+    ctx = _ctx(h, facts)
+    from political_shorts.hook_engine import _question
+    assert _question(ctx) is not None
+
+
 def test_no_hype_words():
     h = "여야, 노란봉투법 두고 정면충돌"
     hk = build_hook(_ctx(h, ["국회 환노위는 노란봉투법을 상정했다."],

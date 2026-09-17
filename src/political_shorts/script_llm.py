@@ -340,9 +340,10 @@ def _ends_cleanly(narr: str) -> bool:
 # incomplete sentence is — falling back to the template's payoff-led outro
 # instead of a filler line dressed as a conclusion.
 _VAGUE_OUTRO_END = re.compile(
-    r"(?:지켜봐야\s*(?:겠습니다|합니다|할\s*것입니다|하는지도\s*모릅니다)|"
+    r"(?:(?:지켜봐야|눈여겨봐야|살펴봐야)\s*(?:겠습니다|합니다|할\s*것입니다|하는지도\s*모릅니다)|"
     r"주목됩니다|주목할\s*만합니다|주목받고\s*있습니다|"
-    r"관심이\s*집중되고\s*있습니다|귀추가\s*주목됩니다)\s*\.?\s*$"
+    r"관심이\s*집중되고\s*있습니다|귀추가\s*주목됩니다|"
+    r"살펴볼\s*필요가\s*있습니다|확인이\s*필요합니다)\s*\.?\s*$"
 )
 
 

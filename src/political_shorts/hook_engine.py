@@ -175,9 +175,19 @@ def _twist(ctx: HookContext) -> Hook | None:
                 kind="twist")
 
 
+_STEPPED_DOWN = ("사퇴", "교체", "경질", "사임", "물러", "지명철회", "낙마", "하차")
+
+
 def _question(ctx: HookContext) -> Hook | None:
     who = ctx.actor
     if not who or ctx.frame.kind not in ("personnel", "appoint", "scandal", "remark"):
+        return None
+    # a real shipped case: FRAMES["personnel"] also fires on plain "후보자"/
+    # "지명"/"인선" mentions — a hearing-report dispute about a NOMINEE, with
+    # nobody actually stepping down, still lands here. "왜 갑자기 자리에서
+    # 내려왔을까요?" then flatly asserts a departure that never happened.
+    # Require an actual departure word before asking it.
+    if ctx.frame.kind == "personnel" and not any(w in ctx.blob for w in _STEPPED_DOWN):
         return None
     q = {
         "personnel": f"{josa(who, ('은', '는'))} 왜 갑자기 자리에서 내려왔을까요?",

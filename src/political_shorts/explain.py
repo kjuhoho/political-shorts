@@ -86,14 +86,22 @@ WHO: dict[str, str] = {
 # 2) why THIS KIND of event matters — generic but factually safe
 # --------------------------------------------------------------------------- #
 SIGNIFICANCE: dict[str, str] = {
-    "personnel": "정부 초기에 핵심 인사가 물러나면 국정 운영에 공백과 부담이 생길 수 있어 주목됩니다",
+    # "personnel"/"generic" used to end on the exact "관망형" pattern the
+    # outro is banned from using elsewhere ("주목됩니다"/"살펴볼 필요가
+    # 있습니다") — this is the DETERMINISTIC fallback outro construction
+    # falls back to whenever the LLM's own outro gets rejected by
+    # script_llm._is_vague_outro(), so it was quietly re-introducing the
+    # exact defect that check exists to stop. Rewritten to land on a
+    # concrete consequence, matching the other 6 entries below (which
+    # were already fine).
+    "personnel": "정부 초기에 핵심 인사가 물러나면 후속 인선과 업무 인수인계에 공백이 생깁니다",
     "appoint": "누구를 그 자리에 앉히느냐에 따라 앞으로의 정책 방향이 크게 달라질 수 있습니다",
     "vote": "법이 바뀌면 예산과 제도가 함께 바뀌어 국민 생활에 실제로 영향을 줍니다",
     "clash": "여야가 정면으로 부딪히면 관련 법안과 정책 처리가 그만큼 늦어질 수 있습니다",
     "scandal": "의혹이 사실로 확인되면 정치적 책임론과 수사로 번질 수 있어 파장이 큽니다",
     "poll": "여론의 흐름은 다음 선거와 정국의 주도권을 가늠하는 잣대가 됩니다",
     "remark": "정치인의 말 한마디는 지지층 결집이나 큰 논란으로 번질 수 있습니다",
-    "generic": "이번 일은 앞으로의 정국에 영향을 줄 수 있어 함께 살펴볼 필요가 있습니다",
+    "generic": "이런 정치적 결정은 이후 관련 정책과 여야 관계에 그대로 영향을 미칩니다",
 }
 
 # what the confirmed fact MEANS ("이게 무슨 뜻이냐면 …")

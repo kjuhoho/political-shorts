@@ -226,6 +226,22 @@ def test_vague_watch_and_see_outro_falls_back_to_template(monkeypatch):
     assert out[2]["narration"] == "자세한 내용은 더보기란에 있습니다."   # template kept
 
 
+def test_vague_outro_synonyms_found_in_real_ci_output_are_also_banned():
+    # a real CI run showed the LLM reaching for synonyms not in the
+    # original banned list — "눈여겨봐야 합니다", "살펴볼 필요가
+    # 있습니다", "추가 확인이 필요합니다", "살펴봐야 합니다" — none of
+    # which contain the literal "지켜봐야"/"주목" the original regex
+    # matched, but all of which are the same "관망형" non-answer.
+    for bad in (
+        "어떤 결과를 가져올지 지켜봐야 합니다.",
+        "귀추가 주목되는 부분입니다. 앞으로 상황을 눈여겨봐야 합니다.",
+        "관련 논의를 계속 살펴볼 필요가 있습니다.",
+        "정확한 경위는 추가 확인이 필요합니다.",
+        "여야 셈법이 어떻게 흘러갈지 살펴봐야 합니다.",
+    ):
+        assert script_llm._is_vague_outro(bad), f"should be flagged: {bad!r}"
+
+
 def test_facts_table_row_marked_incomplete_even_under_the_clip_budget(monkeypatch):
     # a real shipped row: SHORT enough (under 52 chars) that clip_sentence
     # never had anything to cut, but the model's own sentence stops on a bare
