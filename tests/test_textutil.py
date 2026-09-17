@@ -56,6 +56,24 @@ def test_gloss_jargon_leaves_plain_text_untouched():
     assert gloss_jargon(s) == s
 
 
+def test_gloss_jargon_explains_corruption_terms():
+    # a real user complaint: "공천헌금과 같은 용어는 실제 나도... 무슨
+    # 뜻인지 정확히 모름" — glossed with a plain, factually neutral phrase,
+    # never re-labeled as a DIFFERENT charge ("뇌물" etc. — overclaiming
+    # one legal charge as another is exactly the exaggeration this
+    # project's neutrality rule bans).
+    out = gloss_jargon("검찰은 강선우 의원의 공천헌금 의혹을 수사 중이다.")
+    assert "공천헌금(" in out
+    assert "뇌물" not in out
+
+    out2 = gloss_jargon("이 사건은 배임수재 혐의로 기소됐다.")
+    assert "배임수재(" in out2
+
+    # the longer compound must win over the shorter word it contains —
+    # "배임" alone must not also fire inside "배임수재"
+    assert out2.count("배임") == 1
+
+
 def _quote_balance(s: str) -> bool:
     return (s.count("“") == s.count("”") and s.count("‘") == s.count("’")
             and s.count('"') % 2 == 0 and s.count("'") % 2 == 0)

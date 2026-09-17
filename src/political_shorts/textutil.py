@@ -55,6 +55,21 @@ JARGON = {
     "토허구역": "토허구역(집을 사면 실제로 살아야 하는 규제 지역)",
     "종부세": "종부세(비싼 부동산 보유자에게 매기는 세금)",
     "공수처": "공수처(고위공직자 비리를 수사하는 독립 기관)",
+    # corruption / financial-crime compound terms — legally precise but not
+    # intuitively clear on sight, and this channel covers them often. A real
+    # user complaint: "공천헌금과 같은 용어는 실제 나도... 무슨 뜻인지
+    # 정확히 모름" — glossed with a plain, factually neutral phrase (never
+    # "뇌물"/"비리" outright unless that's literally the word used — these
+    # are each a distinct legal charge, and overclaiming one as another is
+    # exactly the kind of exaggeration this project's neutrality rule bans).
+    "공천헌금": "공천헌금(공천을 대가로 건넨 돈)",
+    "정치자금법 위반": "정치자금법 위반(정치자금을 불법으로 주고받은 것)",
+    "정치자금법위반": "정치자금법위반(정치자금을 불법으로 주고받은 것)",
+    "알선수재": "알선수재(청탁을 들어주는 대가로 돈을 받은 것)",
+    "배임수재": "배임수재(직위를 이용해 부정하게 돈을 받은 것)",
+    "업무상횡령": "업무상횡령(업무 중 맡은 돈을 가로챈 것)",
+    "직권남용": "직권남용(자신의 권한을 부당하게 사용한 것)",
+    "배임": "배임(맡은 일을 저버려 손해를 끼친 것)",
 }
 _JARGON_RE = re.compile(
     "(?:" + "|".join(re.escape(k) for k in sorted(JARGON, key=len, reverse=True)) + r")(?!\()"
