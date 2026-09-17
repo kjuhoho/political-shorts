@@ -26,6 +26,7 @@ from .db import (
 from .dedupe import build_clusters
 from .logging_setup import get_logger
 from .metadata import build_metadata, write_sidecar
+from . import quality_agent
 from .safety import review_script
 from .script_gen import build_script
 from .topics import recent_duplicate, signature_str, story_signature
@@ -47,6 +48,10 @@ class StoryOutcome:
     publishes: list[dict[str, Any]] = field(default_factory=list)
     held: bool = False        # built but quality-held from publish — doesn't
                               # count toward the day's "found a good one" quota
+    agent_score: int = 0      # the AI quality agent's score, whenever it ran
+                              # (available) — set regardless of pass/fail, so
+                              # a caller can pick the best of several SKIPPED
+                              # candidates for the fallback-floor retry below
 
 
 @dataclass
@@ -94,7 +99,7 @@ def _theme_saturated(conn, sig, actor: str, cfg: Settings) -> str:
 
 def _process_story(
     cluster_id: int, cfg: Settings, do_publish: bool, report: RunReport,
-    enforce_variety: bool = True,
+    enforce_variety: bool = True, min_agent_score: int | None = None,
 ) -> StoryOutcome:
     out = StoryOutcome(cluster_id=cluster_id)
     try:
@@ -124,12 +129,21 @@ def _process_story(
 
         # AI QUALITY AGENT gate: build_script already gave the script up to 4
         # attempts to clear quality_agent.PASS_SCORE (95), feeding its own
-        # critique back into a rewrite each time it fell short. If it still
-        # never cleared the bar, don't publish it — skip and move on, same as
-        # any other unusable cluster. An agent that couldn't run at all (no
-        # provider, gave up after retries) never blocks — `passed` is True.
+        # critique back into a rewrite each time it fell short. `min_agent_
+        # score` defaults to PASS_SCORE (95) for a normal call — the
+        # fallback-of-the-day retry (see run_pipeline) passes a LOWER floor
+        # explicitly, for the one specific case the user asked for: "가장
+        # 높은 점수의 영상을 올리는 것으로 변경... (하지만 95점 넘는 영상
+        # 제작되면 바로 올리기도 가능)" — 95+ still auto-publishes exactly
+        # as before; only when NOTHING in the whole run reached it does the
+        # best-scoring candidate get a second pass at this same gate with
+        # the floor lowered to _FALLBACK_FLOOR, never below it. An agent
+        # that couldn't run at all (no provider, gave up after retries)
+        # never blocks — `passed`/this floor is irrelevant when unavailable.
         qa = script.get("quality_agent", {}) or {}
-        if qa.get("available") and not qa.get("passed"):
+        out.agent_score = int(qa.get("score", 0)) if qa.get("available") else 0
+        floor = min_agent_score if min_agent_score is not None else quality_agent.PASS_SCORE
+        if qa.get("available") and out.agent_score < floor:
             out.status = "skipped"
             out.reason = f"AI 품질 평가 미달 ({qa.get('score', 0)}점, {qa.get('attempts', 0)}회 시도)"
             with connect(cfg.db_path) as conn:
@@ -381,6 +395,37 @@ def run_pipeline(
                     break
                 report.stories.append(
                     _process_story(cid, cfg, do_publish, report, enforce_variety=False))
+
+        # FALLBACK-OF-THE-DAY: nothing reached the 95 bar across every
+        # candidate tried above. User: "평가를 진행하는 것은 두고 평가진행
+        # 후 실패하더라도, 가장 높은 점수의 영상을 올리는 것으로 변경하자
+        # (하지만 95점 넘는 영상 제작되면 바로 올리기도 가능)" — a video
+        # scoring over 95 still auto-publishes exactly as before (unchanged
+        # by any of this); only when the WHOLE run found nothing that good
+        # does the single best-scoring candidate get one more pass at the
+        # SAME gate with the floor lowered to _FALLBACK_FLOOR (asked
+        # separately, not "any score": batch 28's diagnostic run showed a
+        # real, observed defect in every 40-84-scored candidate that day —
+        # 85 is the line below which nothing ships, full stop).
+        # Re-runs build_script() for that cluster rather than reusing the
+        # earlier script object (simpler; the alternative is threading the
+        # exact script through every skip path) — accepted trade-off: the
+        # quality agent has real run-to-run variance, so this SECOND
+        # attempt's score can differ from the one that made it "best" the
+        # first time, and `_process_story`'s own gate re-checks it fairly
+        # either way.
+        _FALLBACK_FLOOR = 85
+        if _ready() == 0:
+            candidates = [s for s in report.stories
+                         if s.status == "skipped" and s.reason.startswith("AI 품질 평가 미달")]
+            best = max(candidates, key=lambda s: s.agent_score, default=None)
+            if best is not None and best.agent_score >= _FALLBACK_FLOOR:
+                log.info("no candidate reached the AI bar today (best=%d/95) — "
+                         "retrying cluster %d as the day's fallback-best publish (floor=%d)",
+                         best.agent_score, best.cluster_id, _FALLBACK_FLOOR)
+                report.stories.append(_process_story(
+                    best.cluster_id, cfg, do_publish, report,
+                    enforce_variety=False, min_agent_score=_FALLBACK_FLOOR))
 
         report.skipped = sum(1 for s in report.stories if s.status == "skipped")
 

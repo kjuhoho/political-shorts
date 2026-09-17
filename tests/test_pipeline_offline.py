@@ -219,6 +219,147 @@ def test_pipeline_skips_a_cluster_the_quality_agent_never_passed(tmp_path, monke
     out = _process_story(cluster_id, cfg, do_publish=False, report=RunReport())
     assert out.status == "skipped"
     assert "품질 평가" in out.reason
+    assert out.agent_score == 40                  # recorded regardless of pass/fail
+
+
+def test_min_agent_score_lets_a_lower_score_through_the_same_gate(tmp_path, monkeypatch):
+    # the fallback-of-the-day retry passes a LOWER floor explicitly — user:
+    # "평가진행 후 실패하더라도, 가장 높은 점수의 영상을 올리는 것으로
+    # 변경하자(하지만 95점 넘는 영상 제작되면 바로 올리기도 가능)". A score
+    # that the DEFAULT floor (95) would skip must be let through once
+    # min_agent_score is set at or below it — same gate, not a new one.
+    cfg = _llm_cfg(tmp_path, "qa9.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+
+    monkeypatch.setattr(quality_agent, "review", lambda script, cfg:
+                        quality_agent.AgentReport(available=True, score=85, issues=[]))
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps(
+        {"what": "여야가 합의해 예산안을 통과시켰습니다."}))
+
+    class _ReachedRendering(Exception):
+        pass
+
+    monkeypatch.setattr(pipeline, "render_video",
+                        lambda *a, **k: (_ for _ in ()).throw(_ReachedRendering()))
+
+    # default floor (95) still skips an 85 — unchanged behavior
+    out_default = _process_story(cluster_id, cfg, do_publish=False, report=RunReport())
+    assert out_default.status == "skipped"
+    assert out_default.agent_score == 85
+
+    # the SAME 85 clears a lowered floor and proceeds all the way to
+    # rendering (proven by our sentinel exception firing, not skipped)
+    out_floored = _process_story(cluster_id, cfg, do_publish=False, report=RunReport(),
+                                 min_agent_score=85)
+    assert out_floored.status == "error"
+    assert "_ReachedRendering" in out_floored.reason
+
+
+def test_run_pipeline_promotes_the_best_candidate_when_nothing_hits_95(tmp_path, monkeypatch):
+    # user: "평가진행 후 실패하더라도, 가장 높은 점수의 영상을 올리는 것으로
+    # 변경하자" — with two candidates, neither reaching 95 (60 and 90), the
+    # 90-scorer must be the one that ends up built, not the 60-scorer and
+    # not nothing.
+    cfg = _llm_cfg(tmp_path, "qa10.sqlite3")
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        for name, lean, w, title, summary in FAKE:
+            if "야구" in title:
+                continue
+            url = f"https://example.com/a/{url_hash(title)[:10]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": summary, "published_ts": now(), "collected_ts": now(),
+                "raw": {},
+            })
+        for i, (name, lean, w) in enumerate([("연합뉴스", "wire", 1.0), ("한겨레", "left", 0.7)]):
+            title = "국회 인사청문회 여야 정면충돌"
+            url = f"https://example.com/b/{i}/{url_hash(title)[:6]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": "국회는 3일 인사청문회를 열어 후보자 자격을 두고 여야가 정면충돌했다.",
+                "published_ts": now(), "collected_ts": now(), "raw": {},
+            })
+
+    id_to_score: dict[int, int] = {}
+    score_seq = [60, 90]
+
+    def fake_build_script(cluster_id, _cfg=None):
+        if cluster_id not in id_to_score:
+            id_to_score[cluster_id] = score_seq[min(len(id_to_score), len(score_seq) - 1)]
+        score = id_to_score[cluster_id]
+        return {
+            "cluster_id": cluster_id, "headline": f"헤드라인 {cluster_id}", "title": ["a", "b"],
+            "topic": "정치", "frame": "clash", "entities": {}, "segments": [],
+            "n_sources": 3, "counts": {"facts": 3, "claims": 2, "interpretations": 2},
+            "sources": [{"name": "연합뉴스", "url": "u", "lean": "wire"}],
+            "factcheck": {}, "disclaimer": "공개 보도를 정리한 자동 제작물입니다.",
+            "length_band": [25, 60], "style": "punchy",
+            "quality_agent": {"available": True, "score": score, "passed": score >= 95,
+                              "attempts": 4, "issues": []},
+        }
+
+    monkeypatch.setattr(pipeline, "build_script", fake_build_script)
+
+    class _FakeRender:
+        duration_s = 40.0
+        timeline = None
+
+    monkeypatch.setattr(pipeline, "render_video", lambda *a, **k: _FakeRender())
+    monkeypatch.setattr(pipeline, "build_metadata", lambda *a, **k: {})
+
+    import political_shorts.quality as quality_mod
+    monkeypatch.setattr(quality_mod, "check", lambda *a, **k:
+                        quality_mod.QualityReport(score=90, band="PASS", issues=[]))
+
+    report = pipeline.run_pipeline(cfg, do_collect=False, do_publish=False, max_items=1)
+
+    assert report.built == 1
+    built = next(s for s in report.stories if s.status == "built")
+    assert built.agent_score == 90                # the promoted fallback, not the 60-scorer
+    assert built.held is False
+
+
+def test_run_pipeline_publishes_nothing_when_best_is_below_the_fallback_floor(tmp_path, monkeypatch):
+    # the mirror case — best available is 60, below _FALLBACK_FLOOR (85):
+    # nothing should ship, not even the "best" one.
+    cfg = _llm_cfg(tmp_path, "qa11.sqlite3")
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        for name, lean, w, title, summary in FAKE:
+            if "야구" in title:
+                continue
+            url = f"https://example.com/{url_hash(title)[:10]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": summary, "published_ts": now(), "collected_ts": now(),
+                "raw": {},
+            })
+
+    def fake_build_script(cluster_id, _cfg=None):
+        return {
+            "cluster_id": cluster_id, "headline": f"헤드라인 {cluster_id}", "title": ["a", "b"],
+            "topic": "정치", "frame": "clash", "entities": {}, "segments": [],
+            "n_sources": 3, "counts": {"facts": 3, "claims": 2, "interpretations": 2},
+            "sources": [{"name": "연합뉴스", "url": "u", "lean": "wire"}],
+            "factcheck": {}, "disclaimer": "공개 보도를 정리한 자동 제작물입니다.",
+            "length_band": [25, 60], "style": "punchy",
+            "quality_agent": {"available": True, "score": 60, "passed": False,
+                              "attempts": 4, "issues": []},
+        }
+
+    monkeypatch.setattr(pipeline, "build_script", fake_build_script)
+    render_calls = {"n": 0}
+    monkeypatch.setattr(pipeline, "render_video",
+                        lambda *a, **k: render_calls.__setitem__("n", render_calls["n"] + 1))
+
+    report = pipeline.run_pipeline(cfg, do_collect=False, do_publish=False, max_items=1)
+
+    assert report.built == 0
+    assert render_calls["n"] == 0                  # never even got to rendering
 
 
 def test_thin_material_never_even_calls_the_quality_agent(tmp_path, monkeypatch):
