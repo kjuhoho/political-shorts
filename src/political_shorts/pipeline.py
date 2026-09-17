@@ -45,6 +45,8 @@ class StoryOutcome:
     quality_band: str = ""
     safety_warnings: list[str] = field(default_factory=list)
     publishes: list[dict[str, Any]] = field(default_factory=list)
+    held: bool = False        # built but quality-held from publish — doesn't
+                              # count toward the day's "found a good one" quota
 
 
 @dataclass
@@ -155,20 +157,28 @@ def _process_story(
         safety = review_script(script, cfg)
         out.safety_warnings = safety.warnings
 
-        # FACT CHECK ENGINE gate: a serious-allegation word on a single, low-
-        # confidence source -> build for review, never auto-publish.
+        # FACT CHECK ENGINE flag: a serious-allegation word riding on a
+        # single/low-confidence source. Recorded and logged — NOT an auto-
+        # block. User: "출처가 1개라서 안되는 것은 아님... 자동으로 차단하는
+        # 시스템은 필요하지 않음, 나의 결정에 따라 올리냐 올리지 않느냐는
+        # 내가 판단" — publish/hold is the user's own call, made in advance
+        # by choosing to run this pipeline unattended; this flag's job is to
+        # make that call informed (it still shows up in safety_warnings /
+        # the run log / the video's own metadata), not to make the call
+        # itself. safety.passed (hate speech, defamation, etc. — a
+        # different, still-enforced check) is untouched.
         fc = script.get("factcheck", {}) or {}
         needs_review = bool(fc.get("review_required"))
         if needs_review:
             out.safety_warnings = [*out.safety_warnings,
-                                   f"POLITICAL_CONTENT_REVIEW_REQUIRED — {fc.get('review_reason', '')}"]
-            log.warning("cluster %d POLITICAL_CONTENT_REVIEW_REQUIRED: %s",
+                                   f"POLITICAL_CONTENT_REVIEW_NOTE — {fc.get('review_reason', '')}"]
+            log.warning("cluster %d POLITICAL_CONTENT_REVIEW_NOTE (not blocking): %s",
                         cluster_id, fc.get("review_reason", ""))
 
         with connect(cfg.db_path) as conn:
             script_id = save_script(
                 conn, cluster_id, script, safety.to_dict(),
-                approved=safety.passed and not needs_review,
+                approved=safety.passed,
             )
 
         if not safety.passed:
@@ -229,12 +239,14 @@ def _process_story(
         report.built += 1
         log.info("cluster %d BUILT -> %s (%.1fs)", cluster_id, name, render.duration_s)
 
-        hold_publish = needs_review or not qr.publishable
+        # needs_review no longer holds publish on its own (see the note
+        # above) — only quality.py's own publishable check does.
+        hold_publish = not qr.publishable
+        out.held = hold_publish
         if do_publish and hold_publish:
-            out.reason = (f"보류: {'REVIEW_REQUIRED' if needs_review else qr.band} "
-                          f"(quality {qr.score}/100) — 빌드 완료, 게시 안 함")
-            log.warning("cluster %d built but held from publish (%s, quality=%d/%s)",
-                        cluster_id, "review" if needs_review else "quality", qr.score, qr.band)
+            out.reason = f"보류: {qr.band} (quality {qr.score}/100) — 빌드 완료, 게시 안 함"
+            log.warning("cluster %d built but held from publish (quality=%d/%s)",
+                        cluster_id, qr.score, qr.band)
         if do_publish and not hold_publish:
             from .publishers import get_publishers
 
@@ -310,35 +322,46 @@ def run_pipeline(
         except Exception as exc:  # never let ranking break a run
             log.warning("trend rerank skipped: %s", exc)
 
+        # "built" alone isn't the goal — a story quality.py holds from
+        # publish (single-source-allegation stories are no longer held on
+        # their own, but a genuinely low-quality render still is) still
+        # counts as "built" but leaves the day's actual quota unfilled. User:
+        # "하루 1개 영상 원칙은 유지하고 발행 가능한 1개를 찾을때까지 진행"
+        # — keep walking candidates until a truly publishable one turns up,
+        # not just the first one that happens to render.
+        def _ready() -> int:
+            return sum(1 for s in report.stories if s.status == "built" and not s.held)
+
         # Walk clusters hottest-first, skipping stories we've already covered /
-        # that get blocked, until `limit` fresh shorts are built.
+        # that get blocked, until `limit` publishable shorts are found.
         for cid in cluster_ids:
-            if report.built >= limit:
+            if _ready() >= limit:
                 break
             report.stories.append(_process_story(cid, cfg, do_publish, report))
 
-        # Politics dry (nothing new, or everything a duplicate)? Fall back to a
-        # generally-newsworthy APOLITICAL story so the channel still posts.
-        if report.built == 0:
+        # Nothing publishable yet (nothing fresh, everything a duplicate, or
+        # every candidate held on quality)? Fall back to a generally-
+        # newsworthy APOLITICAL story so the channel still posts.
+        if _ready() == 0:
             gen_ids = build_clusters(cfg, mode="general")
             if gen_ids:
-                log.info("no fresh politics story — trying %d general-interest clusters", len(gen_ids))
+                log.info("no publishable politics story — trying %d general-interest clusters", len(gen_ids))
                 try:
                     gen_ids = rerank_by_trend(gen_ids, cfg)
                 except Exception:
                     pass
                 for cid in gen_ids:
-                    if report.built >= limit:
+                    if _ready() >= limit:
                         break
                     report.stories.append(_process_story(cid, cfg, do_publish, report))
 
-        # Still nothing — the variety filter may have held everything back
-        # (a week where every top story is one saga). Re-walk politics with it
-        # off so the channel always posts something.
-        if report.built == 0:
+        # Still nothing publishable — the variety filter may have held
+        # everything back (a week where every top story is one saga). Re-walk
+        # politics with it off so the channel always posts something.
+        if _ready() == 0:
             log.info("variety filter held back every story — re-walking politics without it")
             for cid in cluster_ids:
-                if report.built >= limit:
+                if _ready() >= limit:
                     break
                 report.stories.append(
                     _process_story(cid, cfg, do_publish, report, enforce_variety=False))

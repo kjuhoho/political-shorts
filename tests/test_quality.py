@@ -95,8 +95,23 @@ def test_table_scene_exempt_from_static_span_others_arent(tmp_path):
     assert static_spans and all(i["t_start"] != meta["timeline"][2]["start"] for i in static_spans)
 
 
-def test_fact_review_blocks_publish(tmp_path):
+def test_fact_review_is_flagged_but_no_longer_blocks_publish(tmp_path):
+    # user: "출처가 1개라서 안되는 것은 아님... 자동으로 차단하는 시스템은
+    # 필요하지 않음, 나의 결정에 따라 올리냐 올리지 않느냐는 내가 판단" —
+    # still recorded/reported (fact_check_ok, the issue entry) for
+    # transparency, but no longer an auto-block on its own.
     sc = _script(factcheck={"review_required": True, "review_reason": "뇌물"})
     qr = check(sc, _meta(sc), tmp_path / "x.mp4", type("C", (), {"ffmpeg_path": "ffmpeg"})())
     assert qr.fact_check_ok is False
+    assert any(i["code"] == "fact-review" for i in qr.issues)
+    assert qr.publishable is True
+
+
+def test_political_safety_failure_still_blocks_publish(tmp_path):
+    # the OTHER, unrelated safety.py gate (hate speech / defamation / etc.)
+    # is untouched by the above — it still blocks.
+    sc = _script()
+    qr = check(sc, _meta(sc), tmp_path / "x.mp4", type("C", (), {"ffmpeg_path": "ffmpeg"})(),
+              safety={"passed": False, "blocks": ["hate-speech"]})
+    assert qr.political_safety_ok is False
     assert qr.publishable is False

@@ -39,8 +39,14 @@ class QualityReport:
 
     @property
     def publishable(self) -> bool:
-        return (self.band in ("PASS", "MINOR_REVISION")
-                and self.fact_check_ok and self.political_safety_ok)
+        # fact_check_ok (a single-source-allegation flag) is reported —
+        # still visible in issues/to_dict, still logged — but no longer
+        # blocks on its own. User: "출처가 1개라서 안되는 것은 아님...
+        # 자동으로 차단하는 시스템은 필요하지 않음, 나의 결정에 따라
+        # 올리냐 올리지 않느냐는 내가 판단". political_safety_ok (hate
+        # speech / defamation / the OTHER, still-enforced safety.py checks)
+        # is a separate, unrelated gate and keeps blocking.
+        return self.band in ("PASS", "MINOR_REVISION") and self.political_safety_ok
 
     def to_dict(self) -> dict[str, Any]:
         return {
