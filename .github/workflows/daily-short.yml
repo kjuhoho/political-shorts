@@ -19,7 +19,10 @@ concurrency:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 55  # the pipeline now keeps trying candidates until one
+                         # is actually publishable (not just "built"), not
+                         # just the first one tried — a tough news day can
+                         # need several quality_agent rounds per candidate
     permissions:
       contents: write          # to commit the updated DB back
 

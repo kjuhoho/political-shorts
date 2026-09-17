@@ -332,17 +332,30 @@ def run_pipeline(
         def _ready() -> int:
             return sum(1 for s in report.stories if s.status == "built" and not s.held)
 
+        # A safety valve, not a quality compromise: without SOME cap, a
+        # genuinely tough news day (many thin/held/quality-agent-failing
+        # candidates in a row) could walk every single cluster before giving
+        # up, each one costing a real render or several quality_agent LLM
+        # rounds — a real risk of blowing the CI job's time budget. Bounding
+        # total attempts just means "stop looking today", same as running
+        # out of candidates naturally would — it never lowers the bar on
+        # what counts as publishable.
+        _MAX_ATTEMPTS = 12
+
+        def _attempts_left() -> bool:
+            return len(report.stories) < _MAX_ATTEMPTS
+
         # Walk clusters hottest-first, skipping stories we've already covered /
         # that get blocked, until `limit` publishable shorts are found.
         for cid in cluster_ids:
-            if _ready() >= limit:
+            if _ready() >= limit or not _attempts_left():
                 break
             report.stories.append(_process_story(cid, cfg, do_publish, report))
 
         # Nothing publishable yet (nothing fresh, everything a duplicate, or
         # every candidate held on quality)? Fall back to a generally-
         # newsworthy APOLITICAL story so the channel still posts.
-        if _ready() == 0:
+        if _ready() == 0 and _attempts_left():
             gen_ids = build_clusters(cfg, mode="general")
             if gen_ids:
                 log.info("no publishable politics story — trying %d general-interest clusters", len(gen_ids))
@@ -351,17 +364,17 @@ def run_pipeline(
                 except Exception:
                     pass
                 for cid in gen_ids:
-                    if _ready() >= limit:
+                    if _ready() >= limit or not _attempts_left():
                         break
                     report.stories.append(_process_story(cid, cfg, do_publish, report))
 
         # Still nothing publishable — the variety filter may have held
         # everything back (a week where every top story is one saga). Re-walk
         # politics with it off so the channel always posts something.
-        if _ready() == 0:
+        if _ready() == 0 and _attempts_left():
             log.info("variety filter held back every story — re-walking politics without it")
             for cid in cluster_ids:
-                if _ready() >= limit:
+                if _ready() >= limit or not _attempts_left():
                     break
                 report.stories.append(
                     _process_story(cid, cfg, do_publish, report, enforce_variety=False))
