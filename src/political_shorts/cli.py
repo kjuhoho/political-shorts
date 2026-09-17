@@ -5,6 +5,7 @@
     python -m political_shorts cluster
     python -m political_shorts run           [--no-collect] [--publish] [--max N]
     python -m political_shorts build <cluster_id>
+    python -m political_shorts publish-artifact <video.mp4> <meta.json>
     python -m political_shorts dashboard
     python -m political_shorts schedule add  [--at HH:MM] [--slot NAME] [--publish] [--max N] [--no-collect]
     python -m political_shorts schedule remove [--slot NAME | --all]
@@ -93,6 +94,34 @@ def cmd_build(args: argparse.Namespace) -> int:
     write_sidecar(meta, out)
     print(f"rendered {out} ({res.duration_s}s)")
     return 0
+
+
+def cmd_publish_artifact(args: argparse.Namespace) -> int:
+    """Publish an ALREADY-BUILT video exactly as-is — no rebuild, no fresh
+    render (which could produce different content than what was reviewed).
+    For the human-approval flow: a story that build/CI held from auto-
+    publish, reviewed by a person from the downloaded artifact, and
+    explicitly approved. See .claude/agents/held-review.md."""
+    from .publishers import get_publishers
+
+    video_path = Path(args.video)
+    meta_path = Path(args.meta)
+    if not video_path.exists():
+        print(f"video not found: {video_path}", file=sys.stderr)
+        return 2
+    if not meta_path.exists():
+        print(f"meta not found: {meta_path}", file=sys.stderr)
+        return 2
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    results = []
+    for pub in get_publishers(settings):
+        res = pub.publish(video_path, meta)
+        results.append(res.__dict__)
+        print(f"{res.platform}: status={res.status} dry_run={res.dry_run} "
+              f"remote_id={res.remote_id or '-'} detail={res.detail or '-'}")
+    print(json.dumps(results, ensure_ascii=False, indent=2))
+    return 0 if any(r["status"] == "ok" for r in results) else 1
 
 
 def cmd_dashboard(_args: argparse.Namespace) -> int:
@@ -200,6 +229,12 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("build", help="build one cluster by id")
     b.add_argument("cluster_id", type=int)
     b.set_defaults(func=cmd_build)
+
+    pa = sub.add_parser("publish-artifact",
+                        help="publish an already-built video + meta.json exactly as-is (no rebuild)")
+    pa.add_argument("video", help="path to the .mp4")
+    pa.add_argument("meta", help="path to the matching .meta.json")
+    pa.set_defaults(func=cmd_publish_artifact)
 
     sub.add_parser("dashboard", help="run local web dashboard").set_defaults(func=cmd_dashboard)
 

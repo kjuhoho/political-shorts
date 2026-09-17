@@ -1,0 +1,84 @@
+name: publish held video
+
+# Publishes a SPECIFIC already-built video exactly as it was rendered — no
+# rebuild, which could produce different content than what was reviewed and
+# approved. For the human-approval flow around a video the daily pipeline
+# held from auto-publish (quality band, or a safety/review flag): a person
+# reviews the artifact from `run_id` (see .claude/agents/held-review.md),
+# and only on explicit approval is this workflow run by hand.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "The 'daily political short' run ID whose artifact holds the approved video"
+        type: string
+        required: true
+      artifact_name:
+        description: "Artifact name from that run (leave blank to auto-detect the single short-* artifact)"
+        type: string
+        required: false
+
+concurrency:
+  group: daily-short
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read           # to download the source run's artifact
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements-publish.txt
+
+      - name: restore config + credentials from secrets
+        env:
+          PS_ENV_B64: ${{ secrets.PS_ENV_B64 }}
+          PS_YT_CLIENT_B64: ${{ secrets.PS_YT_CLIENT_B64 }}
+          PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}
+        run: |
+          mkdir -p secrets
+          echo "$PS_ENV_B64"        | base64 -d > .env
+          echo "$PS_YT_CLIENT_B64"  | base64 -d > secrets/client_secret_youtube.json
+          echo "$PS_YT_TOKEN_B64"   | base64 -d > secrets/token_youtube.json
+          {
+            echo ""
+            echo "YOUTUBE_CLIENT_SECRET_FILE=secrets/client_secret_youtube.json"
+            echo "YOUTUBE_TOKEN_FILE=secrets/token_youtube.json"
+          } >> .env
+
+      - name: download the approved video's artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p held
+          if [ -n "${{ inputs.artifact_name }}" ]; then
+            gh run download "${{ inputs.run_id }}" -n "${{ inputs.artifact_name }}" -D held --repo "${{ github.repository }}"
+          else
+            gh run download "${{ inputs.run_id }}" -D held --repo "${{ github.repository }}"
+          fi
+          echo "--- downloaded ---"
+          find held -type f
+
+      - name: publish it
+        run: |
+          VIDEO=$(find held -iname "*.mp4" | head -1)
+          META=$(find held -iname "*.meta.json" | head -1)
+          if [ -z "$VIDEO" ] || [ -z "$META" ]; then
+            echo "::error::couldn't find a .mp4 + .meta.json pair under held/ — check run_id / artifact_name"
+            exit 1
+          fi
+          echo "publishing: $VIDEO"
+          python -m political_shorts publish-artifact "$VIDEO" "$META"
