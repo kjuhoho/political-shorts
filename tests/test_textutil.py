@@ -54,6 +54,32 @@ def test_strip_byline_keeps_plain_text():
     assert strip_byline(s) == s
 
 
+def test_strip_byline_no_equals_separator():
+    # a real leaked example — no "=" at all (not every outlet follows the
+    # 연합뉴스 "이름 기자 = " convention), and zero whitespace between the
+    # title and the article's own first word. This shipped once as spoken
+    # narration: "...선임기자국민의힘이 17일..." read as one broken word.
+    s = "2026.9.16 박민규 선임기자국민의힘이 17일 사전투표를 폐지하고."
+    out = strip_byline(s)
+    assert out == "국민의힘이 17일 사전투표를 폐지하고."
+
+
+def test_strip_byline_does_not_eat_ordinary_sentences_mentioning_a_reporter():
+    # the no-"=" byline case above is fixable only by loosening the pattern
+    # that used to require "=" as its one strong anchor — "기자" alone is a
+    # terrible anchor on its own: a real regression while fixing the above
+    # ate the front of any sentence that merely mentioned a reporter as an
+    # ordinary noun, a compound ("기자회견"/"기자단"), or with a case
+    # particle attached ("기자가").
+    cases = [
+        "이것은 정상적인 문장으로 기자가 전혀 등장하지 않는다.",
+        "오늘 기자회견에서 대통령이 발언했다.",
+        "청와대 출입기자단은 오늘 브리핑을 받았다.",
+    ]
+    for s in cases:
+        assert strip_byline(s) == s, s
+
+
 def test_canonical_url_drops_tracking():
     a = canonical_url("https://a.com/x?utm_source=rss&id=5")
     assert "utm_source" not in a and "id=5" in a

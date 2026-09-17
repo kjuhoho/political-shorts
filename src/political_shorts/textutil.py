@@ -14,7 +14,39 @@ _BYLINE_LEAD = re.compile(
     r"^\s*[\[(][^\])]{0,20}(=|·)?\s*(연합뉴스|뉴스1|뉴시스|뉴스원|경향신문|서울신문|"
     r"[가-힣]{2,10})[^\])]{0,10}[\])]\s*"
 )
-_BYLINE_REPORTER = re.compile(r"^.{0,45}?[가-힣]{2,4}(?:\s?[·,]\s?[가-힣]{2,4}){0,3}\s*기자\s*=\s*")
+# A real leaked example: "2026.9.16 박민규 선임기자국민의힘이 17일 ..." — no
+# "=" separator at all (that convention is mainly 연합뉴스-style), a title
+# modifier ("선임/수석/전문/..." 기자) between the name and "기자", and zero
+# whitespace before the article's own first word. The old pattern required
+# the "=" and offered no room for a modifier, so this byline sailed through
+# untouched and ended up spoken as part of the sentence itself ("...선임기자
+# 국민의힘이..." read as one broken word). "=" and the title modifier are
+# both optional now; \s* already tolerates the no-space case either way.
+# Two ways a byline lead-in is safely recognizable — kept as separate
+# alternatives rather than one looser pattern, because "기자" alone is a
+# terrible anchor: it's a productive morpheme ("기자회견", "기자단",
+# "출입기자") and an ordinary noun ("기자가 전했다"), so loosening the
+# original match to accept EITHER byline shape at once (see below) turned
+# almost any sentence that merely mentions a reporter into a false "byline"
+# and ate its first clause.
+#   (a) name [+ optional title] 기자 = ...   — the "=" is a near-unique
+#       literal that essentially never appears in ordinary Korean prose,
+#       so this half was already safe as originally written.
+#   (b) name + a REQUIRED specific reporter-title word (선임/수석/전문 or a
+#       desk name) immediately before 기자, with NO "=" — a real leaked
+#       example: "2026.9.16 박민규 선임기자국민의힘이 17일 ...", zero
+#       separator at all. Requiring the title word (never itself part of
+#       "기자회견"/"기자단"-style compounds) is what keeps this half from
+#       matching those; the negative lookahead additionally blocks "기자"
+#       used as an ordinary noun with a case particle attached directly
+#       ("선임기자가 취재했다").
+_BYLINE_REPORTER = re.compile(
+    r"^.{0,45}?[가-힣]{2,4}(?:\s?[·,]\s?[가-힣]{2,4}){0,3}\s*(?:"
+    r"(?:선임|수석|전문)?\s*(?:정치부|사회부|경제부|국제부)?\s*기자\s*=\s*"
+    r"|(?:선임|수석|전문|정치부|사회부|경제부|국제부)\s*"
+    r"기자(?!가|는|를|도|와|과|로|의|에게|한테|님|들)\s*"
+    r")"
+)
 _BYLINE_TRAIL = re.compile(
     r"\s*(?:[가-힣]{2,4}\s*기자|사진\s*=?.*|\(끝\)|ⓒ.*|무단\s*전재.*|재배포\s*금지.*)\s*$"
 )
