@@ -1,5 +1,6 @@
 from political_shorts.textutil import (
     canonical_url,
+    clean_text,
     clip_sentence,
     gloss_jargon,
     normalize_title,
@@ -7,6 +8,32 @@ from political_shorts.textutil import (
     strip_byline,
     url_hash,
 )
+
+
+def test_dehanja_zhong_after_hangul_is_the_native_suffix_not_china():
+    # a real shipped bug: "国감中" ("국감 중" = during the National Assembly
+    # audit) came out as "국감중국" — "中" blindly mapped to "중국" (China)
+    # with no context awareness at all.
+    assert clean_text("국감中 여야 공방") == "국감중 여야 공방"
+    assert clean_text("협상中 이견") == "협상중 이견"
+    assert clean_text("수사中 사건") == "수사중 사건"
+
+
+def test_dehanja_zhong_standalone_is_still_china():
+    assert clean_text("中, 강력 반발") == "중국, 강력 반발"
+
+
+def test_dehanja_country_pairs_use_the_idiomatic_short_compound():
+    # found while fixing the above, same root cause: "美中" (US-China)
+    # came out as "미국중국" instead of the idiomatic "미중".
+    assert clean_text("美中 갈등 고조") == "미중 갈등 고조"
+    assert clean_text("韓中 정상회담") == "한중 정상회담"
+    assert clean_text("韓美 동맹") == "한미 동맹"
+
+
+def test_dehanja_surname_shorthand_still_resolves():
+    assert clean_text("李대통령 발언") == "이대통령 발언"
+    assert clean_text("北 도발") == "북한 도발"
 
 
 def test_strip_byline_leading_dateline_and_reporter():

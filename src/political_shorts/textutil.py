@@ -44,9 +44,36 @@ _HANJA = {
 }
 _HANJA_RE = re.compile("|".join(map(re.escape, sorted(_HANJA, key=len, reverse=True))))
 
+# "中" alone is genuinely ambiguous, and the blind per-character pass above
+# got it wrong two different ways — a real shipped bug plus one found while
+# fixing it:
+#   1) immediately after a plain Hangul word (no space), "中" is almost
+#      always the native suffix "-중" ("-하는 중", "-중이다"), never China:
+#      "국감中" ("국감 중" = during the [National Assembly] audit) came out
+#      as "국감중국".
+#   2) paired with another country-hanja ("美中" = US-China), Korean drops
+#      the "-국"/"-본" suffix on BOTH sides for the idiomatic short compound
+#      ("미중", not "미국중국") — found while testing fix #1, same root
+#      cause (no context awareness), so fixed alongside it rather than left
+#      half-broken.
+# Each hand-verified explicitly rather than derived from a general "always
+# shorten" rule — a wrong guess here is a wrong country name on screen.
+_HANJA_PAIR = {
+    "美中": "미중", "中美": "중미", "韓美": "한미", "美韓": "미한",
+    "韓中": "한중", "中韓": "중한", "韓日": "한일", "日韓": "일한",
+    "中日": "중일", "日中": "일중", "韓露": "한러", "美露": "미러",
+    "韓英": "한영",
+}
+_HANJA_PAIR_RE = re.compile(
+    "|".join(re.escape(k) for k in sorted(_HANJA_PAIR, key=len, reverse=True)))
+_ZHONG_DURING = re.compile(r"(?<=[가-힣])中")
+
 
 def dehanja(text: str) -> str:
-    return _HANJA_RE.sub(lambda m: _HANJA[m.group(0)], text or "")
+    text = text or ""
+    text = _HANJA_PAIR_RE.sub(lambda m: _HANJA_PAIR[m.group(0)], text)
+    text = _ZHONG_DURING.sub("중", text)
+    return _HANJA_RE.sub(lambda m: _HANJA[m.group(0)], text)
 
 
 # Regulatory / legal abbreviations that read as pure jargon to someone who
