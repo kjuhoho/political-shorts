@@ -241,6 +241,23 @@ def cluster_articles(conn: sqlite3.Connection, cluster_id: int) -> list[sqlite3.
     )
 
 
+def recent_clusters(
+    conn: sqlite3.Connection, since_ts: int, min_size: int = 1
+) -> list[sqlite3.Row]:
+    """Clusters created since `since_ts`, biggest first. Unlike
+    `dedupe.build_clusters` (which only ever returns NEWLY-created ones),
+    this sees everything in the window — the longform pipeline groups
+    several already-clustered stories into one theme, so it needs the full
+    recent set, not just this run's new arrivals."""
+    return list(
+        conn.execute(
+            "SELECT * FROM clusters WHERE created_ts >= ? AND size >= ? "
+            "ORDER BY size DESC, created_ts DESC",
+            (since_ts, min_size),
+        )
+    )
+
+
 # --------------------------------------------------------------------------- #
 # scripts / videos
 # --------------------------------------------------------------------------- #

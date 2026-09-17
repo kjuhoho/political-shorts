@@ -5,6 +5,7 @@
     python -m political_shorts cluster
     python -m political_shorts run           [--no-collect] [--publish] [--max N]
     python -m political_shorts build <cluster_id>
+    python -m political_shorts longform [plan|themes] [--max-chapters N] [--window H]
     python -m political_shorts publish-artifact <video.mp4> <meta.json>
     python -m political_shorts dashboard
     python -m political_shorts schedule add  [--at HH:MM] [--slot NAME] [--publish] [--max N] [--no-collect]
@@ -93,6 +94,42 @@ def cmd_build(args: argparse.Namespace) -> int:
     meta = build_metadata(script, safety.to_dict(), out, settings)
     write_sidecar(meta, out)
     print(f"rendered {out} ({res.duration_s}s)")
+    return 0
+
+
+def cmd_longform(args: argparse.Namespace) -> int:
+    """Plan a longform (multi-story, chaptered) video — everything up to the
+    render, which deliberately does not exist yet. Writes a plan JSON."""
+    from .longform import group_themes, plan_longform, write_plan
+
+    if args.sub == "themes":
+        themes = group_themes(settings, window_hours=args.window)
+        for t in themes[:args.limit]:
+            print(f"{t.size:2d} stories | {t.lead_title[:56]}")
+            print(f"           | clusters={t.cluster_ids}")
+        if not themes:
+            print("no themes found in the window")
+        return 0
+
+    plan = plan_longform(
+        settings,
+        max_chapters=args.max_chapters,
+        window_hours=args.window,
+        require_agent_pass=not args.keep_all,
+    )
+    if not plan.chapters:
+        print("no usable longform plan (no theme with enough related, "
+              "quality-passing stories) — nothing written")
+        return 1
+    path = write_plan(plan, settings.output_dir)
+    print(f"theme     : {plan.theme}")
+    print(f"length    : {plan.length_class} ({plan.length_label}) ~{plan.est_seconds:.0f}s")
+    print(f"chapters  : {len(plan.chapters)}  skipped: {len(plan.skipped)}")
+    for ch in plan.chapters:
+        print(f"  - {ch.bridge}  [agent {ch.agent_score}, {ch.n_sources} src, "
+              f"~{ch.est_seconds:.0f}s]")
+    print(f"plan      : {path}")
+    print("render    : NOT built yet (plan-only stage, by design)")
     return 0
 
 
@@ -229,6 +266,18 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("build", help="build one cluster by id")
     b.add_argument("cluster_id", type=int)
     b.set_defaults(func=cmd_build)
+
+    lf = sub.add_parser("longform",
+                        help="plan a longform (multi-story, chaptered) video — plan only, no render")
+    lf.add_argument("sub", nargs="?", default="plan", choices=["plan", "themes"],
+                    help="plan (default) = build a full plan; themes = just list candidate themes")
+    lf.add_argument("--max-chapters", type=int, default=4,
+                    help="chapters to script (each costs real LLM calls; default 4)")
+    lf.add_argument("--window", type=int, default=72, help="hours of news to consider")
+    lf.add_argument("--limit", type=int, default=10, help="themes to list (themes mode)")
+    lf.add_argument("--keep-all", action="store_true",
+                    help="keep chapters the quality agent failed (inspection only)")
+    lf.set_defaults(func=cmd_longform)
 
     pa = sub.add_parser("publish-artifact",
                         help="publish an already-built video + meta.json exactly as-is (no rebuild)")

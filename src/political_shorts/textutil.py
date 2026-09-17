@@ -33,6 +33,14 @@ _HANJA = {
     "靑": "청와대", "與": "여", "野": "야", "北": "북한", "美": "미국", "日": "일본",
     "中": "중국", "英": "영국", "獨": "독일", "佛": "프랑스", "露": "러시아",
     "檢": "검찰", "警": "경찰", "軍": "군",
+    # Surname shorthands — headlines write "李대통령" / "韓총리" for the
+    # sitting officeholder. Without these, `clean_text` leaves the Hanja in
+    # place and it reaches a caption as tofu (the bundled fonts have no CJK
+    # Han glyph) or an unreadable label. script_gen kept its own private
+    # copy of exactly this map for its on-screen chips; these belong here,
+    # where `clean_text` -> `dehanja` applies them on every text path.
+    "李": "이", "尹": "윤", "文": "문", "朴": "박", "安": "안",
+    "洪": "홍", "秋": "추", "韓": "한",
 }
 _HANJA_RE = re.compile("|".join(map(re.escape, sorted(_HANJA, key=len, reverse=True))))
 
