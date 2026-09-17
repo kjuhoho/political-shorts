@@ -85,6 +85,87 @@ def test_offline_pipeline(tmp_path):
     assert rep.passed is True, rep.blocks
 
 
+def test_outro_significance_line_never_repeated_elsewhere_when_llm_is_off(tmp_path):
+    # user: "서론 본론 결론 형태의 글 구조가 힘든가" — traced to a real CI
+    # video where the "what" card and the outro spoke the EXACT SAME
+    # sentence (explain.significance(frame)), because the raw template path
+    # (LLM off/unavailable that run) called it in both places. With no
+    # second distinct fact, "what" used to exist solely to carry that same
+    # line — it must now be dropped instead, leaving exactly one occurrence
+    # of the frame's significance text, in the outro alone.
+    cfg = replace(load_settings(), db_path=tmp_path / "dup1.sqlite3",
+                  output_dir=tmp_path, data_dir=tmp_path, image_enabled=False)
+    assert not (cfg.llm_provider or "").strip()          # pure template path
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        for name, lean, w, title, summary in FAKE:
+            if "야구" in title:
+                continue
+            url = f"https://example.com/{url_hash(title)[:10]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": summary, "published_ts": now(), "collected_ts": now(),
+                "raw": {},
+            })
+    classify_pending(cfg)
+    ids = build_clusters(cfg)
+    script = build_script(ids[0], cfg)
+
+    from political_shorts.explain import SIGNIFICANCE
+    sig_text = SIGNIFICANCE[script["frame"]]
+    narrations = [s.get("narration", "") for s in script["segments"]]
+    hits = [n for n in narrations if sig_text in n]
+    assert len(hits) == 1, f"significance line appeared {len(hits)} times: {hits}"
+    outro = next(s for s in script["segments"] if s["role"] == "outro")
+    assert sig_text in outro["narration"]
+    # this specific fixture has no second distinct fact — the "what" card
+    # that used to exist solely to restate the significance line is gone,
+    # not present-but-different.
+    assert not any(s["role"] == "what" for s in script["segments"])
+
+
+def test_what_card_drops_the_significance_line_when_a_second_fact_exists(tmp_path):
+    # the mirror case: WITH a genuine second fact, "what" must carry ONLY
+    # that fact — not the fact plus the same significance line the outro
+    # is about to say.
+    cfg = replace(load_settings(), db_path=tmp_path / "dup2.sqlite3",
+                  output_dir=tmp_path, data_dir=tmp_path, image_enabled=False)
+    rich_fake = [
+        ("연합뉴스", "wire", 1.0, "국회 본회의, 예산안 처리 두고 여야 충돌",
+         "국회는 3일 오후 본회의를 열어 내년도 예산안 처리를 두고 여야가 충돌했다. "
+         "국민의힘은 합의 처리를 주장했고 더불어민주당은 독소조항을 지적했다. "
+         "찬반 표결 끝에 예산안은 가결됐다. 이번 예산안 규모는 역대 최대인 700조원으로 집계됐다."),
+        ("동아일보", "right", 0.7, "[속보] 예산안 국회 본회의 통과…여야 정면충돌",
+         "국회는 3일 오후 본회의에서 내년도 예산안을 처리했다. 여야는 예산안 처리를 두고 "
+         "정면충돌했다. 국민의힘은 합의 처리라고 밝혔다. 예산안은 표결 끝에 가결됐다. "
+         "이번에 통과된 예산안 규모는 700조원으로 역대 최대 규모다."),
+    ]
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        for name, lean, w, title, summary in rich_fake:
+            url = f"https://example.com/{url_hash(title)[:10]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": summary, "published_ts": now(), "collected_ts": now(),
+                "raw": {},
+            })
+    classify_pending(cfg)
+    ids = build_clusters(cfg)
+    script = build_script(ids[0], cfg)
+
+    roles = [s["role"] for s in script["segments"]]
+    assert "what" in roles, "fixture must actually exercise the body-exists branch"
+
+    from political_shorts.explain import SIGNIFICANCE
+    sig_text = SIGNIFICANCE[script["frame"]]
+    what = next(s for s in script["segments"] if s["role"] == "what")
+    outro = next(s for s in script["segments"] if s["role"] == "outro")
+    assert sig_text not in what["narration"]
+    assert sig_text in outro["narration"]
+
+
 def _llm_cfg(tmp_path, name="qa.sqlite3"):
     return replace(load_settings(), db_path=tmp_path / name,
                    output_dir=tmp_path, data_dir=tmp_path, image_enabled=False,

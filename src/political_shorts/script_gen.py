@@ -631,20 +631,25 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         # then trim to a clean sentence boundary
         raw = max(re.split(r"…|\.\.\.", clean_text(f.text)), key=len)
         clause = simplify(raw, limit=64)
-        # WHY IT MATTERS: the fact, then a true-of-this-kind-of-event line so the
-        # viewer understands the significance, not just the headline.
-        narr = f"{clause.rstrip('.')}. {explain.significance(frame)}"
+        # Just the fact — explain.significance(frame) used to be appended
+        # here too, which duplicated the outro's own payoff line verbatim
+        # whenever the LLM narration rewrite was off/unavailable (raw
+        # template shipped as-is): a real CI-built video closed by
+        # literally repeating its own "what happened" card word for word.
+        # "why this matters" now lives in exactly one place — the outro.
+        narr = clause.rstrip('.') + '.'
         segments.append({"role": "what", "kicker": "무슨 일이고 왜 중요하냐면",
                          "caption": clip_sentence(clause, CAPTION_LIMIT),
                          "narration": narr,
                          "source": lead["source_name"], "multi_source": multi,
                          "cues": f.cues})
-    else:
-        # no second fact — still explain why this kind of story matters
-        segments.append({"role": "what", "kicker": "왜 중요하냐면",
-                         "caption": clip_sentence(explain.significance(frame), CAPTION_LIMIT),
-                         "narration": explain.significance(frame),
-                         "source": lead["source_name"], "multi_source": multi})
+    # else: no second fact worth a distinct card — dropped rather than
+    # filled with explain.significance(frame) as a standalone "card", which
+    # is the outro's own line verbatim (see above). "what" isn't in
+    # _ESSENTIAL below, so skipping it here is already an anticipated,
+    # safe shape — a video with nothing more to say about "what happened"
+    # goes straight from summary to factcheck instead of padding itself
+    # with the same sentence the outro is about to say anyway.
 
     # 4) fact-check — the ONE confirmed fact (+ the on-screen 사실/주장/전망 table),
     #    now source-attributed and confidence-ranked by the FACT CHECK ENGINE.
