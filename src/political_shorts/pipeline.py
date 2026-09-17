@@ -134,8 +134,11 @@ def _process_story(
             out.reason = f"AI 품질 평가 미달 ({qa.get('score', 0)}점, {qa.get('attempts', 0)}회 시도)"
             with connect(cfg.db_path) as conn:
                 set_cluster_status(conn, cluster_id, "skipped")
-            log.info("cluster %d SKIPPED (quality agent): score=%s attempts=%d issues=%d",
-                     cluster_id, qa.get("score"), qa.get("attempts", 0), len(qa.get("issues", [])))
+            issues_str = " | ".join(f"({i.get('role')}) {i.get('problem')}"
+                                    for i in (qa.get("issues") or []))
+            log.info("cluster %d SKIPPED (quality agent): score=%s attempts=%d issues=%d: %s",
+                     cluster_id, qa.get("score"), qa.get("attempts", 0), len(qa.get("issues", [])),
+                     issues_str[:400] or "(none recorded)")
             return out
 
         # Skip a story we've already turned into a short in the last few days —

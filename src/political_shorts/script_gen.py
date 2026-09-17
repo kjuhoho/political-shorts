@@ -775,8 +775,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             issue_line = agent_report.feedback_text()
             if issue_line:
                 feedback_history.append(f"[{agent_attempts}차 시도 문제점]\n{issue_line}")
-            log.info("quality agent attempt %d scored %s (best so far %d) — regenerating",
-                     agent_attempts, agent_report.score, best_score)
+            log.info("quality agent attempt %d scored %s (best so far %d) — regenerating: %s",
+                     agent_attempts, agent_report.score, best_score, issue_line[:300] or "(no issues text)")
         else:
             # exhausted every attempt without ever reaching PASS_SCORE — use
             # the best-scoring one tried, not necessarily the last.
