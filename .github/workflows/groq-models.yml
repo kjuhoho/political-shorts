@@ -1,0 +1,23 @@
+name: groq models (diagnostic)
+
+# Manual only. Prints the model IDs the PS_GROQ_KEY can actually call, so the
+# LLM model list in llm.py can be matched to the account. Never prints the key
+# (GitHub masks secrets in logs) and never builds or publishes a video.
+on:
+  workflow_dispatch:
+
+jobs:
+  list-models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: list models available to this key
+        env:
+          PS_GROQ_KEY: ${{ secrets.PS_GROQ_KEY }}
+        run: |
+          if [ -z "$PS_GROQ_KEY" ]; then echo "PS_GROQ_KEY not set"; exit 1; fi
+          code=$(curl -s -o models.json -w "%{http_code}" \
+            -H "Authorization: Bearer $PS_GROQ_KEY" \
+            https://api.groq.com/openai/v1/models)
+          echo "HTTP $code"
+          python3 -c "import json; d=json.load(open('models.json')); print('\n'.join(sorted(m['id'] for m in d.get('data', []))) or d)"
