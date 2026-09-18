@@ -32,7 +32,7 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
 # Groq — FREE, no credit card, and far steadier than the Gemini free tier.
 # OpenAI-compatible endpoint. Models tried in order when LLM_MODEL is unset.
 _GROQ_MODELS = [
-    "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it",
+    "llama-3.3-70b-versatile", "llama-3.1-8b-instant",
 ]
 
 
@@ -70,6 +70,7 @@ def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
                 continue
             break
         if status in (400, 404):          # model retired / not visible -> next model
+            log.info("groq: model %s skipped (%s)", model, last)
             continue
         break
     raise RuntimeError(f"groq call failed ({last})")
