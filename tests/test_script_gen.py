@@ -24,6 +24,16 @@ def test_reaction_line_skips_unattributed_first_claim():
     assert "  " not in line  # no doubled spaces / stray gaps
 
 
+def test_reaction_line_never_gestures_at_an_unfound_second_side():
+    # user: "여당 야당 입장은 있으면 추가하는 시스템으로" — when only ONE
+    # side is actually attributable, the line must say only that, not imply
+    # a counter-view that was never actually extracted from the source.
+    claims = [_c("국민의힘은 인사 검증 부실을 지적했다.")]
+    line = sg._reaction_line(claims)
+    assert "국민의힘" in line
+    assert "다른 목소리" not in line
+
+
 def test_sides_line_no_interp_fallback_garbage():
     # a headline echoed into interps must NOT be spliced into "…는 전망" grammar
     interps = [Tagged("대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만",

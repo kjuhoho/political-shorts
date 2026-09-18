@@ -518,8 +518,13 @@ def _reaction_line(claims: list) -> str:
     if la and lb:
         return f'{josa(la, ("은", "는"))} "{c0}", {josa(lb, ("은", "는"))} "{c1}" 쪽입니다.'
     if la:
+        # user: "여당 야당 입장은 있으면 추가하는 시스템으로" — only one side
+        # is actually attributable here, so say only that one. Used to add
+        # ", 다른 목소리도 있습니다" to gesture at an unnamed second side
+        # that was never actually extracted from the source — a vague
+        # implied counter-view, not a real one.
         obj = josa(c0, ("을", "를"))[len(c0):]          # just the 을/를 particle for c0
-        return f'{josa(la, ("은", "는"))} "{c0}"{obj} 문제 삼고, 다른 목소리도 있습니다.'
+        return f'{josa(la, ("은", "는"))} "{c0}"{obj} 문제 삼고 있습니다.'
     if not q0:                       # no party AND not a real quote — skip it
         return ""
     return f'온라인에서는 "{c0}"라는 반응이 나옵니다.'
