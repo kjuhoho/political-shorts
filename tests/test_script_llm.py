@@ -135,6 +135,42 @@ def test_oversized_card_is_skipped_others_applied(monkeypatch):
     assert out[1]["narration"] == "여야가 합의해 통과시켰습니다."   # unchanged
 
 
+def test_sides_llm_limit_matches_script_gens_downstream_fit_cap():
+    # script_llm tells the model its budget (_LLM_LIMIT) and clips its own
+    # output to match; script_gen._fit_duration then clips AGAIN against a
+    # separate constant (_NARR_CAP_LLM) on the way to the final video. The
+    # two must be raised together — otherwise a longer "sides" card the
+    # model was explicitly asked for gets silently cut back down by the
+    # second, forgotten cap.
+    from political_shorts.script_gen import _NARR_CAP_LLM
+    assert script_llm._LLM_LIMIT["sides"] == _NARR_CAP_LLM["sides"]
+
+
+def test_sides_card_has_room_for_a_third_expert_voice(monkeypatch):
+    # user: "민주당 측에서는 --, 야당인 국민의 힘에서는 --, 그리고 -- 전문가가
+    # 말하길 --" — a real 3-voice sides card (both parties + an expert) runs
+    # past the old 220-char cap; it must not get silently discarded as
+    # "oversized" now that the budget was raised to make room for it.
+    three_voice = (
+        "이런 상황 속에서 민주당은 서민 가계에 돌아갈 부담이 지나치게 크다는 "
+        "이유를 들어 이번 조치에 강하게 반대한다고 밝혔습니다. "
+        "국민의힘은 지금 손대지 않으면 나라 살림 자체가 무너질 수 있다며, "
+        "재정 건전성을 지키기 위해 꼭 필요한 조치라고 반박했습니다. "
+        "그런데 서울대 정치외교학과 김모 교수는 이 사안을 두고, "
+        "여야 모두 겉으로는 원칙을 내세우지만 실제로는 다가올 총선을 "
+        "의식한 정치적 계산이 깔려 있다고 짚었습니다."
+    )
+    assert 220 < len(three_voice) <= 260          # past the OLD cap, within the NEW one
+    segs = _segs() + [{"role": "sides", "kicker": "갈리는 입장", "caption": "입장차",
+                       "narration": "국민의힘과 민주당의 입장이 갈립니다.", "attributed": True}]
+    payload = json.dumps({"sides": three_voice})
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: payload)
+    out = _rw(segs, META, _cfg(), BASE)
+    sides = next(s for s in out if s["role"] == "sides")
+    assert sides["narration"] == three_voice
+    assert "교수" in sides["narration"]              # the third voice actually survived
+
+
 def test_llm_subtitle_is_attached_separately_from_narration(monkeypatch):
     payload = json.dumps({
         "what": "여야가 막판까지 맞섰지만 결국 합의해 예산안을 통과시켰습니다.",

@@ -49,8 +49,12 @@ _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 42, "summary": 155, "what": 180, "reaction": 90,
              "factcheck": 170, "sides": 150, "outro": 95}
+# sides raised 230->260 alongside script_llm._LLM_LIMIT["sides"] — user
+# wanted the "sides" card able to carry a real 3-voice structure (both
+# parties + an expert/third-party view when the source actually has one),
+# not just two short attributed lines.
 _NARR_CAP_LLM = {"hook": 66, "summary": 150, "what": 190, "reaction": 120,
-                 "factcheck": 170, "sides": 230, "outro": 88}
+                 "factcheck": 170, "sides": 260, "outro": 88}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
