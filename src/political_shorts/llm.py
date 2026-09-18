@@ -32,7 +32,7 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
 # Groq — FREE, no credit card, and far steadier than the Gemini free tier.
 # OpenAI-compatible endpoint. Models tried in order when LLM_MODEL is unset.
 _GROQ_MODELS = [
-    "llama-3.3-70b-versatile", "llama-3.1-8b-instant",
+    "openai/gpt-oss-120b", "openai/gpt-oss-20b",
 ]
 
 
@@ -51,6 +51,10 @@ def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
                 {"role": "user", "content": prompt},
             ],
         }
+        if model.startswith("openai/gpt-oss"):
+            # reasoning model: keep thinking short and leave room for the answer
+            body["reasoning_effort"] = "low"
+            body["max_tokens"] = max_tokens + 1024
         status = None
         for attempt in range(3):
             r = requests.post("https://api.groq.com/openai/v1/chat/completions",
