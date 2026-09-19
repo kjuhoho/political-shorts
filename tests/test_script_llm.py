@@ -517,3 +517,41 @@ def test_meaning_has_no_generic_filler():
     from political_shorts import explain
     assert explain.meaning(SimpleNamespace(kind="generic")) == ""
     assert "정해지는 중" not in " ".join(explain.MEANING.values())
+
+
+def test_retry_after_parses_groq_style_waits():
+    from political_shorts import llm as L
+    assert abs(L._retry_after("Rate limit reached. Please try again in 40m38.64s. Need more") - (40 * 60 + 38.64)) < 0.01
+    assert L._retry_after("Please try again in 1h2m3s.") == 3723
+    assert abs(L._retry_after("Please try again in 12.5s") - 12.5) < 1e-6
+    assert abs(L._retry_after("Please try again in 340ms") - 0.34) < 1e-6
+    assert L._retry_after("some other error") == 0.0
+
+
+def test_groq_long_rate_limit_cools_the_model_down_instead_of_retrying(monkeypatch):
+    import political_shorts.llm as L
+    posts = []
+
+    class _R:
+        def __init__(self, status, model):
+            self.status_code, self.model = status, model
+
+        def json(self):
+            if self.status_code == 429:
+                return {"error": {"message": "Rate limit ... on tokens per day. Please try again in 40m0s."}}
+            return {"choices": [{"message": {"content": '{"ok":1}'}}]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        posts.append(json["model"])
+        return _R(429 if json["model"] == "openai/gpt-oss-120b" else 200, json["model"])
+
+    monkeypatch.setattr(L, "requests", type("m", (), {"post": staticmethod(fake_post)}))
+    monkeypatch.setattr(L.time, "sleep", lambda s: None)
+    monkeypatch.setattr(L, "_COOLDOWN", {})
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    cfg = dataclasses.replace(settings, llm_provider="groq", llm_model="")
+    assert L._groq("hi", cfg, 300, "sys") == '{"ok":1}'
+    assert posts == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]       # ONE try on the limited model, no 3x retry
+    posts.clear()
+    assert L._groq("hi", cfg, 300, "sys") == '{"ok":1}'
+    assert posts == ["openai/gpt-oss-20b"]                              # cooled model is not even tried again
