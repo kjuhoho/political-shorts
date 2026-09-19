@@ -79,14 +79,16 @@ jobs:
           # Natural-narration rewrite. Preference: OpenAI (paid, most reliable) ->
           # Groq (FREE, no card, steady) -> Gemini (FREE but flaky). No key at
           # all -> the templated explainer (explain.py) still carries background.
+          # Every key that exists is written, so llm.complete() can fall back to
+          # the next provider when the preferred one is down or rate-limited.
+          [ -n "$PS_OPENAI_KEY" ] && echo "OPENAI_API_KEY=$PS_OPENAI_KEY" >> .env
+          [ -n "$PS_GROQ_KEY" ]   && echo "GROQ_API_KEY=$PS_GROQ_KEY" >> .env
+          [ -n "$PS_GEMINI_KEY" ] && echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
           if [ -n "$PS_OPENAI_KEY" ]; then
-            echo "OPENAI_API_KEY=$PS_OPENAI_KEY" >> .env
             echo "LLM_PROVIDER=openai" >> .env
           elif [ -n "$PS_GROQ_KEY" ]; then
-            echo "GROQ_API_KEY=$PS_GROQ_KEY" >> .env
             echo "LLM_PROVIDER=groq" >> .env
           elif [ -n "$PS_GEMINI_KEY" ]; then
-            echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
             echo "LLM_PROVIDER=gemini" >> .env
           fi
 

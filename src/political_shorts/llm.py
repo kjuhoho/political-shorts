@@ -5,6 +5,7 @@ heuristic output, never to be the sole author of a claim.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import time
 
@@ -16,8 +17,7 @@ from .logging_setup import get_logger
 log = get_logger("llm")
 
 
-def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = "") -> str:
-    provider = cfg.llm_provider
+def _call(provider: str, prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
     if provider == "groq":
         return _groq(prompt, cfg, max_tokens, system)
     if provider == "gemini":
@@ -27,6 +27,38 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
     if provider == "openai":
         return _openai(prompt, cfg, max_tokens, system)
     raise RuntimeError(f"no usable LLM provider configured (LLM_PROVIDER={provider!r})")
+
+
+def _has_key(provider: str, cfg: Settings) -> bool:
+    if provider == "groq":
+        return bool((getattr(cfg, "groq_api_key", "") or os.environ.get("GROQ_API_KEY", "")).strip())
+    return bool((getattr(cfg, f"{provider}_api_key", "") or "").strip())
+
+
+# Tried in this order after the configured provider fails (free tiers first).
+_FALLBACK_ORDER = ["groq", "gemini", "openai", "anthropic"]
+
+
+def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = "") -> str:
+    provider = cfg.llm_provider
+    try:
+        return _call(provider, prompt, cfg, max_tokens, system)
+    except Exception as exc:
+        if provider not in _FALLBACK_ORDER:
+            raise
+        first = exc
+    # LLM_MODEL names a model of the configured provider only — blank it so
+    # each fallback provider walks its own default model list.
+    alt_cfg = dataclasses.replace(cfg, llm_model="")
+    for alt in _FALLBACK_ORDER:
+        if alt == provider or not _has_key(alt, cfg):
+            continue
+        log.info("llm: %s failed (%s) — falling back to %s", provider, str(first)[:120], alt)
+        try:
+            return _call(alt, prompt, alt_cfg, max_tokens, system)
+        except Exception as exc:
+            log.info("llm: fallback %s failed too (%s)", alt, str(exc)[:120])
+    raise first
 
 
 # Groq — FREE, no credit card, and far steadier than the Gemini free tier.
@@ -73,7 +105,7 @@ def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
                 time.sleep(3.0)
                 continue
             break
-        if status in (400, 404):          # model retired / not visible -> next model
+        if status in (400, 404, 429):     # retired / not visible / rate-limited -> next model
             log.info("groq: model %s skipped (%s)", model, last)
             continue
         break

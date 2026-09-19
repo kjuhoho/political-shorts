@@ -444,3 +444,58 @@ def test_gemini_request_shape(monkeypatch):
     assert seen["params"]["key"] == "k"
     assert seen["body"]["systemInstruction"]["parts"][0]["text"] == "sys"
     assert seen["body"]["generationConfig"]["responseMimeType"] == "application/json"
+
+
+def test_groq_rate_limit_moves_to_next_model(monkeypatch):
+    posted = []
+
+    class _R:
+        def __init__(self, status):
+            self.status_code = status
+
+        def json(self):
+            if self.status_code == 429:
+                return {"error": {"message": "Rate limit reached"}}
+            return {"choices": [{"message": {"content": '{"ok":1}'}}]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        posted.append(json["model"])
+        return _R(429 if json["model"] == "openai/gpt-oss-120b" else 200)
+
+    import political_shorts.llm as L
+    monkeypatch.setattr(L, "requests", type("m", (), {"post": staticmethod(fake_post)}))
+    monkeypatch.setattr(L.time, "sleep", lambda s: None)
+    cfg = dataclasses.replace(settings, llm_provider="groq", llm_model="")
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    assert L._groq("hi", cfg, 300, "sys") == '{"ok":1}'
+    assert posted[-1] == "openai/gpt-oss-20b"
+
+
+def test_complete_falls_back_to_next_provider(monkeypatch):
+    import political_shorts.llm as L
+    calls = []
+
+    def fake_call(provider, prompt, cfg, max_tokens, system):
+        calls.append((provider, cfg.llm_model))
+        if provider == "groq":
+            raise RuntimeError("groq call failed (429)")
+        return '{"ok":1}'
+
+    monkeypatch.setattr(L, "_call", fake_call)
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    cfg = dataclasses.replace(settings, llm_provider="groq", llm_model="some-groq-model",
+                              gemini_api_key="g", openai_api_key="", anthropic_api_key="")
+    assert L.complete("hi", cfg, 300, "sys") == '{"ok":1}'
+    assert calls == [("groq", "some-groq-model"), ("gemini", "")]   # model name not leaked
+
+
+def test_complete_raises_when_every_provider_fails(monkeypatch):
+    import political_shorts.llm as L
+    import pytest
+
+    monkeypatch.setattr(L, "_call", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    cfg = dataclasses.replace(settings, llm_provider="groq", gemini_api_key="g",
+                              openai_api_key="", anthropic_api_key="")
+    with pytest.raises(RuntimeError):
+        L.complete("hi", cfg, 300, "sys")
