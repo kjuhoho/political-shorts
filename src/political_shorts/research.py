@@ -156,14 +156,50 @@ def article_text(url: str, limit: int = 2600) -> str:
     return text[:limit] if len(text) >= 200 else ""
 
 
+def resolve_link(link: str) -> str:
+    """Google News search links are opaque redirects; ask Google's own endpoint
+    for the publisher URL. Returns the link unchanged if it is already direct,
+    or '' when it can't be resolved (the article is then skipped)."""
+    if "news.google.com" not in link:
+        return link
+    try:
+        m = re.search(r"/articles/([^?/]+)", link)
+        if not m:
+            return ""
+        gid = m.group(1)
+        page = requests.get(f"https://news.google.com/rss/articles/{gid}",
+                            headers={"User-Agent": _UA}, timeout=12)
+        sig = re.search(r'data-n-a-sg="([^"]+)"', page.text)
+        ts = re.search(r'data-n-a-ts="([^"]+)"', page.text)
+        if not (sig and ts):
+            return ""
+        inner = ('["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,'
+                 'null,null,0,1],"X","X",1,[1,1,1],1,1,null,0,0,null,0],'
+                 f'"{gid}",{ts.group(1)},"{sig.group(1)}"]')
+        req = json.dumps([[["Fbv4je", inner, None, "generic"]]])
+        r = requests.post("https://news.google.com/_/DotsSplashUi/data/batchexecute",
+                          headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                                   "User-Agent": _UA},
+                          data="f.req=" + quote(req), timeout=12)
+        blob = json.loads(r.text.split("\n\n")[1])
+        url = json.loads(blob[0][2])[1]
+        return url if isinstance(url, str) and url.startswith("http") else ""
+    except Exception:  # pragma: no cover - network dependent
+        return ""
+
+
 def fetch_bodies(items: list[dict[str, str]], want: int = 5) -> list[dict[str, str]]:
     """Read up to `want` articles in parallel; keeps only the ones that had a body."""
     if not items:
         return []
+    def _read(it: dict[str, str]) -> dict[str, str] | None:
+        url = resolve_link(it["link"])
+        text = article_text(url) if url else ""
+        return {**it, "link": url, "text": text} if text else None
+
     with ThreadPoolExecutor(max_workers=6) as ex:
-        texts = list(ex.map(lambda it: article_text(it["link"]), items[: want * 2]))
-    out = [{**it, "text": tx} for it, tx in zip(items, texts) if tx]
-    return out[:want]
+        got = list(ex.map(_read, items[: want * 3]))
+    return [g for g in got if g][:want]
 
 
 # ----------------------------------------------------------------- web notes
@@ -271,7 +307,8 @@ def web_notes(headline: str, topic: str, cfg: Settings, query: str = "") -> dict
     """Structured research notes for one story. Reads the actual bodies of extra
     articles and extracts from them (grounded in real text); only if none could
     be read does it fall back to a live-web-search LLM."""
-    found = bing_news(query or build_query(headline, topic))
+    q = query or build_query(headline, topic)
+    found = gnews(q, limit=12) + bing_news(q)
     bodies = fetch_bodies(found)
     log.info("research: %d articles found, %d readable bodies", len(found), len(bodies))
     if bodies:

@@ -151,6 +151,7 @@ def test_web_notes_extracts_from_article_bodies(monkeypatch):
     import political_shorts.llm as L
     items = [{"title": "기사1", "source": "매체A", "link": "https://a/1"},
              {"title": "기사2", "source": "매체B", "link": "https://b/2"}]
+    monkeypatch.setattr(research, "gnews", lambda *a, **k: [])
     monkeypatch.setattr(research, "bing_news", lambda q, **k: items)
     monkeypatch.setattr(research, "article_text", lambda url, **k: "본문입니다. " * 40)
     seen = {}
@@ -170,8 +171,34 @@ def test_web_notes_extracts_from_article_bodies(monkeypatch):
 
 def test_web_notes_falls_back_to_web_search_when_no_body_can_be_read(monkeypatch):
     import political_shorts.llm as L
+    monkeypatch.setattr(research, "gnews", lambda *a, **k: [])
     monkeypatch.setattr(research, "bing_news", lambda q, **k: [{"title": "t", "source": "s", "link": "https://a"}])
     monkeypatch.setattr(research, "article_text", lambda url, **k: "")
     monkeypatch.setattr(L, "web_search",
                         lambda *a, **k: json.dumps({"background": "웹 검색으로 찾은 배경 설명입니다. " * 2}, ensure_ascii=False))
     assert "웹 검색으로 찾은 배경" in research.web_notes("주제", "", settings)["background"]
+
+
+def test_resolve_link_passes_direct_urls_through_and_decodes_google_links(monkeypatch):
+    assert research.resolve_link("https://news.example.com/a/1") == "https://news.example.com/a/1"
+    assert research.resolve_link("https://news.google.com/rss/search?q=x") == ""      # not an article link
+
+    page = '<c-wiz data-n-a-sg="SIG" data-n-a-ts="1700000000"></c-wiz>'
+    inner = json.dumps([None, "https://publisher.example.com/real-article"])
+    reply = ")]}'\n\n" + json.dumps([["wrb.fr", "Fbv4je", inner]])
+
+    class Page(_Resp):
+        text = page
+
+    class Reply(_Resp):
+        text = reply
+
+    monkeypatch.setattr(research.requests, "get", lambda *a, **k: Page())
+    monkeypatch.setattr(research.requests, "post", lambda *a, **k: Reply())
+    assert research.resolve_link("https://news.google.com/rss/articles/CBMiabc?oc=5") \
+        == "https://publisher.example.com/real-article"
+
+    def boom(*a, **k):
+        raise RuntimeError("blocked")
+    monkeypatch.setattr(research.requests, "post", boom)
+    assert research.resolve_link("https://news.google.com/rss/articles/CBMiabc?oc=5") == ""
