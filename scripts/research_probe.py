@@ -27,20 +27,25 @@ def main() -> int:
     q = research.build_query(headline, topic)
     print(f"query: {q}\n")
 
-    news = research.gnews(q)
-    print(f"== news: {len(news)}")
-    for n in news:
-        print(f"  - {n['title']} ({n['source']})")
-
-    found = research.bing_news(q)
-    print(f"== bing_news (direct urls): {len(found)}")
-    for it in found[:8]:
-        n = len(research.article_text(it["link"]))
-        print(f"  - body={n:>5} chars  {it['source']}  {it['link'][:90]}")
+    plan = research.plan_research(headline, topic, "", cfg)
+    print("== plan")
+    print(f"  event   : {plan.get('event')}")
+    print(f"  question: {plan.get('question')}")
+    for pq in plan.get("queries", []):
+        print(f"  query   : {pq}")
     print()
 
-    web = research.web_notes(headline, topic, cfg)
+    found = research._gather(plan.get("queries") or [q])
+    print(f"== articles found for the planned queries: {len(found)}")
+    for it in found[:12]:
+        print(f"  - {it['title'][:60]} ({it['source']})")
+    print()
+
+    web = research.web_notes(headline, topic, cfg, plan=plan)
     print(f"\n== web/official: {'ok' if web else 'EMPTY'}  keys={sorted(web)}")
+    print(f"  WHY (causes): {len(web.get('why') or [])}")
+    for item in (web.get("why") or [])[:5]:
+        print("    ", json.dumps(item, ensure_ascii=False)[:360])
     for k in ("background", "status"):
         if web.get(k):
             print(f"  {k}: {str(web[k])[:300]}")
@@ -50,12 +55,12 @@ def main() -> int:
         for item in v[:2]:
             print("    ", json.dumps(item, ensure_ascii=False)[:260])
 
-    yt = research.youtube(q, cfg)
+    yt = research.youtube(research.build_query(plan.get("event") or headline, topic), cfg)
     print(f"\n== youtube: videos={len(yt.get('videos', []))} comments={len(yt.get('comments', []))}")
     for v in (yt.get("videos") or [])[:3]:
         print(f"  - {v['title']} ({v['channel']})")
 
-    pack = {"query": q, "news": news, "web": web, "youtube": yt}
+    pack = {"query": q, "plan": plan, "news": [], "web": web, "youtube": yt}
     block = research.pack_block(pack)
     print(f"\n== prompt block: {len(block)} chars")
     print(block[:1800])

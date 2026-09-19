@@ -95,6 +95,11 @@ _SYSTEM = (
     "속에서 여당은 …, 야당은 …, 그리고 OO 교수는 …라고 짚었습니다' 순서로. 각 "
     "목소리는 실제로 source에 있는 만큼만 — 정당 하나 + 전문가만 있으면 그 둘만.\n"
     "6) 원문에 없는 사실·숫자·발언을 지어내지 말 것.\n"
+    "6-0) 어떤 일이 '왜' 일어났는지 설명할 땐 반드시 실제 원인·발단(의혹, 논란, 청문회 쟁점, "
+    "사건 경위, 발언 등 자료에 근거가 있는 것)을 들어 설명할 것. 정부·정당의 반응이나 논평"
+    "('결정을 존중한다', '유감이다')을 이유처럼 쓰는 것은 금지 — 반응은 반응으로만 소개하고 "
+    "원인과 섞지 말 것. [추가 자료조사]에 [원인·발단]이 있으면 그것으로 summary/what을 채우고, "
+    "원인 자료가 없으면 이유를 지어내지 말고 확인된 경위만 쓸 것.\n"
     "6-1) 정치인의 발언을 다룰 땐 '어떤 발언을 했다', '논란이 되는 발언'처럼 발언이 있었다는 "
     "사실만 말하고 멈추지 말 것 — 원문에 있는 발언 내용을 끝까지, 그 사람이 실제로 한 말 "
     "그대로 충실하게 풀어 쓸 것(누가·언제·어디서·무엇이라고 했는지). 원문에 발언 내용 "
@@ -211,7 +216,9 @@ _ANALYSIS_SYSTEM = (
     "— 원문에 실제로 있는 경우에만, 없는 목소리를 지어내지 말 것.\n"
     "7) confirmed_fact: 여러 출처가 교차 확인한 확실한 사실 한 문장, 완결형.\n"
     "[추가 자료조사]가 주어지면 아래도 채울 것 (없으면 빈 값):\n"
-    "8) background: 이 일이 왜 일어났는지 배경과 경위 2~3문장(날짜 포함).\n"
+    "8) why_it_happened: 자료조사의 [원인·발단]에서 이 일이 '왜' 일어났는지 인과 순서로. "
+    "정부·정당의 반응·논평('존중한다', '유감이다')은 원인이 아니므로 넣지 말 것. 자료에 원인이 "
+    "없으면 빈 배열(지어내지 말 것). background: 배경과 경위 2~3문장(날짜 포함).\n"
     "9) statements: 핵심 인물의 발언을 요약하지 말고 실제로 한 말 그대로 끝까지 "
     "[{\"who\":\"...\",\"text\":\"...\"}] — 자료에 있는 것만.\n"
     "10) pros / cons: 이 사안(정책·결정)의 장점(기대 효과)과 단점(우려·비판)을 각각 "
@@ -221,7 +228,8 @@ _ANALYSIS_SYSTEM = (
     '{"who":[{"name":"...","role":"..."}],"what_happened":"...","why_now":"...",'
     '"why_it_matters":"...","terms":{"...":"..."},'
     '"sides":[{"who":"...","position":"...","why":"..."}],"confirmed_fact":"...",'
-    '"background":"...","statements":[{"who":"...","text":"..."}],'
+    '"why_it_happened":[{"reason":"...","evidence":"..."}],"background":"...",'
+    '"statements":[{"who":"...","text":"..."}],'
     '"pros":["..."],"cons":["..."],"reactions":["..."]}'
 )
 
@@ -312,6 +320,10 @@ def _research_lines(u: dict[str, Any]) -> str:
         return [str(x).strip() for x in (v if isinstance(v, list) else []) if str(x).strip()]
 
     out = []
+    why = [f"{x.get('reason', '')} (근거: {x.get('evidence', '')})" for x in (u.get("why_it_happened") or [])
+           if isinstance(x, dict) and x.get("reason")]
+    if why:
+        out.append("왜 일어났나(원인):\n" + "\n".join(f"- {t}" for t in why[:5]))
     if str(u.get("background") or "").strip():
         out.append(f"배경·경위: {u['background']}")
     st = [f"{x.get('who', '')}: \"{x.get('text', '')}\"" for x in (u.get("statements") or [])

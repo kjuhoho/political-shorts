@@ -76,6 +76,7 @@ def recent_duplicate(
     cfg: Settings | None = None,
     *,
     actor: str = "",
+    people: set[str] | None = None,
 ) -> tuple[bool, str]:
     """(is_dup, reason). True when a very similar story was published recently.
 
@@ -103,4 +104,11 @@ def recent_duplicate(
         prev_actor = clean_text(row["actor"]) if "actor" in row.keys() else ""
         if actor and actor == prev_actor and actor not in _BROAD_ACTORS:
             return True, f"{when} 게시분과 동일 인물({actor}) 후속: {row['headline'][:40]}"
+        # the lead actor of a REACTION story is the reactor ("청와대, 김승원 사퇴에 결정
+        # 존중" leads with 청와대), so the actor test above misses it. A specific person
+        # named in this story's headline who also anchors a recent video is the same
+        # thread (`people` is already limited to the headline by the caller).
+        for p in (people or set()) - _BROAD_ACTORS:
+            if p in prev:
+                return True, f"{when} 게시분과 같은 인물({p}) 관련 사안: {row['headline'][:40]}"
     return False, ""

@@ -106,7 +106,7 @@ def _spoken(text: str) -> str:
 def _research_rich(web: dict[str, Any]) -> bool:
     """Enough real material (quotes / positions / pros-cons) to write an analysis
     instead of a re-telling."""
-    return sum(bool(web.get(k)) for k in ("statements", "positions", "pros", "cons")) >= 2
+    return sum(bool(web.get(k)) for k in ("why", "statements", "positions", "pros", "cons")) >= 2
 
 
 def _with_research_cards(segments: list[dict[str, Any]], web: dict[str, Any]) -> list[dict[str, Any]]:
@@ -794,7 +794,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         if getattr(cfg, "research_enabled", True):
             from . import research
             try:
-                _pack = research.build_pack(headline, meta["topic"], cfg)
+                _pack = research.build_pack(
+                    headline, meta["topic"], cfg,
+                    context="\n".join(meta["facts"][:8] + meta["claims"][:4]))
                 meta["research"] = research.pack_block(_pack)
                 research_web = (_pack or {}).get("web") or {}
             except Exception as exc:  # pragma: no cover - defensive

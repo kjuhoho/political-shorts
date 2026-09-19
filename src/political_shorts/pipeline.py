@@ -175,7 +175,10 @@ def _process_story(
         sig = story_signature(script["headline"], script.get("entities"), script.get("frame", ""))
         actor = str(script.get("topic") or "")
         with connect(cfg.db_path) as conn:
-            is_dup, why = recent_duplicate(conn, sig, cfg, actor=actor)
+            _ent = script.get("entities") or {}
+            _people = {str(n) for n in (_ent.get("politicians") or [])
+                       if n and str(n) in script["headline"]}
+            is_dup, why = recent_duplicate(conn, sig, cfg, actor=actor, people=_people)
             sat = _theme_saturated(conn, sig, actor, cfg) if (enforce_variety and not is_dup) else ""
         if is_dup or sat:
             out.status = "skipped"

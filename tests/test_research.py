@@ -202,3 +202,105 @@ def test_resolve_link_passes_direct_urls_through_and_decodes_google_links(monkey
         raise RuntimeError("blocked")
     monkeypatch.setattr(research.requests, "post", boom)
     assert research.resolve_link("https://news.google.com/rss/articles/CBMiabc?oc=5") == ""
+
+
+# ---- cause-focused research (plan -> search -> read -> answer "why") -------------
+def test_plan_research_targets_the_event_not_the_reaction(monkeypatch):
+    import political_shorts.llm as L
+    seen = {}
+
+    def fake_complete(prompt, cfg, max_tokens=400, system=""):
+        seen["prompt"] = prompt
+        return json.dumps({"event": "김승원 후보자가 법무부 장관 후보직에서 사퇴",
+                           "question": "김승원 후보자는 왜 사퇴했나?",
+                           "queries": ["김승원 후보자 사퇴 이유", "김승원 후보자 의혹 청문회 논란", ""]},
+                          ensure_ascii=False)
+
+    monkeypatch.setattr(L, "complete", fake_complete)
+    plan = research.plan_research("청와대, 김승원 사퇴에 결정 존중", "김승원", "김승원 후보자가 사퇴했다", settings)
+    assert plan["question"] == "김승원 후보자는 왜 사퇴했나?"
+    assert plan["queries"] == ["김승원 후보자 사퇴 이유", "김승원 후보자 의혹 청문회 논란"]
+    assert "청와대, 김승원 사퇴에 결정 존중" in seen["prompt"]
+
+
+def test_plan_research_falls_back_to_the_headline_query(monkeypatch):
+    import political_shorts.llm as L
+
+    def boom(*a, **k):
+        raise RuntimeError("no llm")
+
+    monkeypatch.setattr(L, "complete", boom)
+    plan = research.plan_research("이재명 대통령 이란 파병", "이재명", "", settings)
+    assert plan["queries"] == [research.build_query("이재명 대통령 이란 파병", "이재명")]
+    monkeypatch.setattr(L, "complete", lambda *a, **k: "not json")
+    assert research.plan_research("헤드라인", "", "", settings)["queries"]
+
+
+def test_gather_merges_queries_and_drops_repeated_titles(monkeypatch):
+    calls = []
+
+    def fake_gnews(q, limit=8):
+        calls.append(q)
+        return [{"title": "모든 검색에 나오는 공통 기사", "source": "s", "link": "https://a/" + q},
+                {"title": f"{q} 전용 기사", "source": "s", "link": "https://b/" + q}]
+
+    monkeypatch.setattr(research, "gnews", fake_gnews)
+    monkeypatch.setattr(research, "bing_news", lambda q, **k: [])
+    out = research._gather(["사퇴 이유", "사퇴 배경"])
+    assert calls == ["사퇴 이유", "사퇴 배경"]
+    assert [i["title"] for i in out] == ["모든 검색에 나오는 공통 기사", "사퇴 이유 전용 기사", "사퇴 배경 전용 기사"]
+    assert len({i["title"] for i in out}) == len(out)
+
+
+def test_extraction_asks_for_the_cause_and_keeps_reactions_out_of_it(monkeypatch):
+    import political_shorts.llm as L
+    monkeypatch.setattr(research, "gnews", lambda q, **k: [{"title": "기사", "source": "매체", "link": "https://a/1"}])
+    monkeypatch.setattr(research, "bing_news", lambda q, **k: [])
+    monkeypatch.setattr(research, "article_text", lambda url, **k: "본문입니다. " * 40)
+    seen = {}
+
+    def fake_complete(prompt, cfg, max_tokens=400, system=""):
+        seen["system"], seen["prompt"] = system, prompt
+        return json.dumps({"why": [{"reason": "청문회에서 자녀 관련 의혹이 불거졌다",
+                                    "evidence": "9월 15일 법사위 청문회", "source": "매체"}],
+                           "reactions": [{"where": "청와대", "summary": "결정을 존중한다"}]},
+                          ensure_ascii=False)
+
+    monkeypatch.setattr(L, "complete", fake_complete)
+    plan = {"event": "김승원 사퇴", "question": "김승원 후보자는 왜 사퇴했나?", "queries": ["김승원 사퇴 이유"]}
+    notes = research.web_notes("청와대, 김승원 사퇴에 결정 존중", "김승원", settings, plan=plan)
+    assert notes["why"][0]["reason"].startswith("청문회에서")
+    assert "[핵심 질문] 김승원 후보자는 왜 사퇴했나?" in seen["prompt"]
+    assert "반응·논평·입장 표명" in seen["system"] and "원인이 아니므로" in seen["system"]
+
+
+def test_pack_block_leads_with_the_question_and_causes():
+    pack = {"plan": {"event": "김승원 사퇴", "question": "김승원 후보자는 왜 사퇴했나?"},
+            "web": {"why": [{"reason": "청문회 의혹", "evidence": "9월 15일", "source": "매체"}],
+                    "reactions": [{"where": "청와대", "summary": "결정을 존중한다"}]}}
+    block = research.pack_block(pack)
+    assert block.index("핵심 질문") < block.index("원인·발단") < block.index("여론·온라인 반응")
+    assert "청문회 의혹" in block and "반응·논평은 원인이 아님" in block
+
+
+def test_recent_duplicate_catches_a_reaction_story_about_the_same_person(monkeypatch):
+    import time
+
+    from political_shorts import topics
+
+    prev_sig = topics.story_signature("김승원 후보자 자진 사퇴", {"politicians": ["김승원"]}, "personnel")
+
+    class Row(dict):
+        pass
+
+    row = Row(signature=topics.signature_str(prev_sig), published_ts=int(time.time()) - 3600,
+              headline="김승원 후보자 자진 사퇴", actor="김승원")
+    monkeypatch.setattr(topics, "recent_topics", lambda conn, since: [row])
+    cur = topics.story_signature("청와대, 김승원 사퇴에 결정 존중", {"politicians": ["김승원"]}, "personnel")
+    assert topics._overlap(cur, prev_sig) < 0.6                     # wording moved on ...
+    dup, why = topics.recent_duplicate(None, cur, settings, actor="청와대", people={"김승원"})
+    assert dup and "김승원" in why                                    # ... same person still caught
+    dup, _ = topics.recent_duplicate(None, cur, settings, actor="청와대", people=set())
+    assert not dup                                                   # (old behaviour: missed)
+    dup, _ = topics.recent_duplicate(None, cur, settings, actor="청와대", people={"이재명"})
+    assert not dup                                                   # broad actors never trigger it

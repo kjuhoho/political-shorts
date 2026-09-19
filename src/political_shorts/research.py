@@ -266,20 +266,65 @@ def _usable(text: str) -> bool:
     return _has_content(obj) if obj is not None else len(text.strip()) >= 80
 
 
+_PLAN_SYSTEM = (
+    "당신은 한국 정치 뉴스 리서치 플래너입니다. 기사 하나를 영상으로 만들기 전에, 시청자가 "
+    "정말 궁금해할 것이 무엇이고 그 답을 어떤 검색어로 찾아야 하는지 정합니다.\n"
+    "1) event: 실제로 일어난 핵심 '사건' 한 줄. 헤드라인이 누군가의 반응·논평·입장 표명이면(예: "
+    "'청와대, 김승원 사퇴에 결정 존중') 그 반응이 아니라 반응의 대상이 된 사건(김승원 후보자가 "
+    "사퇴한 일)을 event로 잡을 것.\n"
+    "2) question: 시청자가 가장 궁금해할 핵심 질문 한 문장. 대부분 '왜 그런 일이 벌어졌나(원인)'. "
+    "예: '김승원 후보자는 왜 사퇴했나?'\n"
+    "3) queries: 그 원인·배경·경위를 찾을 검색어 3~4개. 뉴스 제목에 나올 법한 표현으로, 각 25자 "
+    "이내. 반응·논평이 아니라 원인과 발단(의혹, 논란, 청문회, 쟁점, 경위)을 겨냥할 것. 예: "
+    "['김승원 후보자 사퇴 이유', '김승원 후보자 의혹 청문회 논란', '김승원 후보자 자진 사퇴 배경'].\n"
+    'JSON 하나만: {"event":"","question":"","queries":["",""]}'
+)
+
+
+def plan_research(headline: str, topic: str, context: str, cfg: Settings) -> dict[str, Any]:
+    """Decide what the viewer wants to know and which searches answer it — the
+    step that keeps the research from just re-finding more articles about the
+    same reaction. Falls back to the headline query when no LLM is available."""
+    fallback = {"event": clean_text(headline), "question": "",
+                "queries": [build_query(headline, topic)]}
+    from .llm import complete
+
+    prompt = (f"[헤드라인] {clean_text(headline)}\n[핵심 인물] {topic or '(없음)'}\n"
+              f"[기사에서 확인된 내용]\n{(context or '')[:1800]}\n\n위 사건의 조사 계획 JSON을 작성하세요.")
+    try:
+        raw = complete(prompt, cfg, max_tokens=500, system=_PLAN_SYSTEM)
+    except Exception as exc:  # pragma: no cover - network dependent
+        log.info("research: planning failed (%s)", str(exc)[:80])
+        return fallback
+    obj = _json_obj(raw) or {}
+    queries = [re.sub(r"\s+", " ", str(q)).strip()[:40] for q in (obj.get("queries") or []) if str(q).strip()]
+    if not queries:
+        return fallback
+    return {"event": clean_text(str(obj.get("event") or headline))[:120],
+            "question": clean_text(str(obj.get("question") or ""))[:120],
+            "queries": queries[:4]}
+
+
 _EXTRACT_SYSTEM = (
     "당신은 한국 정치 전문 리서처입니다. 아래에 같은 사안을 다룬 여러 기사 본문이 주어집니다. "
     "이 본문들에 실제로 적힌 내용만으로, 뉴스 기사 한 편을 쓰기 위한 조사 노트를 JSON으로 "
-    "정리하세요.\n"
+    "정리하세요. [핵심 질문]이 주어지면 그 질문에 답하는 것이 가장 중요합니다.\n"
     "규칙:\n"
     "1) 본문에 없는 내용은 절대 쓰지 말고, 없으면 빈 문자열/빈 배열로 둘 것.\n"
-    "2) statements: 정치인·정부·정당의 발언은 요약하지 말고 본문에 적힌 말을 끝까지 그대로 "
+    "2) why: [핵심 질문]에 대한 답 — 이 일이 '왜' 일어났는지 원인·발단·계기를 본문에 적힌 대로, "
+    "시간 순서의 인과로. 각 항목은 {reason: 원인 한 문장, evidence: 본문의 구체적 근거(날짜·"
+    "인물·수치·발언), source: 매체명}. 반드시 지킬 것: 정부·정당·인물의 '반응·논평·입장 표명'"
+    "(예: '결정을 존중한다', '유감이다')은 원인이 아니므로 why에 넣지 말고 positions/"
+    "reactions에 넣을 것. 본문이 원인을 밝히지 않았으면 why는 빈 배열로 두고, 추측하지 말 것.\n"
+    "3) statements: 정치인·정부·정당의 발언은 요약하지 말고 본문에 적힌 말을 끝까지 그대로 "
     "옮길 것(누가·언제·어디서). 출처는 매체명.\n"
-    "3) positions: 정부·여당·야당·기관의 입장과 그 이유. experts: 전문가·학계 평가.\n"
-    "4) pros / cons: 이 사안의 장점(기대 효과)과 단점(우려·비판)을 각각 본문 근거가 있는 "
+    "4) positions: 정부·여당·야당·기관의 입장과 그 이유. experts: 전문가·학계 평가.\n"
+    "5) pros / cons: 이 사안의 장점(기대 효과)과 단점(우려·비판)을 각각 본문 근거가 있는 "
     "것만, 객관적으로. 한쪽 편을 들지 말 것.\n"
-    "5) reactions: 여론조사·시민단체·온라인 반응. 검증되지 않은 반응은 그렇게 표시.\n"
-    "6) background: 왜 이 일이 일어났는지 배경과 경위 2~3문장(날짜 포함). timeline은 날짜순.\n"
-    '출력은 JSON 하나만: {"background":"","timeline":["날짜: 사건"],"status":"",'
+    "6) reactions: 여론조사·시민단체·온라인 반응. 검증되지 않은 반응은 그렇게 표시.\n"
+    "7) background: 사건의 배경과 경위 2~3문장(날짜 포함). timeline은 날짜순.\n"
+    '출력은 JSON 하나만: {"why":[{"reason":"","evidence":"","source":""}],'
+    '"background":"","timeline":["날짜: 사건"],"status":"",'
     '"positions":[{"who":"","position":"","why":"","source":""}],'
     '"statements":[{"who":"","text":"","when":"","source":""}],'
     '"experts":[{"who":"","view":"","source":""}],"pros":[""],"cons":[""],'
@@ -287,15 +332,21 @@ _EXTRACT_SYSTEM = (
 )
 
 
-def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings) -> dict[str, Any]:
+def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
+                   plan: dict[str, Any] | None = None) -> dict[str, Any]:
     from .llm import complete
 
+    plan = plan or {}
     docs = "\n\n".join(f"[기사{i} — {b['source']}] {b['title']}\n{b['text']}"
                        for i, b in enumerate(bodies, 1))
-    prompt = (f"[주제] {clean_text(headline)}\n\n{docs[:9000]}\n\n"
-              "위 기사들만 근거로 조사 노트 JSON을 작성하세요.")
+    head = f"[주제] {clean_text(headline)}\n"
+    if plan.get("event"):
+        head += f"[핵심 사건] {plan['event']}\n"
+    if plan.get("question"):
+        head += f"[핵심 질문] {plan['question']}\n"
+    prompt = f"{head}\n{docs[:10000]}\n\n위 기사들만 근거로 조사 노트 JSON을 작성하세요."
     try:
-        raw = complete(prompt, cfg, max_tokens=1800, system=_EXTRACT_SYSTEM)
+        raw = complete(prompt, cfg, max_tokens=2000, system=_EXTRACT_SYSTEM)
     except Exception as exc:  # pragma: no cover - network dependent
         log.info("research: note extraction failed (%s)", str(exc)[:100])
         return {}
@@ -303,19 +354,37 @@ def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings) -
     return obj if obj is not None and _has_content(obj) else {}
 
 
-def web_notes(headline: str, topic: str, cfg: Settings, query: str = "") -> dict[str, Any]:
+def _gather(queries: list[str]) -> list[dict[str, str]]:
+    """Search every planned query, merge, drop repeats (same title) — earlier
+    queries (the cause-focused ones) keep their place at the front."""
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for q in queries:
+        for it in gnews(q, limit=8) + bing_news(q, limit=4):
+            key = re.sub(r"\W+", "", it["title"])[:30]
+            if key and key not in seen:
+                seen.add(key)
+                out.append(it)
+    return out
+
+
+def web_notes(headline: str, topic: str, cfg: Settings, query: str = "",
+              plan: dict[str, Any] | None = None) -> dict[str, Any]:
     """Structured research notes for one story. Reads the actual bodies of extra
-    articles and extracts from them (grounded in real text); only if none could
-    be read does it fall back to a live-web-search LLM."""
-    q = query or build_query(headline, topic)
-    found = gnews(q, limit=12) + bing_news(q)
-    bodies = fetch_bodies(found)
-    log.info("research: %d articles found, %d readable bodies", len(found), len(bodies))
+    articles (found through the planned, cause-focused searches) and extracts
+    from them; only if none could be read does it fall back to a live-web-search
+    LLM."""
+    queries = list((plan or {}).get("queries") or []) or [query or build_query(headline, topic)]
+    found = _gather(queries)
+    bodies = fetch_bodies(found, want=6)
+    log.info("research: %d queries, %d articles found, %d readable bodies",
+             len(queries), len(found), len(bodies))
     if bodies:
-        notes = _extract_notes(headline, bodies, cfg)
+        notes = _extract_notes(headline, bodies, cfg, plan)
         if notes:
             notes["sources"] = [{"title": b["title"], "url": b["link"]} for b in bodies]
-            log.info("research: notes extracted from %d article bodies", len(bodies))
+            log.info("research: notes extracted from %d article bodies (why=%d)",
+                     len(bodies), len(notes.get("why") or []))
             return notes
     from .llm import web_search
 
@@ -388,7 +457,7 @@ def _cache_path(cfg: Settings, query: str) -> Path:
     return d / (hashlib.sha1(query.encode("utf-8")).hexdigest()[:16] + ".json")
 
 
-def build_pack(headline: str, topic: str, cfg: Settings) -> dict[str, Any]:
+def build_pack(headline: str, topic: str, cfg: Settings, context: str = "") -> dict[str, Any]:
     """Gather everything available for one story. {} when research is off or
     nothing at all came back. Cached so the several rewrite attempts (and
     duplicate clusters) of one story don't re-query."""
@@ -403,12 +472,17 @@ def build_pack(headline: str, topic: str, cfg: Settings) -> dict[str, Any]:
             return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         pass
+    plan = plan_research(headline, topic, context, cfg)
     pack: dict[str, Any] = {
         "query": query,
+        "plan": plan,
         "news": gnews(query),
-        "web": web_notes(headline, topic, cfg),
-        "youtube": youtube(query, cfg),
+        "web": web_notes(headline, topic, cfg, plan=plan),
+        # the event (not the headline's reaction) is what people talk about on YouTube
+        "youtube": youtube(build_query(plan.get("event") or headline, topic), cfg),
     }
+    log.info("research plan: event=%r question=%r queries=%s",
+             plan.get("event", "")[:50], plan.get("question", "")[:50], plan.get("queries"))
     got = [k for k in ("news", "web", "youtube") if pack.get(k)]
     log.info("research %r: %s", query, ", ".join(got) or "nothing found")
     if not got:
@@ -437,6 +511,12 @@ def pack_block(pack: dict[str, Any]) -> str:
         if body and body.strip():
             parts.append(f"{label}\n{body.strip()}")
 
+    plan = pack.get("plan") or {}
+    if plan.get("question"):
+        add("핵심 질문(영상이 답해야 할 것)", f"{plan['question']}  (사건: {plan.get('event', '')})")
+    add("원인·발단 — 왜 일어났나(반응·논평은 원인이 아님)", _lines(
+        [f"{w.get('reason', '')} (근거: {w.get('evidence', '')}) [{w.get('source', '')}]"
+         for w in web.get("why") or [] if isinstance(w, dict) and w.get("reason")], 6, 360))
     add("배경(조사)", str(web.get("background") or ""))
     add("경위(날짜순)", _lines(web.get("timeline") or [], 8))
     add("현재 상황", str(web.get("status") or ""))
