@@ -35,6 +35,52 @@ def _has_key(provider: str, cfg: Settings) -> bool:
     return bool((getattr(cfg, f"{provider}_api_key", "") or "").strip())
 
 
+def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800) -> str:
+    """One question answered with LIVE web search. Groq's `groq/compound` does
+    the searching itself; if it is unavailable or rate-limited, Gemini with the
+    Google Search tool is tried. Returns the answer text ("" if neither worked) —
+    callers treat the text as unverified research notes, never as ground truth."""
+    errs: list[str] = []
+    gkey = (getattr(cfg, "groq_api_key", "") or os.environ.get("GROQ_API_KEY", "")).strip()
+    if gkey:
+        for model in ("groq/compound", "groq/compound-mini"):
+            try:
+                r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                                  headers={"Authorization": f"Bearer {gkey}"},
+                                  json={"model": model, "max_tokens": max_tokens, "temperature": 0.2,
+                                        "messages": [{"role": "user", "content": prompt}]},
+                                  timeout=(10, 120))
+                if r.status_code == 200:
+                    txt = (r.json()["choices"][0]["message"]["content"] or "").strip()
+                    if txt:
+                        return txt
+                errs.append(f"{model} -> {r.status_code}")
+            except Exception as exc:  # pragma: no cover - network dependent
+                errs.append(f"{model} -> {str(exc)[:60]}")
+    mkey = (getattr(cfg, "gemini_api_key", "") or "").strip()
+    if mkey:
+        for model in ("gemini-2.5-flash", "gemini-flash-latest"):
+            try:
+                r = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    params={"key": mkey},
+                    json={"contents": [{"parts": [{"text": prompt}]}],
+                          "tools": [{"google_search": {}}],
+                          "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}},
+                    timeout=(10, 120))
+                if r.status_code == 200:
+                    cand = (r.json().get("candidates") or [{}])[0]
+                    parts = (cand.get("content") or {}).get("parts") or []
+                    txt = "".join(p.get("text", "") for p in parts).strip()
+                    if txt:
+                        return txt
+                errs.append(f"{model} -> {r.status_code}")
+            except Exception as exc:  # pragma: no cover - network dependent
+                errs.append(f"{model} -> {str(exc)[:60]}")
+    log.info("web_search: no answer (%s)", "; ".join(errs) or "no key")
+    return ""
+
+
 # Tried in this order after the configured provider fails (free tiers first).
 _FALLBACK_ORDER = ["groq", "gemini", "openai", "anthropic"]
 

@@ -44,13 +44,15 @@ log = get_logger("script_llm")
 # (the SYSTEM prompt's own 3-beat rule) barely fit in one Korean sentence each.
 # NOTE: "hook" is deliberately absent — the first ~2s is owned by the dedicated
 # Hook Engine (hook_engine.py); the LLM never rewrites it.
-_LLM_LIMIT = {"summary": 160, "what": 190, "reaction": 130,
-              "factcheck": 150, "sides": 260, "outro": 80}
+_LLM_LIMIT = {"summary": 220, "what": 260, "reaction": 130,
+              "factcheck": 150, "sides": 340, "outro": 130}
 
 _SYSTEM = (
     "당신은 정치를 전혀 모르는 사람에게 오늘의 뉴스를 처음부터 풀어 설명하는 한국어 "
     "내레이션 작가입니다. 시청자는 이 사건도, 등장 인물도, 관련 제도도 모른다고 "
-    "가정하세요. 주어진 '원문 기사'와 분류된 사실만 사용합니다.\n"
+    "가정하세요. 주어진 '원문 기사'와 분류된 사실, 그리고 [추가 자료조사]만 사용합니다. "
+    "원문 기사는 뼈대일 뿐입니다 — 기사 문장을 이어 붙이는 것이 아니라, [추가 자료조사]로 "
+    "보강한 배경·경위·입장·장단점·반응을 엮어 이 사건을 분석하는 새 글을 씁니다.\n"
     "[분석 1단계] 블록이 함께 주어지면, 그건 당신이 이미 이 기사를 다 읽고 이해해서 "
     "정리해 둔 내용입니다. 원문을 다시 해석할 필요 없이 그 이해를 바탕으로 곧장 "
     "새 문장을 쓰세요.\n"
@@ -123,6 +125,11 @@ _SYSTEM = (
     "구체적으로 넣어 왜 그런지 보여줄 것 — '정책실장은 정부 정책 전반을 조율하는 "
     "자리입니다' (X, 여전히 추상적) → '정책실장은 대통령의 정책을 총괄하는 자리로, "
     "취임 두 달 만에 물러난 건 전임 정부에서도 드문 일입니다' (O, 구체적 근거).\n"
+    "  - [자료조사가 있을 때] summary는 배경과 경위(왜 이 일이 생겼는지, 날짜순), what은 "
+    "지금 어디까지 진행됐는지와 핵심 인물의 발언(끝까지), sides는 정부·여당·야당·전문가 "
+    "입장에 더해 장점과 단점을 각각 객관적으로, outro는 그 종합에서 나온 균형 잡힌 "
+    "판단 한 문장(어느 한쪽 편들기 금지)으로 쓸 것. 장점만 또는 단점만 말하지 말고 "
+    "둘 다, 자료에 근거가 있는 만큼만.\n"
     "  - what: 실제로 무슨 일이 있었는지 + 그게 왜 특이하거나 중요한지. '그런데', "
     "'여기서 진짜 핵심은'으로 이어가며 2~3문장. 원문에 있는 날짜·숫자·구체적 조치 "
     "내용을 반드시 살려 쓸 것 — '큰 변화가 있었습니다' (X, 두루뭉술) → '이번 개편으로 "
@@ -203,10 +210,19 @@ _ANALYSIS_SYSTEM = (
     "(예: {\"who\":\"OO대 정치외교학과 OO 교수\",\"position\":\"...\",\"why\":\"...\"}) "
     "— 원문에 실제로 있는 경우에만, 없는 목소리를 지어내지 말 것.\n"
     "7) confirmed_fact: 여러 출처가 교차 확인한 확실한 사실 한 문장, 완결형.\n"
-    "원문에 없는 사실을 지어내지 말 것. 출력은 JSON 하나만:\n"
+    "[추가 자료조사]가 주어지면 아래도 채울 것 (없으면 빈 값):\n"
+    "8) background: 이 일이 왜 일어났는지 배경과 경위 2~3문장(날짜 포함).\n"
+    "9) statements: 핵심 인물의 발언을 요약하지 말고 실제로 한 말 그대로 끝까지 "
+    "[{\"who\":\"...\",\"text\":\"...\"}] — 자료에 있는 것만.\n"
+    "10) pros / cons: 이 사안(정책·결정)의 장점(기대 효과)과 단점(우려·비판)을 각각 "
+    "객관적으로, 근거가 자료에 있는 것만.\n"
+    "11) reactions: 여론·온라인·전문가 반응 — 검증되지 않은 반응은 '~라는 반응이 있다'로.\n"
+    "원문·자료에 없는 사실을 지어내지 말 것. 출력은 JSON 하나만:\n"
     '{"who":[{"name":"...","role":"..."}],"what_happened":"...","why_now":"...",'
     '"why_it_matters":"...","terms":{"...":"..."},'
-    '"sides":[{"who":"...","position":"...","why":"..."}],"confirmed_fact":"..."}'
+    '"sides":[{"who":"...","position":"...","why":"..."}],"confirmed_fact":"...",'
+    '"background":"...","statements":[{"who":"...","text":"..."}],'
+    '"pros":["..."],"cons":["..."],"reactions":["..."]}'
 )
 
 
@@ -226,6 +242,7 @@ def _analysis_payload(meta: dict[str, Any]) -> str:
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []), 8)}\n\n"
         f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 6)}\n\n"
         f"[등장 인물·정당] {who}\n\n"
+        f"{meta.get('research', '')}"
         "위 내용을 다 읽고 이해한 대로 JSON 하나로 정리하세요."
     )
 
@@ -288,6 +305,26 @@ def analyze_story(meta: dict[str, Any], cfg: Settings) -> dict[str, Any] | None:
     return None
 
 
+def _research_lines(u: dict[str, Any]) -> str:
+    """The research-derived part of stage 1 (background, verbatim statements,
+    pros/cons, reactions) — empty when no research was available."""
+    def _list(v: Any) -> list[str]:
+        return [str(x).strip() for x in (v if isinstance(v, list) else []) if str(x).strip()]
+
+    out = []
+    if str(u.get("background") or "").strip():
+        out.append(f"배경·경위: {u['background']}")
+    st = [f"{x.get('who', '')}: \"{x.get('text', '')}\"" for x in (u.get("statements") or [])
+          if isinstance(x, dict) and x.get("text")]
+    if st:
+        out.append("발언(끝까지):\n" + "\n".join(f"- {t}" for t in st[:5]))
+    for key, label in (("pros", "장점"), ("cons", "단점·우려"), ("reactions", "반응")):
+        vals = _list(u.get(key))
+        if vals:
+            out.append(f"{label}:\n" + "\n".join(f"- {t}" for t in vals[:4]))
+    return "\n".join(out)
+
+
 def _understanding_block(u: dict[str, Any] | None) -> str:
     """Stage 1's output, formatted for stage 2's prompt. Empty string when
     stage 1 didn't run or didn't return anything usable."""
@@ -309,7 +346,8 @@ def _understanding_block(u: dict[str, Any] | None) -> str:
         f"왜 중요한지: {u.get('why_it_matters', '')}\n"
         f"풀어줘야 할 용어:\n{term_lines}\n"
         f"입장 차이:\n{side_lines}\n"
-        f"확인된 사실: {u.get('confirmed_fact', '')}\n\n"
+        f"확인된 사실: {u.get('confirmed_fact', '')}\n"
+        f"{_research_lines(u)}\n"
     )
 
 
@@ -344,6 +382,7 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]],
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []))}\n\n"
         f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 5)}\n\n"
         f"[등장 인물·정당] {who}\n"
+        f"{meta.get('research', '')}"
         f"[보도 매체 성향] {', '.join(meta.get('leans', [])) or '(불명)'}\n"
         f"[이 기사의 핵심 인물/주제] {meta.get('topic', '') or '(없음)'}\n\n"
         f"[쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"

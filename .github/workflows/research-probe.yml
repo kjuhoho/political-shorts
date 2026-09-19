@@ -1,0 +1,43 @@
+name: research probe (diagnostic)
+
+# Manual only. Runs the research stage (news search, web/official notes, YouTube)
+# for one topic and prints what each source returned. Builds and publishes
+# nothing. Keys come from the same secrets as the daily job and are masked in logs.
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "headline / topic to research"
+        default: "이재명 대통령 이란 파병"
+      actor:
+        description: "main person (optional)"
+        default: "이재명"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: pip install -e .
+      - name: write keys
+        env:
+          PS_GROQ_KEY: ${{ secrets.PS_GROQ_KEY }}
+          PS_GEMINI_KEY: ${{ secrets.PS_GEMINI_KEY }}
+          PS_YT_API_KEY: ${{ secrets.PS_YT_API_KEY }}
+        run: |
+          : > .env
+          [ -n "$PS_GROQ_KEY" ]   && echo "GROQ_API_KEY=$PS_GROQ_KEY" >> .env
+          [ -n "$PS_GEMINI_KEY" ] && echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
+          [ -n "$PS_YT_API_KEY" ] && echo "YOUTUBE_API_KEY=$PS_YT_API_KEY" >> .env
+          echo "LLM_PROVIDER=groq" >> .env
+          true
+      - name: probe
+        env:
+          TOPIC: ${{ inputs.topic }}
+          ACTOR: ${{ inputs.actor }}
+        run: python scripts/research_probe.py "$TOPIC" "$ACTOR"

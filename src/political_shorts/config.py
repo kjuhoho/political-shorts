@@ -135,6 +135,10 @@ class Settings:
     # cost) and only adds generic stock (flags, assembly, city, ballots).
     # OFF by default — enable once validated so it can't destabilise the live run.
     broll_enabled: bool = False
+    # Research stage: extra news / web+official statements / YouTube gathered after a
+    # story is picked, so the script is an analysis, not a re-telling. Best-effort.
+    research_enabled: bool = True
+    youtube_api_key: str = ""         # YouTube Data API v3 key (search + comments)
     broll_max_count: int = 3
     broll_max_mb: int = 40            # skip anything larger (GHA transcode cost)
     broll_cache_dir: str = ""         # resolved to ROOT/assets/cache/footage if blank
@@ -266,6 +270,8 @@ def load_settings() -> Settings:
         image_providers=_get("IMAGE_PROVIDERS", "wikimedia"),
         image_cache_dir=_resolve(_get("IMAGE_CACHE_DIR", "") or "assets/cache/images"),
         broll_enabled=_get_bool("BROLL_ENABLED", False),
+        research_enabled=_get_bool("RESEARCH_ENABLED", True),
+        youtube_api_key=_get("YOUTUBE_API_KEY", ""),
         broll_max_count=_get_int("BROLL_MAX_COUNT", 3),
         broll_max_mb=_get_int("BROLL_MAX_MB", 40),
         broll_cache_dir=_resolve(_get("BROLL_CACHE_DIR", "") or "assets/cache/footage"),

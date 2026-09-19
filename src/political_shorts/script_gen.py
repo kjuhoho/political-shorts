@@ -53,8 +53,10 @@ _NARR_CAP = {"hook": 42, "summary": 155, "what": 180, "reaction": 90,
 # wanted the "sides" card able to carry a real 3-voice structure (both
 # parties + an expert/third-party view when the source actually has one),
 # not just two short attributed lines.
-_NARR_CAP_LLM = {"hook": 66, "summary": 150, "what": 190, "reaction": 120,
-                 "factcheck": 170, "sides": 260, "outro": 88}
+# summary/what/sides/outro raised again with the research stage: those cards now
+# carry background + timeline, a full quote, and pros/cons, not just a re-telling.
+_NARR_CAP_LLM = {"hook": 66, "summary": 210, "what": 250, "reaction": 120,
+                 "factcheck": 170, "sides": 340, "outro": 120}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -743,6 +745,17 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             "leans": [_LEAN_KO.get(x, x) for x in leans],
             "topic": _pick_actor(headline, entities, frame),
         }
+        # RESEARCH: the seed articles are only the skeleton — gather extra news,
+        # web/official statements and YouTube signals so the writer explains the
+        # story instead of re-telling those articles. Best-effort and cached.
+        meta["research"] = ""
+        if getattr(cfg, "research_enabled", True):
+            from . import research
+            try:
+                meta["research"] = research.pack_block(
+                    research.build_pack(headline, meta["topic"], cfg))
+            except Exception as exc:  # pragma: no cover - defensive
+                log.info("research skipped (%s)", str(exc)[:80])
         base_script_meta = {
             "headline": headline, "frame": frame.kind,
             "n_sources": n_sources, "sources": _sources_from_rows(rows),
