@@ -21,10 +21,12 @@ import hashlib
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 
 import feedparser
 import requests
@@ -78,6 +80,90 @@ def gnews(query: str, limit: int = 8) -> list[dict[str, str]]:
         if len(out) >= limit:
             break
     return out
+
+
+# ------------------------------------------------------------ article bodies
+def bing_news(query: str, limit: int = 8) -> list[dict[str, str]]:
+    """News search whose feed carries the DIRECT article URL (Google News links
+    are redirects that can't be fetched), so bodies can actually be read."""
+    if not query:
+        return []
+    url = f"https://www.bing.com/news/search?q={quote(query)}&format=rss&mkt=ko-KR"
+    try:
+        r = requests.get(url, headers={"User-Agent": _UA}, timeout=15)
+        r.raise_for_status()
+    except Exception as exc:  # pragma: no cover - network dependent
+        log.info("research: bing news failed (%s)", str(exc)[:80])
+        return []
+    out: list[dict[str, str]] = []
+    for e in feedparser.parse(r.content).entries:
+        link = e.get("link", "")
+        direct = (parse_qs(urlparse(link).query).get("url") or [""])[0]
+        title = clean_text(e.get("title", ""))
+        if not (direct.startswith("http") and title):
+            continue
+        source = clean_text(e.get("news_source", "")) or urlparse(direct).netloc.replace("www.", "")
+        out.append({"title": title, "source": source, "link": direct})
+        if len(out) >= limit:
+            break
+    return out
+
+
+class _Paragraphs(HTMLParser):
+    """Collects <p> text, skipping script/style/nav-ish blocks (stdlib only)."""
+    _SKIP = {"script", "style", "noscript", "nav", "header", "footer", "aside", "form"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.paras: list[str] = []
+        self._skip = 0
+        self._p = False
+        self._buf: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip += 1
+        elif tag == "p" and not self._skip:
+            self._p, self._buf = True, []
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP and self._skip:
+            self._skip -= 1
+        elif tag == "p" and self._p:
+            txt = re.sub(r"\s+", " ", "".join(self._buf)).strip()
+            if len(txt) >= 30:
+                self.paras.append(txt)
+            self._p = False
+
+    def handle_data(self, data):
+        if self._p and not self._skip:
+            self._buf.append(data)
+
+
+def article_text(url: str, limit: int = 2600) -> str:
+    """The readable body of one public news page ('' when it can't be read)."""
+    try:
+        r = requests.get(url, headers={"User-Agent": _UA}, timeout=12)
+        if r.status_code != 200:
+            return ""
+        if not r.encoding or r.encoding.lower() == "iso-8859-1":
+            r.encoding = r.apparent_encoding or "utf-8"
+        parser = _Paragraphs()
+        parser.feed(r.text)
+    except Exception:  # pragma: no cover - network dependent
+        return ""
+    text = " ".join(parser.paras)
+    return text[:limit] if len(text) >= 200 else ""
+
+
+def fetch_bodies(items: list[dict[str, str]], want: int = 5) -> list[dict[str, str]]:
+    """Read up to `want` articles in parallel; keeps only the ones that had a body."""
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        texts = list(ex.map(lambda it: article_text(it["link"]), items[: want * 2]))
+    out = [{**it, "text": tx} for it, tx in zip(items, texts) if tx]
+    return out[:want]
 
 
 # ----------------------------------------------------------------- web notes
@@ -144,7 +230,54 @@ def _usable(text: str) -> bool:
     return _has_content(obj) if obj is not None else len(text.strip()) >= 80
 
 
-def web_notes(headline: str, topic: str, cfg: Settings) -> dict[str, Any]:
+_EXTRACT_SYSTEM = (
+    "당신은 한국 정치 전문 리서처입니다. 아래에 같은 사안을 다룬 여러 기사 본문이 주어집니다. "
+    "이 본문들에 실제로 적힌 내용만으로, 뉴스 기사 한 편을 쓰기 위한 조사 노트를 JSON으로 "
+    "정리하세요.\n"
+    "규칙:\n"
+    "1) 본문에 없는 내용은 절대 쓰지 말고, 없으면 빈 문자열/빈 배열로 둘 것.\n"
+    "2) statements: 정치인·정부·정당의 발언은 요약하지 말고 본문에 적힌 말을 끝까지 그대로 "
+    "옮길 것(누가·언제·어디서). 출처는 매체명.\n"
+    "3) positions: 정부·여당·야당·기관의 입장과 그 이유. experts: 전문가·학계 평가.\n"
+    "4) pros / cons: 이 사안의 장점(기대 효과)과 단점(우려·비판)을 각각 본문 근거가 있는 "
+    "것만, 객관적으로. 한쪽 편을 들지 말 것.\n"
+    "5) reactions: 여론조사·시민단체·온라인 반응. 검증되지 않은 반응은 그렇게 표시.\n"
+    "6) background: 왜 이 일이 일어났는지 배경과 경위 2~3문장(날짜 포함). timeline은 날짜순.\n"
+    '출력은 JSON 하나만: {"background":"","timeline":["날짜: 사건"],"status":"",'
+    '"positions":[{"who":"","position":"","why":"","source":""}],'
+    '"statements":[{"who":"","text":"","when":"","source":""}],'
+    '"experts":[{"who":"","view":"","source":""}],"pros":[""],"cons":[""],'
+    '"reactions":[{"where":"","summary":""}]}'
+)
+
+
+def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings) -> dict[str, Any]:
+    from .llm import complete
+
+    docs = "\n\n".join(f"[기사{i} — {b['source']}] {b['title']}\n{b['text']}"
+                       for i, b in enumerate(bodies, 1))
+    prompt = (f"[주제] {clean_text(headline)}\n\n{docs[:9000]}\n\n"
+              "위 기사들만 근거로 조사 노트 JSON을 작성하세요.")
+    try:
+        raw = complete(prompt, cfg, max_tokens=1800, system=_EXTRACT_SYSTEM)
+    except Exception as exc:  # pragma: no cover - network dependent
+        log.info("research: note extraction failed (%s)", str(exc)[:100])
+        return {}
+    obj = _json_obj(raw)
+    return obj if obj is not None and _has_content(obj) else {}
+
+
+def web_notes(headline: str, topic: str, cfg: Settings, query: str = "") -> dict[str, Any]:
+    """Structured research notes for one story. Reads the actual bodies of extra
+    articles and extracts from them (grounded in real text); only if none could
+    be read does it fall back to a live-web-search LLM."""
+    bodies = fetch_bodies(bing_news(query or build_query(headline, topic)))
+    if bodies:
+        notes = _extract_notes(headline, bodies, cfg)
+        if notes:
+            notes["sources"] = [{"title": b["title"], "url": b["link"]} for b in bodies]
+            log.info("research: notes extracted from %d article bodies", len(bodies))
+            return notes
     from .llm import web_search
 
     today = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
