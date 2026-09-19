@@ -352,7 +352,11 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
     guard = 0
     while total() > budget and guard < 12:
         guard += 1
-        pool = [s for s in segments if s.get("narration") and s["role"] in ("what", "sides")]
+        # a card's LAST sentence is never shrunk away: trimming used to delete a
+        # one-sentence what/sides card outright ("dropped what card — no clean
+        # sentence after trim"), i.e. the analysis was the first thing sacrificed.
+        pool = [s for s in segments if s.get("narration") and s["role"] in ("what", "sides")
+                and len(re.split(r"(?<=[다요.!?])\s+", s["narration"])) > 1]
         if not _shrink_longest(pool):
             break
     guard = 0
@@ -819,8 +823,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         best_score = -1
         best_segments, best_title, best_report = segments, llm_title, None
         # an analysis with real background, a full quote, positions and pros/cons
-        # needs more room than a one-fact brief — lift the target to ~75s
-        _budget = max((max(lp.target_s, 75.0) if rich else lp.target_s) * 0.80, 26.0)
+        # needs more room than a one-fact brief — lift the target to ~90s
+        _budget = max((max(lp.target_s, 90.0) if rich else lp.target_s) * 0.80, 26.0)
         for agent_attempts in range(1, 5):
             try:
                 cand, cand_title = rewrite_segments(

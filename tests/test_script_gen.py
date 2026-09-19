@@ -218,3 +218,25 @@ def test_research_cards_never_duplicate_existing_ones_and_thin_research_is_not_r
     assert [s["role"] for s in G._with_research_cards(segs, web)] == ["summary", "what", "sides", "outro"]
     assert not G._research_rich({"background": "배경만 있음"})
     assert not G._research_rich({"pros": ["장점"]})
+
+
+def test_fit_duration_never_deletes_a_one_sentence_what_or_sides_card():
+    from political_shorts import script_gen as G
+    segs = [
+        {"role": "hook", "narration": "김승원 후보는 왜 사퇴했을까요?"},
+        {"role": "summary", "narration": "법무부 장관은 검찰 사무를 지휘하는 자리입니다. 후보자가 지명됐다가 사퇴했습니다."},
+        {"role": "what", "narration": "김 후보자는 19일 기자회견에서 국민 눈높이에 미치지 못했다며 후보직에서 물러난다고 밝혔습니다."},
+        {"role": "factcheck", "narration": "청와대는 탄원서 접수 여부를 확인하기 어렵다고 밝혔습니다."},
+        {"role": "sides", "narration": "국민의힘은 인사 검증 실패라며 사과를 요구했습니다."},
+        {"role": "outro", "narration": "후속 인선이 다시 시작됩니다. 구독과 좋아요 부탁드립니다."},
+    ]
+    out = G._fit_duration([dict(s) for s in segs], budget=8.0, caps=G._NARR_CAP_LLM)   # absurdly tight
+    roles = [s["role"] for s in out]
+    assert "what" in roles and "sides" in roles
+
+
+def test_watch_and_see_outro_variants_are_vague():
+    from political_shorts import script_llm as S
+    assert S._is_vague_outro("후속 인선 작업이 어떻게 풀릴지 지켜볼 필요가 있습니다")
+    assert S._is_vague_outro("논란의 향방을 눈여겨볼 필요가 있습니다.")
+    assert not S._is_vague_outro("후보 지명이 철회되면서 후속 인선이 처음부터 다시 시작됩니다.")
