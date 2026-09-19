@@ -189,3 +189,32 @@ def test_fit_duration_never_ships_a_fabricated_complete_looking_summary():
     # either genuinely absent, or present AND a real complete sentence —
     # never present with fabricated-looking punctuation on a fragment
     assert summary is None or sg._sentence_complete(summary["narration"])
+
+
+def test_research_adds_what_and_sides_cards_when_the_template_has_none():
+    from political_shorts import script_gen as G
+    segs = [{"role": "hook", "narration": "훅"}, {"role": "summary", "narration": "배경입니다."},
+            {"role": "factcheck", "narration": "사실입니다."}, {"role": "outro", "narration": "끝."}]
+    web = {"statements": [{"who": "이재명 대통령", "text": "전쟁에 관여하는 파병은 없다", "source": "매체"}],
+           "positions": [{"who": "국민의힘", "position": "한미동맹 차원에서 파병을 주장한다", "why": "동맹 의무"}],
+           "pros": ["원유 수송로 안정"], "cons": ["동맹 압박"]}
+    assert G._research_rich(web)
+    out = G._with_research_cards(segs, web)
+    roles = [s["role"] for s in out]
+    assert roles == ["hook", "summary", "what", "factcheck", "sides", "outro"]
+    what = next(s for s in out if s["role"] == "what")["narration"]
+    assert what.startswith("이재명 대통령은") and "전쟁에 관여하는 파병은 없다" in what
+    assert next(s for s in out if s["role"] == "sides")["narration"].startswith("국민의힘은")
+    assert segs == [{"role": "hook", "narration": "훅"}, {"role": "summary", "narration": "배경입니다."},
+                    {"role": "factcheck", "narration": "사실입니다."}, {"role": "outro", "narration": "끝."}]
+
+
+def test_research_cards_never_duplicate_existing_ones_and_thin_research_is_not_rich():
+    from political_shorts import script_gen as G
+    segs = [{"role": "summary", "narration": "a."}, {"role": "what", "narration": "b."},
+            {"role": "sides", "narration": "c."}, {"role": "outro", "narration": "d."}]
+    web = {"statements": [{"who": "대통령", "text": "말", "source": "s"}],
+           "positions": [{"who": "야당", "position": "반대한다"}]}
+    assert [s["role"] for s in G._with_research_cards(segs, web)] == ["summary", "what", "sides", "outro"]
+    assert not G._research_rich({"background": "배경만 있음"})
+    assert not G._research_rich({"pros": ["장점"]})

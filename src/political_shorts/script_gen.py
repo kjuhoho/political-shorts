@@ -103,6 +103,43 @@ def _spoken(text: str) -> str:
     return ""
 
 
+def _research_rich(web: dict[str, Any]) -> bool:
+    """Enough real material (quotes / positions / pros-cons) to write an analysis
+    instead of a re-telling."""
+    return sum(bool(web.get(k)) for k in ("statements", "positions", "pros", "cons")) >= 2
+
+
+def _with_research_cards(segments: list[dict[str, Any]], web: dict[str, Any]) -> list[dict[str, Any]]:
+    """The LLM can only rewrite cards that exist. When the seed articles carried
+    no quote or party positions the template has no "what"/"sides" card, so the
+    researched material had nowhere to go. Add those two cards (with a safe,
+    attributed draft taken from the research) so the writer can fill them."""
+    out = [dict(s) for s in segments]
+    have = {s["role"] for s in out}
+
+    if "what" not in have:
+        st = next((x for x in web.get("statements") or []
+                   if isinstance(x, dict) and x.get("text") and x.get("who")), None)
+        if st:
+            who = str(st["who"]).strip()
+            draft = f"{who}{josa(who, ('은', '는'))[len(who):]} \"{str(st['text']).strip()}\"라고 밝혔습니다."
+            idx = max((i for i, x in enumerate(out) if x["role"] == "summary"), default=0) + 1
+            out.insert(idx, {"role": "what", "kicker": "무슨 일이고 왜 중요하냐면",
+                             "caption": clip_sentence(draft, CAPTION_LIMIT), "narration": draft,
+                             "cues": []})
+    if "sides" not in have:
+        pos = next((x for x in web.get("positions") or []
+                    if isinstance(x, dict) and x.get("who") and x.get("position")), None)
+        if pos:
+            who = str(pos["who"]).strip()
+            draft = f"{who}{josa(who, ('은', '는'))[len(who):]} {str(pos['position']).strip().rstrip('.')}는 입장입니다."
+            idx = next((i for i, x in enumerate(out) if x["role"] == "outro"), len(out))
+            out.insert(idx, {"role": "sides", "kicker": "갈리는 입장",
+                             "caption": clip_sentence(draft, CAPTION_LIMIT + 12), "narration": draft,
+                             "attributed": True, "cues": []})
+    return out
+
+
 def _mark_incomplete_factcheck_rows(segments: list[dict[str, Any]]) -> None:
     """UNIVERSAL backstop for the factcheck table, mutating in place: whichever
     path actually built a row (factcheck.rows()'s template _clip(), or the
@@ -749,13 +786,18 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         # web/official statements and YouTube signals so the writer explains the
         # story instead of re-telling those articles. Best-effort and cached.
         meta["research"] = ""
+        research_web: dict[str, Any] = {}
         if getattr(cfg, "research_enabled", True):
             from . import research
             try:
-                meta["research"] = research.pack_block(
-                    research.build_pack(headline, meta["topic"], cfg))
+                _pack = research.build_pack(headline, meta["topic"], cfg)
+                meta["research"] = research.pack_block(_pack)
+                research_web = (_pack or {}).get("web") or {}
             except Exception as exc:  # pragma: no cover - defensive
                 log.info("research skipped (%s)", str(exc)[:80])
+        rich = _research_rich(research_web)
+        if rich:
+            template_segments = _with_research_cards(template_segments, research_web)
         base_script_meta = {
             "headline": headline, "frame": frame.kind,
             "n_sources": n_sources, "sources": _sources_from_rows(rows),
@@ -776,7 +818,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         feedback_history: list[str] = []
         best_score = -1
         best_segments, best_title, best_report = segments, llm_title, None
-        _budget = max(lp.target_s * 0.80, 26.0)
+        # an analysis with real background, a full quote, positions and pros/cons
+        # needs more room than a one-fact brief — lift the target to ~75s
+        _budget = max((max(lp.target_s, 75.0) if rich else lp.target_s) * 0.80, 26.0)
         for agent_attempts in range(1, 5):
             try:
                 cand, cand_title = rewrite_segments(
