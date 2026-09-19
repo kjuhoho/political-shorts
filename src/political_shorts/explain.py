@@ -104,7 +104,9 @@ SIGNIFICANCE: dict[str, str] = {
     "generic": "이런 정치적 결정은 이후 관련 정책과 여야 관계에 그대로 영향을 미칩니다",
 }
 
-# what the confirmed fact MEANS ("이게 무슨 뜻이냐면 …")
+# what the confirmed fact MEANS — a kind-specific consequence only. There is
+# deliberately no "generic" entry: a one-size-fits-all line ("지금은 방향이
+# 정해지는 중이라…") is filler, so an unclassified story just gets no meaning line.
 MEANING: dict[str, str] = {
     "personnel": "임명된 지 얼마 안 돼 물러난 만큼, 인사 검증이나 내부 갈등을 둘러싼 논란이 이어질 수 있다는 뜻입니다",
     "appoint": "이 인선이 확정되면 해당 분야 정책이 새 인물의 방향대로 움직이게 된다는 뜻입니다",
@@ -113,7 +115,6 @@ MEANING: dict[str, str] = {
     "scandal": "아직 수사와 검증이 진행 중이라, 사실로 확정되기 전까지는 '의혹' 단계라는 뜻입니다",
     "poll": "숫자 하나로 단정하기보다 흐름과 오차범위를 함께 봐야 한다는 뜻입니다",
     "remark": "발언 자체보다 그 말이 불러온 정치적 반응이 더 중요해졌다는 뜻입니다",
-    "generic": "지금은 방향이 정해지는 중이라, 다음 전개를 지켜봐야 한다는 뜻입니다",
 }
 
 _ROLE_WORDS = sorted(ROLE_GLOSS, key=len, reverse=True)
@@ -183,7 +184,7 @@ def significance(frame: Frame) -> str:
 
 
 def meaning(frame: Frame) -> str:
-    return MEANING.get(frame.kind, MEANING["generic"])
+    return MEANING.get(frame.kind, "")
 
 
 def why_it_matters(fact_sentence: str, frame: Frame) -> str:

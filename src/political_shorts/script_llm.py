@@ -93,6 +93,11 @@ _SYSTEM = (
     "속에서 여당은 …, 야당은 …, 그리고 OO 교수는 …라고 짚었습니다' 순서로. 각 "
     "목소리는 실제로 source에 있는 만큼만 — 정당 하나 + 전문가만 있으면 그 둘만.\n"
     "6) 원문에 없는 사실·숫자·발언을 지어내지 말 것.\n"
+    "6-1) 정치인의 발언을 다룰 땐 '어떤 발언을 했다', '논란이 되는 발언'처럼 발언이 있었다는 "
+    "사실만 말하고 멈추지 말 것 — 원문에 있는 발언 내용을 끝까지, 그 사람이 실제로 한 말 "
+    "그대로 충실하게 풀어 쓸 것(누가·언제·어디서·무엇이라고 했는지). 원문에 발언 내용 "
+    "자체가 없으면 발언 언급을 아예 빼고, 있는 사실만 쓸 것. 기사 문장을 이어 붙이는 "
+    "것이 아니라 사건의 경위·이유·쟁점을 설명하는 글이어야 함.\n"
     "7) 화면 너머 시청자에게 직접 설명하듯 쓸 것 — 사실을 나열만 하고 끝내는 "
     "'혼자 말하고 혼자 이해하는' 느낌을 절대 남기지 말 것. 각 카드가 사실 전달에서 "
     "끝나지 않고, 그게 왜 중요한지·시청자에게 어떤 의미인지까지 매번 짚을 것. "
@@ -124,8 +129,10 @@ _SYSTEM = (
     "내년 예산 700조원 중 상당액이 재배정됩니다' (O, 실제 수치·내용). 숫자나 구체적 "
     "조치가 원문에 없으면 지어내지 말고, 대신 무엇이 어떻게 바뀌는지 구체적인 동작으로 "
     "설명할 것.\n"
-    "  - factcheck: narration은 '확인된 사실은 이겁니다.'로 시작 → 교차 검증된 사실 "
-    "한 가지 → '이게 무슨 뜻이냐면 …'으로 그 사실의 의미를 한 문장 더 설명. 이 '사실' "
+    "  - factcheck: 교차 검증된 사실 한 가지를 바로 말하고, 그 사실이 실제로 어떤 결과나 "
+    "변화로 이어지는지 구체적으로 한 문장 더 설명. '확인된 사실은 이겁니다', '이게 무슨 "
+    "뜻이냐면', '지금은 방향이 정해지는 중이라' 같은 군더더기 도입·맺음 문구는 절대 쓰지 "
+    "말 것 — 내용부터 바로 시작할 것. 이 '사실' "
     "문장에는 최소한 육하원칙의 핵심 — 언제(원문에 날짜가 있으면 '9월 15일'처럼 반드시 "
     "포함), 누가(이름 + 소속·직함, 예: '더불어민주당 김민석 대표'), 무엇을 했는지("
     "'~라고 밝혔다/발표했다/논의했다' 같은 구체적 행위) — 가 들어갈 것. 헤드라인을 "
@@ -345,8 +352,8 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]],
         "끄는 2줄 title도 지어 JSON으로만 답하세요. (hook은 쓰지 마세요.)\n"
         '예: {"title":["한동훈 녹취록 공개","유출 경위 조사할까?"],'
         '"summary":"한동훈은 국민의힘 대표를 지낸 인물인데, ...",'
-        '"what":"그런데 이번에 공개된 녹취록에는 ...","factcheck":"확인된 사실은 이겁니다. ... '
-        '이게 무슨 뜻이냐면 ...","sides":"민주당은 ...라는 이유로 ...","outro":"..."}'
+        '"what":"그런데 이번에 공개된 녹취록에는 ...","factcheck":"김승원 정책실장은 3일 ... '
+        '그 결과 ...","sides":"민주당은 ...라는 이유로 ...","outro":"..."}'
     )
 
 
@@ -379,6 +386,23 @@ _VAGUE_OUTRO_END = re.compile(
 
 def _is_vague_outro(narr: str) -> bool:
     return bool(_VAGUE_OUTRO_END.search(clean_text(narr)))
+
+
+# Stock lead-ins/tail-ends the templates and older prompts taught the model.
+# They carry no information, so they are removed wherever they show up, on any
+# card, whether the template or the LLM produced them.
+_FILLER = [
+    re.compile(r"확인된\s*사실은\s*이겁니다\s*[.:,]?\s*"),
+    re.compile(r"이게\s*무슨\s*뜻이냐면\s*[,:]?\s*"),
+    re.compile(r"[^.?!]*방향이\s*정해지는\s*중[^.?!]*[.?!]?\s*"),
+]
+
+
+def _strip_filler(narr: str) -> str:
+    out = narr
+    for rx in _FILLER:
+        out = rx.sub("", out)
+    return re.sub(r"\s+", " ", out).strip()
 
 
 # "hook" intentionally excluded — owned by hook_engine.py, never LLM-written
@@ -540,7 +564,7 @@ def rewrite_segments(
     cand = [dict(s) for s in segments]
     changed = 0
     for s in cand:
-        narr = new.get(s.get("role", ""))
+        narr = _strip_filler(new.get(s.get("role", "")) or "")
         lim = _LLM_LIMIT.get(s.get("role", ""))
         if not narr or lim is None:          # lim is None -> not LLM-owned (e.g. hook)
             continue

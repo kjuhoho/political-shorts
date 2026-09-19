@@ -667,7 +667,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         fact_row = next((r for r in fc_rows if r["tone"] == "ok"), None)
         fact_t = to_polite(clip_sentence(fact_row["text"], 46).rstrip(" .…")) if fact_row else ""
         if fact_t:
-            narr = f"확인된 사실은 이겁니다. {fact_t.rstrip('.')}. 이게 무슨 뜻이냐면, {explain.meaning(frame)}"
+            meaning = explain.meaning(frame)
+            narr = f"{fact_t.rstrip('.')}." + (f" {meaning}" if meaning else "")
         else:
             narr = f"{n_sources}개 매체가 이 사안을 나란히 보도했습니다."
         segments.append({"role": "factcheck", "kicker": "확인된 사실",

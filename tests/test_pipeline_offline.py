@@ -119,10 +119,11 @@ def test_outro_significance_line_never_repeated_elsewhere_when_llm_is_off(tmp_pa
     assert len(hits) == 1, f"significance line appeared {len(hits)} times: {hits}"
     outro = next(s for s in script["segments"] if s["role"] == "outro")
     assert sig_text in outro["narration"]
-    # this specific fixture has no second distinct fact — the "what" card
-    # that used to exist solely to restate the significance line is gone,
-    # not present-but-different.
-    assert not any(s["role"] == "what" for s in script["segments"])
+    # a "what" card may exist (length padding adds one once the factcheck card
+    # stopped carrying stock filler) but it must never restate the
+    # significance line — that lives in the outro alone.
+    assert all(sig_text not in s.get("narration", "")
+               for s in script["segments"] if s["role"] == "what")
 
 
 def test_what_card_drops_the_significance_line_when_a_second_fact_exists(tmp_path):

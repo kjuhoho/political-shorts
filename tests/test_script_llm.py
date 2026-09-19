@@ -499,3 +499,21 @@ def test_complete_raises_when_every_provider_fails(monkeypatch):
                               openai_api_key="", anthropic_api_key="")
     with pytest.raises(RuntimeError):
         L.complete("hi", cfg, 300, "sys")
+
+
+def test_strip_filler_removes_stock_phrases_only():
+    f = script_llm._strip_filler
+    assert f("확인된 사실은 이겁니다. 김승원은 3일 사퇴했습니다.") == "김승원은 3일 사퇴했습니다."
+    assert f("김승원은 3일 사퇴했습니다. 이게 무슨 뜻이냐면, 인사 검증 논란이 이어질 수 있습니다.") \
+        == "김승원은 3일 사퇴했습니다. 인사 검증 논란이 이어질 수 있습니다."
+    assert f("결정이 났습니다. 지금은 방향이 정해지는 중이라, 다음 전개를 지켜봐야 한다는 뜻입니다.") \
+        == "결정이 났습니다."
+    assert f("여야가 예산안에 합의했습니다.") == "여야가 예산안에 합의했습니다."
+
+
+def test_meaning_has_no_generic_filler():
+    from types import SimpleNamespace
+
+    from political_shorts import explain
+    assert explain.meaning(SimpleNamespace(kind="generic")) == ""
+    assert "정해지는 중" not in " ".join(explain.MEANING.values())
