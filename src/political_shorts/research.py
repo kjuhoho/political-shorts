@@ -343,10 +343,19 @@ def youtube(query: str, cfg: Settings, days: int = 7) -> dict[str, Any]:
             "part": "snippet", "q": query, "type": "video", "order": "relevance",
             "publishedAfter": since, "regionCode": "KR", "relevanceLanguage": "ko",
             "maxResults": 6, "key": key})
-        r.raise_for_status()
+        if r.status_code != 200:
+            # the API's own reason (keyInvalid / accessNotConfigured / quotaExceeded …);
+            # never str(exc) here — a requests error message carries the full URL incl. key
+            try:
+                err = (r.json().get("error") or {})
+                why = f"{err.get('message', '')} [{', '.join(e.get('reason', '') for e in err.get('errors', []))}]"
+            except Exception:
+                why = ""
+            log.info("research: youtube search failed (HTTP %s) %s", r.status_code, why[:220])
+            return {}
         items = r.json().get("items", [])
     except Exception as exc:  # pragma: no cover - network dependent
-        log.info("research: youtube search failed (%s)", str(exc)[:80])
+        log.info("research: youtube search failed (%s)", type(exc).__name__)
         return {}
     videos = [{"id": (i.get("id") or {}).get("videoId", ""),
                "title": clean_text((i.get("snippet") or {}).get("title", "")),
