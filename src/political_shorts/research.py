@@ -271,7 +271,9 @@ def web_notes(headline: str, topic: str, cfg: Settings, query: str = "") -> dict
     """Structured research notes for one story. Reads the actual bodies of extra
     articles and extracts from them (grounded in real text); only if none could
     be read does it fall back to a live-web-search LLM."""
-    bodies = fetch_bodies(bing_news(query or build_query(headline, topic)))
+    found = bing_news(query or build_query(headline, topic))
+    bodies = fetch_bodies(found)
+    log.info("research: %d articles found, %d readable bodies", len(found), len(bodies))
     if bodies:
         notes = _extract_notes(headline, bodies, cfg)
         if notes:

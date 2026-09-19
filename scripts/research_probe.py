@@ -32,6 +32,13 @@ def main() -> int:
     for n in news:
         print(f"  - {n['title']} ({n['source']})")
 
+    found = research.bing_news(q)
+    print(f"== bing_news (direct urls): {len(found)}")
+    for it in found[:8]:
+        n = len(research.article_text(it["link"]))
+        print(f"  - body={n:>5} chars  {it['source']}  {it['link'][:90]}")
+    print()
+
     web = research.web_notes(headline, topic, cfg)
     print(f"\n== web/official: {'ok' if web else 'EMPTY'}  keys={sorted(web)}")
     for k in ("background", "status"):
