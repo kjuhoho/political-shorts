@@ -240,3 +240,46 @@ def test_watch_and_see_outro_variants_are_vague():
     assert S._is_vague_outro("후속 인선 작업이 어떻게 풀릴지 지켜볼 필요가 있습니다")
     assert S._is_vague_outro("논란의 향방을 눈여겨볼 필요가 있습니다.")
     assert not S._is_vague_outro("후보 지명이 철회되면서 후속 인선이 처음부터 다시 시작됩니다.")
+
+
+def test_soften_replaces_slurs_and_profanity_but_leaves_allegations_and_violence():
+    from political_shorts.soften import soften_script, soften_text
+    out, hits = soften_text("그는 상대를 빨갱이라고 부르며 병신이라고 말했다")
+    assert "빨갱이" not in out and "병신" not in out and set(hits) == {"빨갱이", "병신"}
+    assert soften_text("탄원서에 성추행 의혹이 담겼다")[0] == "탄원서에 성추행 의혹이 담겼다"   # allegation kept
+    assert soften_text("처단하자는 구호")[0] == "처단하자는 구호"                             # violence is NOT softened
+    assert soften_text("")[0] == ""
+
+    script = {"headline": "토착왜구 발언 논란", "segments": [
+        {"role": "hook", "narration": "그가 국개라고 했다", "caption": "국개 발언",
+         "source": "https://example.com/빨갱이", "rows": [{"tag": "주장", "text": "쓰레기 정당이라 했다"}]}],
+        "sources": [{"name": "빨갱이 뉴스", "url": "https://x/빨갱이"}]}
+    words = soften_script(script)
+    assert set(words) == {"토착왜구", "국개", "쓰레기 정당"} or "국개" in words
+    seg = script["segments"][0]
+    assert "국개" not in seg["narration"] and "쓰레기 정당" not in seg["rows"][0]["text"]
+    assert seg["source"] == "https://example.com/빨갱이"            # non-prose fields are untouched
+    assert script["sources"][0]["url"] == "https://x/빨갱이"
+
+
+def test_every_outro_asks_for_a_comment_and_drops_the_bare_subscribe_ask():
+    from political_shorts import script_gen as G
+    q = "이번 인사 결정, 여러분은 어떻게 보시나요? 댓글로 의견을 남겨주세요."
+    segs = [{"role": "outro", "narration": "후속 인선이 다시 시작됩니다. 구독과 좋아요 눌러주시면 큰 힘이 됩니다."}]
+    G._ensure_comment_prompt(segs, q)
+    assert segs[0]["narration"] == "후속 인선이 다시 시작됩니다. " + q
+    assert "구독" not in segs[0]["narration"]
+    keep = [{"role": "outro", "narration": "김 후보의 사퇴로 인선이 원점입니다. 여러분은 어떻게 보시나요? 댓글로 남겨주세요."}]
+    G._ensure_comment_prompt(keep, q)
+    assert keep[0]["narration"].count("댓글") == 1            # an outro that already asks is left alone
+
+
+def test_engage_question_is_neutral_open_and_names_a_person_only_for_personnel():
+    from political_shorts import explain
+    from political_shorts.hook import Frame
+    personnel = explain.engage_question(Frame(kind="personnel"), "김승원")
+    assert personnel.startswith("김승원은 이번 결정") and "댓글" in personnel
+    assert explain.engage_question(Frame(kind="personnel"), "청와대") == explain.ENGAGE["personnel"]
+    for kind, text in explain.ENGAGE.items():
+        assert "댓글" in text and "?" in text, kind
+    assert explain.engage_question(Frame(kind="nonexistent")) == explain.ENGAGE["generic"]

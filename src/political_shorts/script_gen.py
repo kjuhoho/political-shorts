@@ -48,7 +48,7 @@ _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
 _NARR_CAP = {"hook": 42, "summary": 155, "what": 180, "reaction": 90,
-             "factcheck": 170, "sides": 150, "outro": 95}
+             "factcheck": 170, "sides": 150, "outro": 150}
 # sides raised 230->260 alongside script_llm._LLM_LIMIT["sides"] — user
 # wanted the "sides" card able to carry a real 3-voice structure (both
 # parties + an expert/third-party view when the source actually has one),
@@ -56,7 +56,7 @@ _NARR_CAP = {"hook": 42, "summary": 155, "what": 180, "reaction": 90,
 # summary/what/sides/outro raised again with the research stage: those cards now
 # carry background + timeline, a full quote, and pros/cons, not just a re-telling.
 _NARR_CAP_LLM = {"hook": 66, "summary": 210, "what": 250, "reaction": 120,
-                 "factcheck": 170, "sides": 340, "outro": 120}
+                 "factcheck": 170, "sides": 340, "outro": 170}
 _SILENT_CARD_SECONDS = 1.5
 
 _SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
@@ -101,6 +101,21 @@ def _spoken(text: str) -> str:
             ("다", "요", "죠", "까", "음", "됨", "함", "임", "것", "중"))):
         return t if t[-1] in ".!?" else t + "."
     return ""
+
+
+def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> None:
+    """Every video ends by asking the viewer for an opinion. The LLM is told to, but
+    this makes it certain: an outro without a comment prompt gets the question appended
+    (replacing a bare "구독과 좋아요" ask, which gives viewers nothing to do)."""
+    for s in segments:
+        if s.get("role") != "outro":
+            continue
+        n = s.get("narration", "") or ""
+        if "댓글" in n:
+            return
+        n = re.sub(r"\s*구독과?\s*좋아요[^.!?]*[.!?]?", "", n).strip()
+        s["narration"] = f"{n} {question}".strip()
+        return
 
 
 def _research_rich(web: dict[str, Any]) -> bool:
@@ -737,9 +752,10 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     payoff = explain.significance(frame).rstrip(" .")
     caveat = ("" if len(set(leans) - {"wire"}) >= 2 or len(leans) >= 3
               else " 아직 보도가 많지 않아 추가 확인이 필요합니다.")
+    _engage = explain.engage_question(frame, pick_actor(headline, entities, frame))
     segments.append({"role": "outro", "kicker": "",
-                     "caption": "구독과 좋아요가 큰 힘이 됩니다",
-                     "narration": f"{payoff}.{caveat} 구독과 좋아요 눌러주시면 큰 힘이 됩니다."})
+                     "caption": "여러분의 생각은? 댓글로 남겨주세요",
+                     "narration": f"{payoff}.{caveat} {_engage}"})
 
     # 6b) optional — let a (free) LLM rewrite the narration into a natural,
     #     lay-friendly explanation that flows card to card. Falls back silently
@@ -840,6 +856,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
             cand = [dict(s) for s in cand]
             _mark_incomplete_factcheck_rows(cand)
             cand = _fit_duration(cand, budget=_budget, caps=_NARR_CAP_LLM)
+            _ensure_comment_prompt(cand, explain.engage_question(frame, pick_actor(headline, entities, frame)))
 
             agent_report = quality_agent.review({"headline": headline, "segments": cand}, cfg)
             cand_score = agent_report.score if agent_report.available else -1
@@ -863,6 +880,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         _mark_incomplete_factcheck_rows(segments)
         _budget = max(lp.target_s * 0.80, 22.0)
         segments = _fit_duration(segments, budget=_budget, caps=_NARR_CAP)
+        _ensure_comment_prompt(segments, explain.engage_question(frame, pick_actor(headline, entities, frame)))
 
     # --- FULL-SCRIPT SUBTITLE: the on-screen caption IS the narration (the words
     #     the voice is saying), verbatim — never compressed. It is split into
@@ -998,6 +1016,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         "factcheck": fc.to_dict(),
         "disclaimer": DISCLAIMER,
         "style": cfg.headline_style,
+        "engage_question": explain.engage_question(frame, pick_actor(headline, entities, frame)),
         "quality_agent": {
             "available": bool(agent_report and agent_report.available),
             "score": agent_report.score if agent_report else 0,
@@ -1022,6 +1041,11 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
         agent_report.score if agent_report else "n/a", quality_agent.PASS_SCORE if llm_on else 0,
         agent_attempts, "" if agent_attempts == 1 else "s",
     )
+    # harsh wording is rewritten, not refused — see soften.py
+    from .soften import soften_script
+    softened = soften_script(script)
+    if softened:
+        log.info("softened %d harsh expression(s): %s", len(softened), ", ".join(sorted(set(softened))))
     return script
 
 

@@ -47,3 +47,12 @@ def test_no_portraits_falls_back_to_locations_cleanly():
     out = _assign_images(SEGMENTS, imgs, topic="패스트트랙")
     assert all(p is None or p.startswith("L_") for p in out)
     assert len(out) == len(SEGMENTS)
+
+
+def test_thumb_lines_keep_three_to_five_big_words():
+    from political_shorts.video import _thumb_lines
+    assert _thumb_lines(["김승원 법무장관 후보자 청문회 논란 총정리", "오늘 국회서 직접 입 열까?"]) == ["김승원 법무장관 후보자", "직접 입 열까?"]
+    assert _thumb_lines(["한동훈 녹취록 공개"]) == ["한동훈 녹취록 공개"]
+    assert _thumb_lines([]) == []
+    two = _thumb_lines(["대통령 vs 대법원장", "정면충돌?"])
+    assert two == ["대통령 vs 대법원장", "정면충돌?"]

@@ -414,6 +414,35 @@ def _wedge(w: int, h: int, col, alpha: int = 235) -> Image.Image:
     return layer
 
 
+def _thumb_lines(lines: list[str]) -> list[str]:
+    """3-5 big words is what reads on a phone thumbnail. Keeps the subject line's leading
+    words and the question line's TRAILING words (the curiosity lives at the end)."""
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return []
+
+    def _head(text: str, max_words: int, max_chars: int) -> str:
+        out: list[str] = []
+        for w in text.split():
+            if len(out) >= max_words or len(" ".join(out + [w])) > max_chars:
+                break
+            out.append(w)
+        return " ".join(out) or text[:max_chars]
+
+    def _tail(text: str, max_words: int, max_chars: int) -> str:
+        out: list[str] = []
+        for w in reversed(text.split()):
+            if len(out) >= max_words or len(" ".join([w] + out)) > max_chars:
+                break
+            out.insert(0, w)
+        return " ".join(out) or text[-max_chars:]
+
+    first = _head(lines[0], 3, 12)
+    if len(lines) == 1:
+        return [first]
+    return [first, _tail(lines[-1], 3, 10)]
+
+
 def _thumbnail_png(script: dict[str, Any], bg_path: str | None, portrait_path: str | None,
                    out_png: Path, cfg: Settings) -> None:
     w, h = cfg.video_width, cfg.video_height
@@ -474,7 +503,7 @@ def _thumbnail_png(script: dict[str, Any], bg_path: str | None, portrait_path: s
 
     # 5) THE HEADLINE — big stacked BlackHanSans. Line 1 gold; the punch line
     #    sits in a solid gold box with near-black text (news-caption look).
-    lines = [clean_text(x) for x in (script.get("title") or []) if clean_text(x)][:3]
+    lines = _thumb_lines([clean_text(x) for x in (script.get("title") or []) if clean_text(x)][:3])
     if not lines:
         lines = [clean_text(script.get("topic") or script.get("headline", ""))[:14]]
     max_tw = int(w * 0.86)
@@ -502,8 +531,7 @@ def _thumbnail_png(script: dict[str, Any], bg_path: str | None, portrait_path: s
     ry = h - 150
     d.line([(margin, ry), (w - margin, ry)], fill=(255, 255, 255, 65), width=3)
     d.rectangle([margin, ry - 3, margin + 120, ry + 3], fill=(*GOLD, 255))
-    d.text((margin, ry + 16), "정치 뉴스, 쉽게 풀어드립니다 · 여러 매체 종합",
-           font=_font(cfg.font_path, 30), fill=(*PAPER, 230))
+    # (no tagline here any more — small dense text is unreadable on a phone thumbnail)
 
     base.convert("RGB").save(out_png, "JPEG", quality=92)
 

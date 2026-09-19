@@ -183,6 +183,30 @@ def significance(frame: Frame) -> str:
     return to_polite(SIGNIFICANCE.get(frame.kind, SIGNIFICANCE["generic"]))
 
 
+# Channel feedback: viewers watched and scrolled on (300-1,200 views, 0-2 likes). A bare
+# "구독과 좋아요" ask gives them nothing to do — an open, NEUTRAL question about the story
+# gives them a reason to comment, and comments are what the algorithm rewards.
+ENGAGE: dict[str, str] = {
+    "personnel": "이번 인사 결정, 여러분은 어떻게 보시나요? 댓글로 의견을 남겨주세요.",
+    "appoint": "이 인선, 적절하다고 보시나요? 여러분의 생각을 댓글로 남겨주세요.",
+    "vote": "이번 결정에 찬성하시나요, 반대하시나요? 댓글로 남겨주세요.",
+    "clash": "이 갈등, 어느 쪽 주장이 더 설득력 있다고 보시나요? 댓글로 남겨주세요.",
+    "scandal": "이 의혹, 여러분은 어떻게 보시나요? 댓글로 의견을 남겨주세요.",
+    "poll": "이 여론조사 결과, 어떻게 해석하시나요? 댓글로 남겨주세요.",
+    "remark": "이 발언, 어떻게 들으셨나요? 여러분의 생각을 댓글로 남겨주세요.",
+    "generic": "여러분은 이 사안을 어떻게 보시나요? 댓글로 의견을 남겨주세요.",
+}
+_NOT_A_PERSON = {"여야", "여당", "야당", "정부", "청와대", "대통령실", "국회", "정치권"}
+
+
+def engage_question(frame: Frame, actor: str = "") -> str:
+    """One open, neutral question that invites a comment. Names the person only for a
+    personnel story where the actor is a real name."""
+    if frame.kind == "personnel" and 2 <= len(actor) <= 4 and actor not in _NOT_A_PERSON:
+        return f"{actor}{josa(actor, ('은', '는'))[len(actor):]} 이번 결정, 여러분은 어떻게 보시나요? 댓글로 의견을 남겨주세요."
+    return ENGAGE.get(frame.kind, ENGAGE["generic"])
+
+
 def meaning(frame: Frame) -> str:
     return MEANING.get(frame.kind, "")
 

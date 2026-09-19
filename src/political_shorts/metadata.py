@@ -7,6 +7,7 @@ image credits, the disclaimer, and any safety warnings.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,12 +43,33 @@ def _title(script: dict[str, Any], date_str: str, style: str) -> str:
     # worth the readability cost on a Shorts title. tags[]/description
     # still carry the full headline+keywords for search.
     if style == "punchy" and tl:
-        t = " ".join(tl)
+        t = _curiosity_first(tl)
     else:
         t = f"[{date_str} 정치] {headline}"
-    # YouTube titles cap at 100 chars; keep room for the tag, which the user
-    # wants lowercase and attached with no space:  ...제목#shorts
-    return truncate(t, 92).rstrip(" |·-") + "#shorts"
+    # Channel feedback: a long title with "#shorts" glued on the end is weak on a phone.
+    # Short, curiosity first, no trailing tag (#shorts stays in the description hashtags).
+    return _cut_words(t, 40).rstrip(" |·-")
+
+
+_CURIOUS = re.compile(r"\?|왜|일까|할까|인가|진짜|뭘까|무엇")
+
+
+def _curiosity_first(lines: list[str]) -> str:
+    """Lead with the line that raises the question ("진짜 이유는? 김승원 전격 사퇴")."""
+    if len(lines) >= 2 and _CURIOUS.search(lines[-1]) and not _CURIOUS.search(lines[0]):
+        return f"{lines[-1]} {' '.join(lines[:-1])}"
+    return " ".join(lines)
+
+
+def _cut_words(text: str, limit: int) -> str:
+    """Trim to `limit` chars at a word boundary — never mid-word, no ellipsis."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if text[limit] != " " and " " in cut:
+        cut = cut[: cut.rfind(" ")]
+    return cut.rstrip(" ,·")
 
 
 def build_metadata(
@@ -125,7 +147,9 @@ def build_metadata(
     lines.append(" ".join(hashtags))
     description = "\n".join(lines).strip()
 
+    engage = clean_text(script.get("engage_question", ""))
     pinned_comment = (
+        (f"{engage}\n\n" if engage else "") +
         "공개 보도를 쉽게 풀어 정리한 자동 제작 영상입니다. "
         "인용·수치는 설명란 원문 링크에서 꼭 확인해 주세요. "
         "사실 오류·균형 관련 지적은 댓글로 남겨주시면 반영하겠습니다."
