@@ -126,12 +126,30 @@ def _json_obj(raw: str) -> dict[str, Any] | None:
     return None
 
 
+def _has_content(obj: dict[str, Any]) -> bool:
+    """True when the notes hold anything real — a model that never searched
+    tends to echo the empty JSON skeleton, which must not count as an answer."""
+    for k, v in obj.items():
+        if k == "sources":
+            continue
+        if isinstance(v, str) and len(v.strip()) >= 20:
+            return True
+        if isinstance(v, list) and any(str(x).strip() for x in v):
+            return True
+    return False
+
+
+def _usable(text: str) -> bool:
+    obj = _json_obj(text)
+    return _has_content(obj) if obj is not None else len(text.strip()) >= 80
+
+
 def web_notes(headline: str, topic: str, cfg: Settings) -> dict[str, Any]:
     from .llm import web_search
 
     today = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
     prompt = _WEB_PROMPT.format(today=today, headline=clean_text(headline), topic=topic or "(없음)")
-    raw = web_search(prompt, cfg)
+    raw = web_search(prompt, cfg, accept=_usable)
     if not raw:
         return {}
     obj = _json_obj(raw)

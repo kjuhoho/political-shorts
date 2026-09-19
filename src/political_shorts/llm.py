@@ -35,11 +35,13 @@ def _has_key(provider: str, cfg: Settings) -> bool:
     return bool((getattr(cfg, f"{provider}_api_key", "") or "").strip())
 
 
-def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800) -> str:
+def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800, accept=None) -> str:
     """One question answered with LIVE web search. Groq's `groq/compound` does
     the searching itself; if it is unavailable or rate-limited, Gemini with the
     Google Search tool is tried. Returns the answer text ("" if neither worked) —
-    callers treat the text as unverified research notes, never as ground truth."""
+    callers treat the text as unverified research notes, never as ground truth.
+    `accept(text) -> bool` lets the caller reject an answer that has no real
+    content (e.g. an empty JSON skeleton) so the next model/provider is tried."""
     errs: list[str] = []
     gkey = (getattr(cfg, "groq_api_key", "") or os.environ.get("GROQ_API_KEY", "")).strip()
     if gkey:
@@ -52,8 +54,11 @@ def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800) -> str:
                                   timeout=(10, 120))
                 if r.status_code == 200:
                     txt = (r.json()["choices"][0]["message"]["content"] or "").strip()
-                    if txt:
+                    if txt and (accept is None or accept(txt)):
+                        log.info("web_search: answered by %s (%d chars)", model, len(txt))
                         return txt
+                    errs.append(f"{model} -> 200 but {'empty' if not txt else 'no usable content'}")
+                    continue
                 errs.append(f"{model} -> {r.status_code}")
             except Exception as exc:  # pragma: no cover - network dependent
                 errs.append(f"{model} -> {str(exc)[:60]}")
@@ -72,8 +77,11 @@ def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800) -> str:
                     cand = (r.json().get("candidates") or [{}])[0]
                     parts = (cand.get("content") or {}).get("parts") or []
                     txt = "".join(p.get("text", "") for p in parts).strip()
-                    if txt:
+                    if txt and (accept is None or accept(txt)):
+                        log.info("web_search: answered by %s (%d chars)", model, len(txt))
                         return txt
+                    errs.append(f"{model} -> 200 but {'empty' if not txt else 'no usable content'}")
+                    continue
                 errs.append(f"{model} -> {r.status_code}")
             except Exception as exc:  # pragma: no cover - network dependent
                 errs.append(f"{model} -> {str(exc)[:60]}")

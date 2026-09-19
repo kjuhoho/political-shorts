@@ -7,6 +7,7 @@ source (news / web+official / YouTube) actually returns something in CI.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 
 from political_shorts import research
@@ -14,6 +15,7 @@ from political_shorts.config import load_settings
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
