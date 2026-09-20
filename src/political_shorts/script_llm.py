@@ -674,6 +674,11 @@ def rewrite_segments(
     if story and any(s.get("role") == "sides" for s in segments):
         _composed = _compose_sides(story)
         if len(_composed) >= 20:
+            # a camp we searched and found nothing from: say so instead of implying balance
+            for m in meta.get("missing_leans") or []:
+                lean_ko = {"left": "진보", "right": "보수"}.get(m)
+                if lean_ko:
+                    _composed += f" {lean_ko} 성향 매체 보도에서는 이 사안에 대한 별도 입장을 확인하지 못했습니다."
             new["sides"] = _composed
 
     def _clean_row(v: str) -> str:

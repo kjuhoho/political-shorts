@@ -46,6 +46,13 @@ LEAN_DOMAINS = {
 _LEAN_KO = {"left": "진보 성향", "right": "보수 성향"}
 
 
+def _kw(text: str) -> set[str]:
+    """Distinctive Korean words of a text (generic political vocabulary removed)."""
+    from .topics import _STOP
+
+    return set(re.findall(r"[가-힣]{2,}", text or "")) - set(_STOP)
+
+
 def lean_of(url: str) -> str:
     """'left' | 'right' | '' from an article URL's domain."""
     host = urlparse(url or "").netloc.lower()
@@ -362,8 +369,15 @@ def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
     def _tag(b: dict[str, str]) -> str:
         return f" ({_LEAN_KO[b['lean']]} 매체)" if b.get("lean") in _LEAN_KO else ""
 
-    docs = "\n\n".join(f"[기사{i} — {b['source']}{_tag(b)}] {b['title']}\n{b['text']}"
-                       for i, b in enumerate(bodies, 1))
+    def _tag2(b: dict[str, str]) -> str:
+        if b.get("text"):
+            return _tag(b)
+        return f" ({_LEAN_KO[b['lean']]} 매체, 제목만)" if b.get("lean") in _LEAN_KO else " (제목만)"
+
+    docs = "\n\n".join(
+        f"[기사{i} — {b['source']}{_tag2(b)}] {b['title']}\n"
+        f"{b['text'] or '(본문을 읽지 못함 — 제목에 명시된 내용만 근거로 삼고 추측하지 말 것)'}"
+        for i, b in enumerate(bodies, 1))
     head = f"[주제] {clean_text(headline)}\n"
     if plan.get("event"):
         head += f"[핵심 사건] {plan['event']}\n"
@@ -410,19 +424,30 @@ def web_notes(headline: str, topic: str, cfg: Settings, query: str = "",
             | {b.get("lean") for b in bodies if b.get("lean") in _LEAN_KO})
     missing = sorted(set(_LEAN_KO) - have)
     if missing:
+        kws = _kw(" ".join(queries) + " " + str((plan or {}).get("event", "")) + " " + (topic or ""))
         more: list[dict[str, str]] = []
         for side in missing:
             for dom in LEAN_DOMAINS[side][:3]:
-                more += gnews(f"{queries[0]} site:{dom}", limit=2)
+                for it in gnews(f"{queries[0]} site:{dom}", limit=3):
+                    # a site: search returns that outlet's newest pieces even when it has not covered
+                    # this story at all — only an article sharing >=2 distinctive words with the story counts
+                    if len(_kw(it["title"]) & kws) >= 2:
+                        more.append({**it, "want_lean": side})
         seen_links = {b["link"] for b in bodies}
-        extra = [b for b in fetch_bodies(more, want=3) if b["link"] not in seen_links]
-        bodies = bodies + extra
-        log.info("research: one-sided material (missing %s) — added %d article(s) from the other side",
-                 ",".join(missing), len(extra))
+        read = [b for b in fetch_bodies(more, want=3) if b["link"] not in seen_links]
+        read_titles = {re.sub(r"\W+", "", b["title"]) for b in read}
+        # outlets that block scraping still show their stance in the headline: keep those as title-only
+        titled = [{**it, "text": "", "lean": it["want_lean"]} for it in more
+                  if re.sub(r"\W+", "", it["title"]) not in read_titles][:3]
+        bodies = bodies + read + titled
+        log.info("research: one-sided material (missing %s) — added %d readable + %d title-only article(s) "
+                 "from the other side", ",".join(missing), len(read), len(titled))
     if bodies:
         notes = _extract_notes(headline, bodies, cfg, plan)
         if notes:
-            notes["sources"] = [{"title": b["title"], "url": b["link"]} for b in bodies]
+            notes["sources"] = [{"title": b["title"], "url": b["link"]} for b in bodies if b.get("text")]
+            still = (set(seed_leans or []) | {b.get("lean") for b in bodies}) & set(_LEAN_KO)
+            notes["missing_leans"] = sorted(set(_LEAN_KO) - still)
             log.info("research: notes extracted from %d article bodies (why=%d)",
                      len(bodies), len(notes.get("why") or []))
             return notes
@@ -558,6 +583,10 @@ def pack_block(pack: dict[str, Any]) -> str:
             parts.append(f"{label}\n{body.strip()}")
 
     plan = pack.get("plan") or {}
+    _miss = [_LEAN_KO[m] for m in (web.get("missing_leans") or []) if m in _LEAN_KO]
+    if _miss:
+        add("성향 균형 안내", f"{', '.join(_miss)} 매체 보도는 조사했지만 이 사안에 대한 내용을 확인하지 못했습니다. "
+            "sides 카드에서 그 사실을 한 문장으로 밝히고, 확인되지 않은 쪽의 입장을 지어내지 말 것.")
     if plan.get("question"):
         add("핵심 질문(영상이 답해야 할 것)", f"{plan['question']}  (사건: {plan.get('event', '')})")
     add("원인·발단 — 왜 일어났나(반응·논평은 원인이 아님)", _lines(

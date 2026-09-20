@@ -92,7 +92,7 @@ def test_one_sided_material_triggers_a_search_of_the_other_camp(monkeypatch):
         queried.append(q)
         if "site:" in q:
             dom = q.split("site:")[1]
-            return [{"title": f"{dom} 기사", "source": dom, "link": f"https://{dom}/a"}]
+            return [{"title": f"영화제 축소 논란 보도 {dom[:2]}", "source": dom, "link": f"https://{dom}/a"}]
         return [{"title": "진보 기사", "source": "한겨레", "link": "https://www.hani.co.kr/a"}]
 
     monkeypatch.setattr(research, "gnews", fake_gnews)
@@ -184,3 +184,72 @@ def test_gemini_model_that_404s_is_not_asked_again(monkeypatch):
     posted.clear()
     assert L._gemini("hi", cfg, 100, "") == '{"ok":1}'
     assert "gemini-flash-latest" in first and "gemini-flash-latest" not in posted
+
+
+# ---------------------------------------------- other side: relevance, title-only, honest "not found"
+def _gap_env(monkeypatch, site_title, article_body):
+    def fake_gnews(q, limit=8):
+        if "site:" in q:
+            dom = q.split("site:")[1]
+            return [{"title": site_title, "source": dom, "link": f"https://{dom}/a"}]
+        return [{"title": "진보 기사", "source": "한겨레", "link": "https://www.hani.co.kr/a"}]
+
+    monkeypatch.setattr(research, "gnews", fake_gnews)
+    monkeypatch.setattr(research, "bing_news", lambda q, **k: [])
+    monkeypatch.setattr(research, "resolve_link", lambda link: link)
+    monkeypatch.setattr(research, "article_text", lambda url, **k: article_body if "hani.co.kr" not in url else "본문입니다. " * 40)
+    seen = {}
+
+    def fake_complete(prompt, cfg, max_tokens=400, system=""):
+        seen["prompt"] = prompt
+        return json.dumps({"background": "배경입니다 " * 5}, ensure_ascii=False)
+
+    monkeypatch.setattr(L, "complete", fake_complete)
+    return seen
+
+
+PLAN = {"event": "영화제 축소", "question": "왜 축소했나?", "queries": ["DMZ 영화제 축소 이유"]}
+
+
+def test_other_side_results_that_are_off_topic_are_ignored_and_reported_as_missing(monkeypatch):
+    seen = _gap_env(monkeypatch, "붕어빵 지역축제 눈먼 돈 4편", "본문입니다. " * 40)
+    notes = research.web_notes("영화제 축소", "김민석", settings, plan=PLAN, seed_leans=["left"])
+    assert "붕어빵" not in seen["prompt"]                      # an unrelated site: hit never reaches the writer
+    assert notes["missing_leans"] == ["right"]                  # ... and the missing camp is reported honestly
+
+
+def test_other_side_headline_is_kept_as_title_only_when_the_body_cannot_be_read(monkeypatch):
+    seen = _gap_env(monkeypatch, "경기도 영화제 축소 불가피 재정 어려움", "")      # outlet blocks scraping
+    notes = research.web_notes("영화제 축소", "김민석", settings, plan=PLAN, seed_leans=["left"])
+    assert "보수 성향 매체, 제목만" in seen["prompt"] and "경기도 영화제 축소 불가피" in seen["prompt"]
+    assert "추측하지 말 것" in seen["prompt"]
+    assert notes["missing_leans"] == []                          # that camp's stance is known from its headline
+
+
+def test_pack_block_tells_the_writer_which_camp_had_no_coverage():
+    block = research.pack_block({"web": {"background": "배경입니다 " * 4, "missing_leans": ["right"]}})
+    assert "성향 균형 안내" in block and "보수 성향" in block and "지어내지 말 것" in block
+    assert "성향 균형 안내" not in research.pack_block({"web": {"background": "배경입니다 " * 4, "missing_leans": []}})
+
+
+def test_sides_card_states_honestly_that_a_camp_had_no_coverage(monkeypatch):
+    story = {"what_happened": "축소했다", "confirmed_fact": "사실입니다.",
+             "sides": [{"who": "김민석 대표", "claim": "김민석 대표는 축소를 계약 파기라고 비판했습니다.", "reason": "", "lean": "진보"}]}
+    monkeypatch.setattr(script_llm, "analyze_story", lambda meta, cfg: story)
+    monkeypatch.setattr(L, "complete", lambda *a, **k: json.dumps({
+        "hook": "경기도는 왜 영화제 예산을 줄였을까요?", "summary": "경기도가 영화제 운영을 줄였습니다.",
+        "sides": "자유롭게 쓴 문장입니다.", "outro": "재정 배분을 둘러싼 공방이 이어지고 있습니다."}, ensure_ascii=False))
+    segs = [{"role": "hook", "narration": "경기도를 두고 정치권이 정면으로 부딪히고 있습니다."},
+            {"role": "summary", "narration": "배경입니다 배경입니다."},
+            {"role": "sides", "narration": "입장이 갈립니다."},
+            {"role": "outro", "narration": "마무리입니다 마무리입니다."}]
+    meta = {"headline": "경기도 영화제 축소", "topic": "경기도", "source_text": "기사", "facts": [], "claims": [],
+            "interps": [], "entities": {}, "missing_leans": ["right"]}
+    cfg = dataclasses.replace(settings, llm_provider="groq")
+    out, _title = script_llm.rewrite_segments(segs, meta, cfg, {})
+    sides = next(s for s in out if s["role"] == "sides")["narration"]
+    hook = next(s for s in out if s["role"] == "hook")["narration"]
+    assert sides.startswith("김민석 대표는 축소를 계약 파기라고 비판했습니다.")     # composed from stage 1, not free text
+    assert "자유롭게 쓴" not in sides
+    assert sides.endswith("보수 성향 매체 보도에서는 이 사안에 대한 별도 입장을 확인하지 못했습니다.")
+    assert hook == "경기도는 왜 영화제 예산을 줄였을까요?"                        # the vetted, concrete hook replaced the vague one

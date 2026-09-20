@@ -839,6 +839,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
                     seed_leans=leans)
                 meta["research"] = research.pack_block(_pack)
                 research_web = (_pack or {}).get("web") or {}
+                meta["missing_leans"] = list(research_web.get("missing_leans") or [])
             except Exception as exc:  # pragma: no cover - defensive
                 log.info("research skipped (%s)", str(exc)[:80])
         rich = _research_rich(research_web)
