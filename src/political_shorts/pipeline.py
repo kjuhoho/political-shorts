@@ -256,6 +256,16 @@ def _process_story(
         render, meta, qr = _render_and_check()
         history = [qr.to_dict()]
 
+        # RE-RENDER once when the FILE is out of sync (not the script): the voice is re-synthesised and
+        # the clips re-cut. Better than throwing away a good story for an intermittent render fault.
+        if _render_defect(qr) and not qr.publishable:
+            log.warning("cluster %d: render/sync defect (score %d) — re-rendering once", cluster_id, qr.score)
+            render, meta, qr2 = _render_and_check()
+            history.append(qr2.to_dict())
+            if qr2.score >= qr.score:
+                qr = qr2
+            meta["rerender"] = {"score_before": history[0]["score"], "score_after": qr.score}
+
         # AUTO REVISION — one targeted pass for the fixable middle band.
         if _rev.decide(qr) == "REVISE" and getattr(cfg, "auto_revision", True):
             script, changes = _rev.apply(script, qr)
@@ -344,6 +354,14 @@ def _process_story(
         report.errors.append(f"cluster {cluster_id}: {out.reason}")
         log.error("cluster %d ERROR\n%s", cluster_id, traceback.format_exc())
         return out
+
+
+def _render_defect(qr: Any) -> bool:
+    """A CRITICAL sync problem in the rendered file itself (scenes shorter than their voice, or the file
+    not matching its timeline). It is not the script's fault and it is intermittent — 2 of 8 CI builds
+    showed it while the same render was fine locally — so one more render is worth trying."""
+    return any(i.get("code") in ("sub-sync", "duration-mismatch") and i.get("severity") == "critical"
+               for i in getattr(qr, "issues", []) or [])
 
 
 def _drop_blocked(cfg: Settings, cluster_ids: list[int]) -> list[int]:

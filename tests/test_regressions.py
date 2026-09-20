@@ -253,3 +253,27 @@ def test_incident_note_prompts_carry_only_the_relevant_sentences():
     kws = research._kw("경기도 영화제 계약 파기 김민석")
     picked = research._select_sentences(text, kws, budget=300)
     assert "계약을 일방적으로 파기하는 것은 문제" in picked and len(picked) <= 300
+
+
+def test_incident_5_18_is_said_as_a_name_not_read_as_two_numbers():
+    """'5·18' became '5, 18' (voiced five, eighteen) and quality.py flagged a number the article never had."""
+    assert SG._glyph_safe("여당이 5·18 전문 수록을 내걸었다") == "여당이 오일팔 전문 수록을 내걸었다"
+    assert SG._glyph_safe("4·19와 6·25") == "사일구와 육이오"
+    assert SG._glyph_safe("A·B 협의체") == "A, B 협의체"                 # ordinary middle dots still become ", "
+    assert SG._glyph_safe("가격은 2.5·3배") == "가격은 2.5, 3배"           # not a known date: unchanged behaviour
+
+
+def test_incident_a_render_that_is_out_of_sync_is_re_rendered_once():
+    """CI builds sometimes rendered every scene ~1/3 of its voice length (dur/audio 0.3) while the same code was
+    fine locally; the video was correctly held, but a good story was thrown away for a transient fault."""
+    class QR:
+        def __init__(self, issues):
+            self.issues = issues
+
+    sync = QR([{"severity": "critical", "code": "sub-sync"}])
+    mismatch = QR([{"severity": "critical", "code": "duration-mismatch"}])
+    assert P._render_defect(sync) and P._render_defect(mismatch)
+    assert not P._render_defect(QR([{"severity": "warn", "code": "sub-sync"}]))              # a warning is not a defect
+    assert not P._render_defect(QR([{"severity": "critical", "code": "added-number"}]))       # a script problem needs a rewrite
+    assert not P._render_defect(QR([]))
+    assert "re-rendering once" in __import__("inspect").getsource(P._process_story)

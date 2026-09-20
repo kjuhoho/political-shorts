@@ -262,9 +262,17 @@ _CAP_TAIL = re.compile(
 )
 
 
+# "5·18" is one name (the Gwangju uprising), not the numbers "5" and "18": with the middle dot swapped for
+# ", " it was voiced "5, 18" and quality.py flagged a number the article never had. Say the name.
+_KNOWN_DATES = {"5·18": "오일팔", "4·19": "사일구", "6·25": "육이오", "3·1": "삼일", "8·15": "팔일오",
+                "5·16": "오일육", "12·12": "십이십이", "4·3": "사삼", "6·10": "육일공", "5·18": "오일팔"}
+_KNOWN_DATES_RX = re.compile(r"(?<![\d.])(\d{1,2})[·ㆍ](\d{1,2})(?![\d])")
+
+
 def _glyph_safe(s: str) -> str:
     """The bundled caption fonts have no ·/…/—/→ glyph (they render as tofu
     — a real shipped case: "20석→15석" rendered as "20석□15석" on screen)."""
+    s = _KNOWN_DATES_RX.sub(lambda m: _KNOWN_DATES.get(f"{m.group(1)}·{m.group(2)}", m.group(0)), s)
     return (s.replace("·", ", ").replace("ㆍ", ", ").replace("…", " ")
              .replace("—", "-").replace("–", "-").replace("~", "-")
              .replace("→", "->").replace("←", "<-"))
