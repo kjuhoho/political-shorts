@@ -37,6 +37,24 @@ from .textutil import clean_text
 
 log = get_logger("research")
 
+# outlet -> lean, from the publisher domain of a fetched article (used to tell whether the
+# material we hold is one-sided, and to go and get the other side)
+LEAN_DOMAINS = {
+    "left": ["hani.co.kr", "khan.co.kr", "ohmynews.com", "pressian.com"],
+    "right": ["chosun.com", "donga.com", "joongang.co.kr", "munhwa.com", "segye.com"],
+}
+_LEAN_KO = {"left": "진보 성향", "right": "보수 성향"}
+
+
+def lean_of(url: str) -> str:
+    """'left' | 'right' | '' from an article URL's domain."""
+    host = urlparse(url or "").netloc.lower()
+    for lean, domains in LEAN_DOMAINS.items():
+        if any(host == d or host.endswith("." + d) for d in domains):
+            return lean
+    return ""
+
+
 _UA = "Mozilla/5.0 (compatible; political-shorts-research/1.0)"
 _CACHE_TTL_S = 12 * 3600          # same story is researched once per half-day
 _BLOCK_CHARS = 4200               # cap on what is handed to the LLM prompt
@@ -195,7 +213,7 @@ def fetch_bodies(items: list[dict[str, str]], want: int = 5) -> list[dict[str, s
     def _read(it: dict[str, str]) -> dict[str, str] | None:
         url = resolve_link(it["link"])
         text = article_text(url) if url else ""
-        return {**it, "link": url, "text": text} if text else None
+        return {**it, "link": url, "text": text, "lean": lean_of(url)} if text else None
 
     with ThreadPoolExecutor(max_workers=6) as ex:
         got = list(ex.map(_read, items[: want * 3]))
@@ -323,10 +341,14 @@ _EXTRACT_SYSTEM = (
     "것만, 객관적으로. 한쪽 편을 들지 말 것.\n"
     "6) reactions: 여론조사·시민단체·온라인 반응. 검증되지 않은 반응은 그렇게 표시.\n"
     "7) background: 사건의 배경과 경위 2~3문장(날짜 포함). timeline은 날짜순.\n"
+    "8) 성향: 기사 헤더에 (진보 성향 매체)/(보수 성향 매체)가 있으면 positions·statements·pros·cons·"
+    "reactions의 각 항목에 lean 필드('진보'/'보수'/'기타')를 그 기사의 성향대로 넣을 것. 같은 사안에 "
+    "대해 진보 매체와 보수 매체의 입장이 다르면 둘 다 빠짐없이 positions에 넣을 것. positions의 who는 "
+    "그 입장을 실제로 가진 주체이고, position·why는 그 주체 본인의 말만(다른 주체의 사정 금지).\n"
     '출력은 JSON 하나만: {"why":[{"reason":"","evidence":"","source":""}],'
     '"background":"","timeline":["날짜: 사건"],"status":"",'
-    '"positions":[{"who":"","position":"","why":"","source":""}],'
-    '"statements":[{"who":"","text":"","when":"","source":""}],'
+    '"positions":[{"who":"","position":"","why":"","lean":"","source":""}],'
+    '"statements":[{"who":"","text":"","when":"","lean":"","source":""}],'
     '"experts":[{"who":"","view":"","source":""}],"pros":[""],"cons":[""],'
     '"reactions":[{"where":"","summary":""}]}'
 )
@@ -337,7 +359,10 @@ def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
     from .llm import complete
 
     plan = plan or {}
-    docs = "\n\n".join(f"[기사{i} — {b['source']}] {b['title']}\n{b['text']}"
+    def _tag(b: dict[str, str]) -> str:
+        return f" ({_LEAN_KO[b['lean']]} 매체)" if b.get("lean") in _LEAN_KO else ""
+
+    docs = "\n\n".join(f"[기사{i} — {b['source']}{_tag(b)}] {b['title']}\n{b['text']}"
                        for i, b in enumerate(bodies, 1))
     head = f"[주제] {clean_text(headline)}\n"
     if plan.get("event"):
@@ -369,7 +394,8 @@ def _gather(queries: list[str]) -> list[dict[str, str]]:
 
 
 def web_notes(headline: str, topic: str, cfg: Settings, query: str = "",
-              plan: dict[str, Any] | None = None) -> dict[str, Any]:
+              plan: dict[str, Any] | None = None,
+              seed_leans: list[str] | None = None) -> dict[str, Any]:
     """Structured research notes for one story. Reads the actual bodies of extra
     articles (found through the planned, cause-focused searches) and extracts
     from them; only if none could be read does it fall back to a live-web-search
@@ -379,6 +405,20 @@ def web_notes(headline: str, topic: str, cfg: Settings, query: str = "",
     bodies = fetch_bodies(found, want=6)
     log.info("research: %d queries, %d articles found, %d readable bodies",
              len(queries), len(found), len(bodies))
+    # BALANCE: if everything we hold leans one way, go and read the other side too
+    have = ({x for x in (seed_leans or []) if x in _LEAN_KO}
+            | {b.get("lean") for b in bodies if b.get("lean") in _LEAN_KO})
+    missing = sorted(set(_LEAN_KO) - have)
+    if missing:
+        more: list[dict[str, str]] = []
+        for side in missing:
+            for dom in LEAN_DOMAINS[side][:3]:
+                more += gnews(f"{queries[0]} site:{dom}", limit=2)
+        seen_links = {b["link"] for b in bodies}
+        extra = [b for b in fetch_bodies(more, want=3) if b["link"] not in seen_links]
+        bodies = bodies + extra
+        log.info("research: one-sided material (missing %s) — added %d article(s) from the other side",
+                 ",".join(missing), len(extra))
     if bodies:
         notes = _extract_notes(headline, bodies, cfg, plan)
         if notes:
@@ -457,7 +497,8 @@ def _cache_path(cfg: Settings, query: str) -> Path:
     return d / (hashlib.sha1(query.encode("utf-8")).hexdigest()[:16] + ".json")
 
 
-def build_pack(headline: str, topic: str, cfg: Settings, context: str = "") -> dict[str, Any]:
+def build_pack(headline: str, topic: str, cfg: Settings, context: str = "",
+               seed_leans: list[str] | None = None) -> dict[str, Any]:
     """Gather everything available for one story. {} when research is off or
     nothing at all came back. Cached so the several rewrite attempts (and
     duplicate clusters) of one story don't re-query."""
@@ -477,7 +518,7 @@ def build_pack(headline: str, topic: str, cfg: Settings, context: str = "") -> d
         "query": query,
         "plan": plan,
         "news": gnews(query),
-        "web": web_notes(headline, topic, cfg, plan=plan),
+        "web": web_notes(headline, topic, cfg, plan=plan, seed_leans=seed_leans),
         # the event (not the headline's reaction) is what people talk about on YouTube
         "youtube": youtube(build_query(plan.get("event") or headline, topic), cfg),
     }
@@ -498,6 +539,11 @@ def build_pack(headline: str, topic: str, cfg: Settings, context: str = "") -> d
 def _lines(items: list[str], cap: int, width: int = 220) -> str:
     return "\n".join(f"- {re.sub(r'\s+', ' ', str(t)).strip()[:width]}"
                      for t in items[:cap] if str(t).strip())
+
+
+def _lt(x: dict[str, Any]) -> str:
+    lean = str(x.get("lean") or "")
+    return f" [{lean} 성향 매체]" if lean in ("진보", "보수") else ""
 
 
 def pack_block(pack: dict[str, Any]) -> str:
@@ -521,10 +567,10 @@ def pack_block(pack: dict[str, Any]) -> str:
     add("경위(날짜순)", _lines(web.get("timeline") or [], 8))
     add("현재 상황", str(web.get("status") or ""))
     add("공식 발언(누가 한 말인지, 끝까지)", _lines(
-        [f"{s.get('who', '')}({s.get('when', '')}): \"{s.get('text', '')}\" [{s.get('source', '')}]"
+        [f"{s.get('who', '')}{_lt(s)}({s.get('when', '')}): \"{s.get('text', '')}\" [{s.get('source', '')}]"
          for s in web.get("statements") or [] if isinstance(s, dict) and s.get("text")], 6, 320))
     add("입장(정부·여당·야당 등)", _lines(
-        [f"{p.get('who', '')}: {p.get('position', '')} (이유: {p.get('why', '')}) [{p.get('source', '')}]"
+        [f"{p.get('who', '')}{_lt(p)}: {p.get('position', '')} (이유: {p.get('why', '')}) [{p.get('source', '')}]"
          for p in web.get("positions") or [] if isinstance(p, dict) and p.get("who")], 6, 300))
     add("전문가 평가", _lines(
         [f"{e.get('who', '')}: {e.get('view', '')} [{e.get('source', '')}]"

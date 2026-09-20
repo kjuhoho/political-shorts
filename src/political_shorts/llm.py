@@ -134,7 +134,7 @@ def _cooling(name: str) -> bool:
 def _retry_after(message: str) -> float:
     """Seconds from an API rate-limit message like "Please try again in 40m38.64s" /
     "…in 1h2m3s" / "…in 12.5s" / "…in 340ms". 0 when there is none."""
-    m = re.search(r"try again in\s+((?:\d+(?:\.\d+)?\s*(?:h|m(?!s)|s|ms)\s*)+)", message or "", re.I)
+    m = re.search(r"(?:try again|retry) in\s+((?:\d+(?:\.\d+)?\s*(?:h|m(?!s)|s|ms)\s*)+)", message or "", re.I)
     if not m:
         return 0.0
     total = 0.0
@@ -228,6 +228,8 @@ def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
     models = [cfg.llm_model] if cfg.llm_model else list(_GEMINI_MODELS)
     last_err = ""
     for model in models:
+        if _cooling(f"gemini:{model}"):    # not visible to this key / long rate limit: skip it
+            continue
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         status = None
         for attempt in range(2):
@@ -246,6 +248,11 @@ def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
             except Exception:
                 detail = f"HTTP {status}"
             last_err = f"{model} -> {detail}"
+            if status == 404:                 # a model this key can't see never appears mid-run
+                _COOLDOWN[f"gemini:{model}"] = time.time() + 6 * 3600.0
+            elif status == 429 and _retry_after(detail) > 20:
+                _COOLDOWN[f"gemini:{model}"] = time.time() + min(_retry_after(detail), 3600.0)
+                break
             if status in (429, 500, 503) and attempt == 0:
                 time.sleep(3.0)               # transient capacity blip — one retry
                 continue

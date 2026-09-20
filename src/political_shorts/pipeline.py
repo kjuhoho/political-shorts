@@ -389,7 +389,16 @@ def run_pipeline(
         # what counts as publishable.
         _MAX_ATTEMPTS = 12
 
+        # wall-clock cap: the job itself is killed at 55 min with nothing to show. Stop
+        # starting NEW candidates after 25 min and let the fallback pass work with what exists.
+        import time as _time
+        _t0 = _time.time()
+        _RUN_BUDGET_S = 1500.0
+
         def _attempts_left() -> bool:
+            if _time.time() - _t0 > _RUN_BUDGET_S:
+                log.info("run time budget (%.0fs) used up — no new candidates", _RUN_BUDGET_S)
+                return False
             return len(report.stories) < _MAX_ATTEMPTS
 
         # Every built script THIS run, keyed by cluster_id — lets the
@@ -454,7 +463,7 @@ def run_pipeline(
         # nothing that day. Reusing the exact script makes the outcome
         # deterministic: the promoted candidate is provably the one that
         # earned the score it was picked for.
-        _FALLBACK_FLOOR = 85
+        _FALLBACK_FLOOR = 90
         if _ready() == 0:
             candidates = [s for s in report.stories
                          if s.status == "skipped" and s.reason.startswith("AI 품질 평가 미달")]

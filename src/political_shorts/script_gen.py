@@ -813,6 +813,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
 
         _LEAN_KO = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송", "center": "중도"}
         meta = {
+            "headline": headline,
             "source_text": f"{titles}\n{summaries}",
             # classified + cross-source-verified view (FACT CHECK ENGINE)
             "facts": [u.text for u in fc.facts] or [f.text for f in analysis.facts],
@@ -834,7 +835,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             try:
                 _pack = research.build_pack(
                     headline, meta["topic"], cfg,
-                    context="\n".join(meta["facts"][:8] + meta["claims"][:4]))
+                    context="\n".join(meta["facts"][:8] + meta["claims"][:4]),
+                    seed_leans=leans)
                 meta["research"] = research.pack_block(_pack)
                 research_web = (_pack or {}).get("web") or {}
             except Exception as exc:  # pragma: no cover - defensive
@@ -862,10 +864,12 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         feedback_history: list[str] = []
         best_score = -1
         best_segments, best_title, best_report = segments, llm_title, None
+        stale = 0
         # an analysis with real background, a full quote, positions and pros/cons
         # needs more room than a one-fact brief — lift the target to ~90s
         _budget = max((max(lp.target_s, 90.0) if rich else lp.target_s) * 0.80, 26.0)
-        for agent_attempts in range(1, 5):
+        # 3 attempts, not 4: in a real run the 4th never beat the best of the first three (70>75>81>80, 78>85>85>78, 70>85>85>70) — it only cost LLM calls
+        for agent_attempts in range(1, 4):
             try:
                 cand, cand_title = rewrite_segments(
                     [dict(s) for s in template_segments], meta, cfg,
@@ -885,6 +889,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             if cand_score > best_score:
                 best_score, best_segments, best_title, best_report = (
                     cand_score, cand, cand_title, agent_report)
+                stale = 0
+            else:
+                stale += 1
 
             if not agent_report.available or agent_report.score >= quality_agent.PASS_SCORE:
                 segments, llm_title = cand, cand_title
@@ -894,6 +901,11 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
                 feedback_history.append(f"[{agent_attempts}차 시도 문제점]\n{issue_line}")
             log.info("quality agent attempt %d scored %s (best so far %d) — regenerating: %s",
                      agent_attempts, agent_report.score, best_score, issue_line[:300] or "(no issues text)")
+            if agent_attempts >= 2 and stale >= 1:
+                # this rewrite did not beat the best so far: more rounds oscillate, they don't climb
+                log.info("quality agent plateaued at %d — stopping rewrites early", best_score)
+                segments, llm_title, agent_report = best_segments, best_title, best_report
+                break
         else:
             # exhausted every attempt without ever reaching PASS_SCORE — use
             # the best-scoring one tried, not necessarily the last.

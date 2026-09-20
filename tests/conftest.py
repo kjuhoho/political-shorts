@@ -22,3 +22,15 @@ def _no_network_research(monkeypatch):
     monkeypatch.setattr(research, "build_pack", lambda *a, **k: {})
     monkeypatch.setattr(research.requests, "get", _offline)
     monkeypatch.setattr(research.requests, "post", _offline)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_llm_process_state():
+    """The LLM layer keeps process-wide state (stage-1 analysis cache, rate-limit cooldowns).
+    Reset it so one test's answers or 'cooling down' never leak into the next."""
+    from political_shorts import llm, script_llm
+    script_llm._ANALYSIS_CACHE.clear()
+    llm._COOLDOWN.clear()
+    yield
+    script_llm._ANALYSIS_CACHE.clear()
+    llm._COOLDOWN.clear()

@@ -217,7 +217,9 @@ def test_quality_agent_regenerates_with_feedback_then_passes(tmp_path, monkeypat
     assert calls["n"] == 2
 
 
-def test_quality_agent_gives_up_after_4_attempts(tmp_path, monkeypatch):
+def test_quality_agent_stops_early_when_a_rewrite_does_not_improve(tmp_path, monkeypatch):
+    # In a real run the 3rd/4th rewrites never beat the best (70>75>81>80, 78>85>85>78): they
+    # only cost LLM calls. A rewrite that fails to beat the best so far ends the loop.
     cfg = _llm_cfg(tmp_path, "qa2.sqlite3")
     cluster_id = _seed_rich_cluster(cfg)
 
@@ -230,7 +232,20 @@ def test_quality_agent_gives_up_after_4_attempts(tmp_path, monkeypatch):
     qa = script["quality_agent"]
     assert qa["available"] is True
     assert qa["passed"] is False
-    assert qa["attempts"] == 4
+    assert qa["attempts"] == 2                     # 50, then 50 again (no gain) -> stop
+
+
+def test_quality_agent_keeps_going_while_it_improves_but_never_past_three(tmp_path, monkeypatch):
+    cfg = _llm_cfg(tmp_path, "qa2b.sqlite3")
+    cluster_id = _seed_rich_cluster(cfg)
+    scores = iter([50, 60, 70, 80, 90])
+    monkeypatch.setattr(quality_agent, "review", lambda script, cfg: quality_agent.AgentReport(
+        available=True, score=next(scores), issues=[{"role": "outro", "problem": "막연합니다."}]))
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps(
+        {"what": "여야가 합의해 예산안을 통과시켰습니다."}))
+
+    qa = build_script(cluster_id, cfg)["quality_agent"]
+    assert qa["attempts"] == 3 and qa["score"] == 70
 
 
 def test_quality_agent_ships_the_best_attempt_not_the_last(tmp_path, monkeypatch):
@@ -278,15 +293,16 @@ def test_quality_agent_feedback_accumulates_across_attempts(tmp_path, monkeypatc
         return json.dumps({"what": "여야가 합의해 예산안을 통과시켰습니다."})
 
     monkeypatch.setattr(llm, "complete", fake_complete)
+    # each rewrite scores a little higher, so the loop keeps going (it stops early on no gain)
     monkeypatch.setattr(quality_agent, "review", lambda script, cfg: quality_agent.AgentReport(
-        available=True, score=50,
+        available=True, score=50 + 5 * len(seen_feedback),
         issues=[{"role": "hook", "problem": f"문제 {len(seen_feedback)}"}]))
 
     build_script(cluster_id, cfg)
-    assert len(seen_feedback) == 4
+    assert len(seen_feedback) == 3                             # capped at 3 attempts
     assert seen_feedback[0] == ""                              # attempt 1: nothing yet
     assert "문제 1" in seen_feedback[1]                         # attempt 2 sees attempt 1's issue
-    assert "문제 1" in seen_feedback[3] and "문제 2" in seen_feedback[3] and "문제 3" in seen_feedback[3]
+    assert "문제 1" in seen_feedback[2] and "문제 2" in seen_feedback[2]   # attempt 3 sees both
 
 
 def test_pipeline_skips_a_cluster_the_quality_agent_never_passed(tmp_path, monkeypatch):

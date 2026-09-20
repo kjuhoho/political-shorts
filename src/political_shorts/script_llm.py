@@ -26,6 +26,7 @@ Hard rules, enforced in code (not just the prompt):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any
@@ -123,7 +124,12 @@ _SYSTEM = (
     "'~주목됩니다' 같은 막연한 관망형 문장으로 절대 끝내지 말 것 — 무엇이 어떻게 "
     "바뀌는지, 누구에게 어떤 영향인지를 구체적인 서술어로 끝맺을 것.\n\n"
     "카드별 역할 (유튜브 쇼츠 몰입 곡선):\n"
-    "  - (hook 카드는 별도 엔진이 만듭니다. 당신은 hook을 쓰지 마세요.)\n"
+    "  - hook: 영상 첫 문장 — 2초 안에 시청자를 붙잡는 자리. 반드시 (1) 이 사건의 구체적인 인물·사건을 "
+    "이름으로 넣고, (2) 시청자가 답을 알고 싶어지는 열린 질문으로 끝내며('~했을까요?', '~일까요?'), "
+    "(3) 25~45자로 쓸 것. '정면으로 부딪히고 있습니다', '논란이 일고 있습니다', '무슨 일이 있었을까요' "
+    "같은 모호한 문장은 금지 — 무엇이 궁금한지가 분명해야 함. 예: '김승원 후보자는 왜 갑자기 사퇴를 "
+    "택했을까요?', '경기도는 왜 영화제 예산을 줄였을까요?'. 본문에 없는 사실을 전제하지 말 것. 자극적·"
+    "선정적 표현 금지.\n"
     "  - summary: 이 사건의 '배경'. 이 인물·기관이 뭐 하는 곳인지, 왜 지금 이게 "
     "이슈인지 2~3문장으로 깔아줄 것. 추상적으로 '중요한 자리입니다', '핵심 인물입니다' "
     "라고만 하지 말고, [분석 1단계]의 who/terms에 있는 실제 직함·업무·숫자·전례를 "
@@ -151,16 +157,14 @@ _SYSTEM = (
     "따옴표로 그대로 옮겨 붙이는 것 (X) — 반드시 새 문장으로 풀어 쓸 것. "
     "그리고 화면 표용 facts_table도: '사실'(확인된 사실, 완결 문장), '주장'('○○측: …'), "
     "'전망'(아직 확정 안 된 관측). 각 줄 45자 이내, 완결형.\n"
-    "  - sides: 입장이 갈리는 지점을 각 진영별로, 원문에 실제로 있는 만큼만. "
-    "'민주당(진보 쪽)은 …라는 이유로 …라고 봅니다.' / '국민의힘(보수 쪽)은 …라는 "
-    "이유로 …라고 봅니다.' 각 진영에 '왜 그렇게 보는지' 근거를 붙여 2~3문장. "
-    "한쪽 정당 입장만 원문에 있으면 그 한쪽만 쓰고 반대쪽을 지어내지 말 것. "
-    "[분석 1단계]의 sides에 교수·연구위원 등 제3의 전문가 평가가 실제로 있으면, "
-    "정당 입장을 소개한 다음 반드시 추가 목소리로 이어 붙일 것 — 실제 뉴스 리포트가 "
-    "여러 입장을 순서대로 소개하듯 "
-    "'그런데 OO대 OO 교수는 이 사안을 두고 …라고 짚었습니다'처럼. 이 경우 3~4문장까지 "
-    "늘려도 됨. 전문가 목소리가 원문에 없으면 지어내지 말고 정당 두 입장만. 전환어만 "
-    "있는 문장 금지. 편들지 말 것.\n"
+    "  - sides: [분석 1단계]의 sides(주체별 claim/reason)를 살려 주체별로 문장을 따로 쓸 것. "
+    "한 문장에는 한 주체의 말만: '경기도는 재정 상황을 이유로 운영을 줄였다고 설명했습니다. 반면 "
+    "김민석 대표는 이를 계약 파기라며 비판했습니다.'처럼 각 주체의 주장과 그 주체 본인이 든 이유를 "
+    "그 주체의 문장 안에서만 쓸 것. 비판하는 쪽의 주장 문장에 비판받는 쪽의 이유(예: 재정 부족)를 "
+    "붙이거나 반대로 섞는 것은 금지. 성향이 다른 자료가 함께 있으면 '진보 성향 매체 보도에 따르면 …, "
+    "보수 성향 매체 보도에 따르면 …'처럼 나누어 소개할 것. 한쪽 입장만 자료에 있으면 그 한쪽만 쓰고 "
+    "반대쪽을 지어내지 말 것. 교수·연구위원 등 제3자 평가가 있으면 이어 붙일 것. 전환어만 있는 "
+    "문장 금지. 편들지 말 것.\n"
     "  - outro: 이 영상의 마지막 인상을 남기는 자리 — '그래서 이게 왜 중요한지' 또는 "
     "'앞으로 어떻게 될지'를 구체적인 한 문장으로 짚을 것. [분석 1단계]의 "
     "why_it_matters를 활용하거나, hook이 던진 질문에 답하거나 긴장을 한 번 더 "
@@ -188,7 +192,7 @@ _SYSTEM = (
     "그대로 유튜브 제목이 된다 — 원문 헤드라인을 따옴표째 덧붙이지 말고 이 1~2줄만으로 "
     "완결된 제목이 되게 쓸 것.\n\n"
     "출력은 JSON 하나만: "
-    '{"title": ["1줄","2줄"], "summary": "...", "what": "...", '
+    '{"title": ["1줄","2줄"], "hook": "...", "summary": "...", "what": "...", '
     '"factcheck": "...", "sides": "...", "outro": "...", '
     '"subtitles": {"summary":"…","what":"…","factcheck":"…","sides":"…","outro":"…"}, '
     '"facts_table": {"사실":"...","주장":"...","전망":"..."}}. '
@@ -213,11 +217,16 @@ _ANALYSIS_SYSTEM = (
     "'정치인의 말은 논란이 될 수 있다' 같은 일반론 말고, 이 사건 고유의 이유.\n"
     "5) terms: 시청자가 모를 수 있는 용어·비유·과거 사건을 {\"용어\":\"한 줄 풀이\"}로, "
     "있는 만큼만 — 없으면 빈 객체.\n"
-    "6) sides: 입장이 갈리면 [{\"who\":\"...\",\"position\":\"...\",\"why\":\"...\"}]로, "
-    "없으면 빈 배열. 정당·인물 둘의 입장뿐 아니라, 원문에 교수·연구위원·평론가 등 "
-    "제3자 전문가 평가나 시민 반응이 실제로 있으면 반드시 별도 항목으로 추가할 것 "
-    "(예: {\"who\":\"OO대 정치외교학과 OO 교수\",\"position\":\"...\",\"why\":\"...\"}) "
-    "— 원문에 실제로 있는 경우에만, 없는 목소리를 지어내지 말 것.\n"
+    "6) sides: 입장이 갈리면 주체별로 하나씩 [{\"who\":\"주체\",\"claim\":\"...\",\"reason\":\"...\","
+    "\"lean\":\"진보|보수|기타\"}]로 정리. 매우 중요 — 주체를 절대 섞지 말 것. claim은 '그 주체가 직접 "
+    "주장·비판·요구한 내용'을 그 주체를 주어로 한 완결된 한 문장으로 쓴다(예: '김민석 대표는 경기도의 "
+    "영화제 축소를 계약 파기라고 비판했습니다.'). reason은 '그 주체 본인이 밝힌 이유·근거'만 그 주체를 "
+    "주어로 한 완결된 한 문장으로 쓴다(예: '경기도는 재정 상황을 이유로 운영을 줄였다고 설명했습니다.'). "
+    "비판하는 쪽의 문장에 비판받는 쪽의 사정·이유를 넣는 것은 금지(재정 부족은 축소한 경기도 쪽의 이유이지 "
+    "비판한 쪽의 이유가 아님). 그 주체의 이유가 본문에 없으면 reason은 빈 문자열. 비판·요구의 대상이 된 "
+    "쪽(예: 경기도, 정부)의 입장·해명이 자료에 있으면 반드시 별도 항목으로 추가할 것. lean은 그 입장이 "
+    "나온 기사(자료 헤더)의 성향. 교수·연구위원·평론가 등 제3자 평가나 시민 반응이 자료에 실제로 있으면 "
+    "별도 항목으로 — 실제로 있는 경우에만, 없는 목소리를 지어내지 말 것.\n"
     "7) confirmed_fact: 여러 출처가 교차 확인한 확실한 사실 한 문장, 완결형.\n"
     "[추가 자료조사]가 주어지면 아래도 채울 것 (없으면 빈 값):\n"
     "8) why_it_happened: 자료조사의 [원인·발단]에서 이 일이 '왜' 일어났는지 인과 순서로. "
@@ -231,7 +240,7 @@ _ANALYSIS_SYSTEM = (
     "원문·자료에 없는 사실을 지어내지 말 것. 출력은 JSON 하나만:\n"
     '{"who":[{"name":"...","role":"..."}],"what_happened":"...","why_now":"...",'
     '"why_it_matters":"...","terms":{"...":"..."},'
-    '"sides":[{"who":"...","position":"...","why":"..."}],"confirmed_fact":"...",'
+    '"sides":[{"who":"...","claim":"...","reason":"...","lean":"..."}],"confirmed_fact":"...",'
     '"why_it_happened":[{"reason":"...","evidence":"..."}],"background":"...",'
     '"statements":[{"who":"...","text":"..."}],'
     '"pros":["..."],"cons":["..."],"reactions":["..."]}'
@@ -290,6 +299,61 @@ def _parse_understanding(raw: str) -> dict[str, Any] | None:
     return obj
 
 
+
+# --------------------------------------------------------------------------- #
+# Attribution-safe "sides" card. A published video put the FINANCIAL reason (the
+# reason of the party that cut the festival) into the critic's sentence. When
+# stage 1 has per-speaker claim/reason, the card is assembled from those
+# sentences directly: one speaker per sentence, each sentence must name its own
+# speaker, and nothing is re-mixed by a second free-writing pass.
+# --------------------------------------------------------------------------- #
+_LEAN_LEAD = {"진보": "진보 성향 매체 보도에 따르면, ", "보수": "보수 성향 매체 보도에 따르면, "}
+
+
+def _compose_sides(u: dict[str, Any] | None) -> str:
+    sides = [s for s in ((u or {}).get("sides") or []) if isinstance(s, dict) and str(s.get("who", "")).strip()]
+    leans = {str(s.get("lean", "")).strip() for s in sides} & {"진보", "보수"}
+    parts: list[str] = []
+    for s in sides[:4]:
+        who = str(s["who"]).strip()
+        key = re.split(r"[\s(（]", who)[0] or who
+        sents: list[str] = []
+        for fld in ("claim", "reason"):
+            txt = re.sub(r"\s+", " ", str(s.get(fld) or "")).strip()
+            # a sentence that never names its speaker is how speakers got mixed up
+            if txt and key in txt and _ends_cleanly(txt):
+                sents.append(txt)
+        if not sents:
+            continue
+        if len(leans) >= 2:                       # both camps present -> label each side's source
+            lead = _LEAN_LEAD.get(str(s.get("lean", "")).strip())
+            if lead:
+                sents[0] = lead + sents[0]
+        parts.append(" ".join(sents))
+    return " ".join(parts)
+
+
+_VAGUE_HOOK = re.compile(r"정면으로\s*부딪|논란이\s*일|무슨\s*일|어떤\s*일|이\s*사안|이\s*문제|이슈가")
+
+
+def _valid_hook(text: Any, meta: dict[str, Any]) -> str:
+    """The writer's opening line if it is concrete AND makes the viewer curious, else ''
+    (the hook engine's line is kept)."""
+    from .topics import _STOP
+
+    t = _norm(str(text or "")).strip("\"'“”")
+    if not (14 <= len(t) <= 52) or "?" not in t or _VAGUE_HOOK.search(t):
+        return ""
+    head = f"{clean_text(str(meta.get('headline') or ''))} {meta.get('topic') or ''}"
+    toks = set(re.findall(r"[가-힣]{2,}", head)) - set(_STOP)
+    if toks and not any(w in t for w in toks):     # names nothing from this story
+        return ""
+    return t
+
+
+# the four attempts of one story read the SAME source: stage 1 is computed once
+_ANALYSIS_CACHE: dict[str, dict[str, Any]] = {}
+
 def analyze_story(meta: dict[str, Any], cfg: Settings) -> dict[str, Any] | None:
     """Stage 1: read the source once and understand it — who's who, what
     actually happened, why it's news today, what needs glossing, where the
@@ -303,6 +367,9 @@ def analyze_story(meta: dict[str, Any], cfg: Settings) -> dict[str, Any] | None:
     from .llm import complete
 
     payload = _analysis_payload(meta)
+    cache_key = hashlib.sha1((provider + payload).encode('utf-8')).hexdigest()
+    if cache_key in _ANALYSIS_CACHE:
+        return _ANALYSIS_CACHE[cache_key]
     for attempt in range(2):
         try:
             raw = complete(payload, cfg, max_tokens=1300, system=_ANALYSIS_SYSTEM)
@@ -311,6 +378,7 @@ def analyze_story(meta: dict[str, Any], cfg: Settings) -> dict[str, Any] | None:
             continue
         obj = _parse_understanding(raw)
         if obj:
+            _ANALYSIS_CACHE[cache_key] = obj
             return obj
         log.info("story analysis: response %d unparseable, retrying", attempt + 1)
     log.info("story analysis: gave up — writing from raw facts/claims instead")
@@ -352,7 +420,9 @@ def _understanding_block(u: dict[str, Any] | None) -> str:
     term_lines = "\n".join(f"- {k}: {v}" for k, v in terms.items() if k and v) or "- (없음)"
     sides = [s for s in (u.get("sides") or []) if isinstance(s, dict) and s.get("who")]
     side_lines = "\n".join(
-        f"- {s.get('who', '')}: {s.get('position', '')} (이유: {s.get('why', '')})" for s in sides
+        f"- {s.get('who', '')} [{s.get('lean', '') or '성향 미상'}]: "
+        f"{s.get('claim') or s.get('position', '')} / 이유: {s.get('reason') or s.get('why', '')}"
+        for s in sides
     ) or "- (없음)"
     return (
         "[분석 1단계 — 이미 이해해 정리해 둔 내용. 이걸 바탕으로 새 문장을 쓸 것]\n"
@@ -404,8 +474,8 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]],
         f"[쓸 카드]\n{json.dumps(ask, ensure_ascii=False)}\n\n"
         f"{draft_note}"
         "각 카드를 규칙대로(배경→무슨 일→왜 중요) 새로 쓰고, 인기 영상 형식의 눈길 "
-        "끄는 2줄 title도 지어 JSON으로만 답하세요. (hook은 쓰지 마세요.)\n"
-        '예: {"title":["한동훈 녹취록 공개","유출 경위 조사할까?"],'
+        "끄는 2줄 title과 첫 문장 hook도 위 규칙대로 지어 JSON으로만 답하세요.\n"
+        '예: {"title":["한동훈 녹취록 공개","유출 경위 조사할까?"],"hook":"한동훈 녹취록은 어떻게 유출됐을까요?",'
         '"summary":"한동훈은 국민의힘 대표를 지낸 인물인데, ...",'
         '"what":"그런데 이번에 공개된 녹취록에는 ...","factcheck":"김승원 정책실장은 3일 ... '
         '그 결과 ...","sides":"민주당은 ...라는 이유로 ...","outro":"..."}'
@@ -461,8 +531,9 @@ def _strip_filler(narr: str) -> str:
     return re.sub(r"\s+", " ", out).strip()
 
 
-# "hook" intentionally excluded — owned by hook_engine.py, never LLM-written
-_ROLE_KEYS = {"summary", "what", "reaction", "factcheck", "sides", "outro"}
+# "hook" is a role key again: the writer proposes it, _valid_hook() vets it, and the
+# hook_engine.py opener stays as the fallback when the proposal is vague or off-topic.
+_ROLE_KEYS = {"hook", "summary", "what", "reaction", "factcheck", "sides", "outro"}
 
 
 def _title_lines(v: Any) -> list[str]:
@@ -600,6 +671,11 @@ def rewrite_segments(
                     last_exc or "unparseable")
         return segments, []
 
+    if story and any(s.get("role") == "sides" for s in segments):
+        _composed = _compose_sides(story)
+        if len(_composed) >= 20:
+            new["sides"] = _composed
+
     def _clean_row(v: str) -> str:
         # same on-screen table as factcheck.rows() (44px, ~830px column, 2-line
         # cap) — same _ROW_BUDGET-equivalent, and the same quote/clause-safe
@@ -643,6 +719,14 @@ def rewrite_segments(
         if subs.get(s["role"]):              # LLM-written on-screen subtitle
             s["_llm_sub"] = subs[s["role"]]
         changed += 1
+    _hk = _valid_hook(new.get("hook"), meta)
+    if _hk:
+        for s in cand:
+            if s.get("role") == "hook":
+                s["narration"] = _hk
+                s.pop("caption", None)
+                changed += 1
+                break
     if not changed:
         return segments, []
 
