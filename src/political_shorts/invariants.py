@@ -13,6 +13,8 @@ bring it back:
   missing_quote     the research found what the key person actually said, yet no quote reached
                     the script ("김민석 대표의 발언들은 왜 사라졌나")
   missing_cause     the research found WHY it happened, yet the script never says it
+  speaker_mix       one party's own reason sat in another party's sentence (the critic "objected
+                    for budget reasons" — that was the province's reason)
 
 Violations are fed back to the writer as feedback for the next attempt; whatever survives the
 last attempt HOLDS the video from auto-publish (pipeline.py) instead of shipping it.
@@ -26,17 +28,53 @@ from .textutil import clean_text
 
 
 def _toks(text: str) -> set[str]:
+    """Word STEMS: Korean attaches particles and endings ("정리한"/"정리했다", "파기를"/"파기라고"), so
+    comparing whole words called a faithful paraphrase a missing quote. Words are cut to their first
+    two syllables before comparing."""
     from .topics import _STOP
 
-    return set(re.findall(r"[가-힣]{2,}", clean_text(text or ""))) - set(_STOP)
+    out: set[str] = set()
+    for w in re.findall(r"[가-힣]{2,}", clean_text(text or "")):
+        if w in _STOP:
+            continue
+        out.add(w if len(w) == 2 else w[:2])
+    return out
 
 
-def _covered(reference: str, narrations: list[str], need: float = 0.6) -> bool:
-    """True if ONE narration carries at least `need` of the reference's distinctive words."""
+def _covered(reference: str, narrations: list[str], need: float = 0.55) -> bool:
+    """True if ONE narration carries at least `need` of the reference's distinctive stems."""
     ref = _toks(reference)
     if len(ref) < 3:
         return True                      # too short to test fairly
     return any(len(ref & _toks(n)) / len(ref) >= need for n in narrations)
+
+
+def _speaker_mix(segments: list[dict[str, Any]], web: dict[str, Any]) -> list[dict[str, str]]:
+    """One party's own reason placed in ANOTHER party's sentence — the DMZ-festival video said the critic
+    objected "for budget reasons" (the province's reason). A word that belongs only to party A's
+    position/reason must not appear in a sentence that names another party but not A."""
+    by: dict[str, set[str]] = {}
+    for p in web.get("positions") or []:
+        if isinstance(p, dict) and _key(p.get("who")):
+            by.setdefault(_key(p["who"]), set()).update(_toks(f"{p.get('position', '')} {p.get('why', '')}"))
+    if len(by) < 2:
+        return []
+    body = [s.get("narration", "") or "" for s in segments if s.get("role") in ("what", "factcheck", "sides")]
+    for a, stems in by.items():
+        excl = stems - set().union(*[o for k, o in by.items() if k != a]) - _toks(a)
+        if not excl:
+            continue
+        for narr in body:
+            for sent in re.split(r"(?<=[.!?])\s+", narr):
+                if a in sent:
+                    continue
+                others = [b for b in by if b != a and b in sent]
+                hit = excl & _toks(sent)
+                if others and hit:
+                    return [{"code": "speaker_mix",
+                             "message": f"'{sent[:50]}' 문장은 {others[0]}의 문장인데 {a}의 이유·사정({', '.join(sorted(hit))})이 "
+                                        f"섞여 있습니다 — {a}의 이유는 {a}를 주어로 한 문장에만 쓸 것."}]
+    return []
 
 
 def _key(who: Any) -> str:
@@ -82,6 +120,8 @@ def check(segments: list[dict[str, Any]], research_web: dict[str, Any] | None, *
                     "message": f"핵심 인물의 발언이 대본에 없습니다 — what 카드에 "
                                f"'{q.get('who', '')}은(는) \"{str(q.get('text', ''))[:60]}\"라고 밝혔습니다' 형태로 "
                                f"발언 내용을 끝까지 인용할 것."})
+
+    out.extend(_speaker_mix(segments, web))
 
     # WHY it happened must be stated when the research found it
     whys = [str(w.get("reason", "")) for w in web.get("why") or [] if isinstance(w, dict) and w.get("reason")]

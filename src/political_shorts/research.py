@@ -63,7 +63,7 @@ def lean_of(url: str) -> str:
 
 
 _UA = "Mozilla/5.0 (compatible; political-shorts-research/1.0)"
-_CACHE_TTL_S = 12 * 3600          # same story is researched once per half-day
+_CACHE_TTL_S = 48 * 3600          # a story is researched once per two days (CI restores the cache)
 _BLOCK_CHARS = 4200               # cap on what is handed to the LLM prompt
 
 
@@ -399,6 +399,64 @@ _EXTRACT_SYSTEM = (
 )
 
 
+def _select_sentences(text: str, kws: set[str], budget: int = 1300) -> str:
+    """The sentences of an article that matter for the story (keyword overlap, quotes, reporting verbs,
+    cause words), in reading order, within `budget` chars. Sending whole bodies burned the free daily
+    token quota twice as fast for no better notes."""
+    sents = [s.strip() for s in re.split(r"(?<=[.!?다요])\s+", text or "") if len(s.strip()) >= 15]
+
+    def score(s: str) -> int:
+        sc = 2 * len(_kw(s) & kws)
+        if re.search(r"[“\"‘']", s):
+            sc += 3
+        if re.search(r"밝혔|말했|강조|주장|비판|요구|반박|해명|설명", s):
+            sc += 2
+        if re.search(r"때문|이유|배경|탓|따라|계기|발단", s):
+            sc += 2
+        return sc
+
+    keep: list[int] = []
+    used = 0
+    for i in sorted(range(len(sents)), key=lambda i: -score(sents[i])):
+        if used + len(sents[i]) <= budget:
+            keep.append(i)
+            used += len(sents[i])
+    return " ".join(sents[i] for i in sorted(keep))
+
+
+_QUOTE_RX = re.compile(
+    r"((?<![가-힣])[가-힣]{2,4}\s?(?:대표|장관|의원|대통령|위원장|총리|후보자|대변인|지사|시장|비서실장|실장|원내대표))"
+    r"[은는이가]?[^“\"]{0,50}[“\"]([^”\"]{10,220})[”\"]\s*(?:라고|라면서|며|고)?\s*"
+    r"(?:밝혔|말했|강조했|주장했|비판했|요구했|반박했|설명했|촉구했)")
+_CAUSE_RX = re.compile(r"[^.!?]*(?:때문|이유로|탓에|계기로|배경에는|영향으로)[^.!?]*[.!?]?")
+_LEAN_NOTE = {"left": "진보", "right": "보수"}
+
+
+def _rule_notes(bodies: list[dict[str, str]]) -> dict[str, Any]:
+    """Notes without any LLM: quotes ("<who> … \"…\"라고 밝혔다") and cause sentences ("… 때문에 …") straight
+    from the article text. Used only when every model failed, so a story still carries a real quote and
+    a stated cause instead of being written from one article alone."""
+    statements: list[dict[str, str]] = []
+    why: list[dict[str, str]] = []
+    for b in bodies:
+        text = b.get("text", "") or ""
+        lean = _LEAN_NOTE.get(b.get("lean", ""), "기타")
+        for m in _QUOTE_RX.finditer(text):
+            who = re.sub(r"\s+", " ", m.group(1)).strip()
+            quote = m.group(2).strip()
+            if not any(s["text"] == quote for s in statements):
+                statements.append({"who": who, "text": quote, "when": "", "lean": lean, "source": b.get("source", "")})
+        for m in _CAUSE_RX.finditer(text):
+            sent = re.sub(r"\s+", " ", m.group(0)).strip()
+            if 15 <= len(sent) <= 200 and not any(w["reason"] == sent for w in why):
+                why.append({"reason": sent, "evidence": "", "source": b.get("source", "")})
+    if not (statements or why):
+        return {}
+    positions = [{"who": s["who"], "position": s["text"][:60], "why": "", "lean": s["lean"], "source": s["source"]}
+                 for s in statements[:4]]
+    return {"statements": statements[:5], "why": why[:3], "positions": positions, "rule_based": True}
+
+
 def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
                    plan: dict[str, Any] | None = None) -> dict[str, Any]:
     from .llm import complete
@@ -412,22 +470,24 @@ def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
             return _tag(b)
         return f" ({_LEAN_KO[b['lean']]} 매체, 제목만)" if b.get("lean") in _LEAN_KO else " (제목만)"
 
+    kws = _kw(" ".join([clean_text(headline), str(plan.get("event", "")), str(plan.get("question", "")),
+                        " ".join(plan.get("queries") or [])]))
     docs = "\n\n".join(
         f"[기사{i} — {b['source']}{_tag2(b)}] {b['title']}\n"
-        f"{b['text'] or '(본문을 읽지 못함 — 제목에 명시된 내용만 근거로 삼고 추측하지 말 것)'}"
+        f"{_select_sentences(b['text'], kws) if b['text'] else '(본문을 읽지 못함 — 제목에 명시된 내용만 근거로 삼고 추측하지 말 것)'}"
         for i, b in enumerate(bodies, 1))
     head = f"[주제] {clean_text(headline)}\n"
     if plan.get("event"):
         head += f"[핵심 사건] {plan['event']}\n"
     if plan.get("question"):
         head += f"[핵심 질문] {plan['question']}\n"
-    prompt = f"{head}\n{docs[:10000]}\n\n위 기사들만 근거로 조사 노트 JSON을 작성하세요."
+    prompt = f"{head}\n{docs[:7500]}\n\n위 기사들만 근거로 조사 노트 JSON을 작성하세요."
     for max_tokens in (3800, 6000):
         try:
             raw = complete(prompt, cfg, max_tokens=max_tokens, system=_EXTRACT_SYSTEM)
         except Exception as exc:  # pragma: no cover - network dependent
             log.info("research: note extraction failed (%s)", str(exc)[:100])
-            return {}
+            return _fallback_notes(bodies)
         obj = _json_obj(raw)
         if obj is not None and _has_content(obj):
             return obj
@@ -436,7 +496,15 @@ def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
                  else "giving up")
         if (raw or "").rstrip().endswith("}"):        # complete but empty: a bigger budget won't help
             break
-    return {}
+    return _fallback_notes(bodies)
+
+
+def _fallback_notes(bodies: list[dict[str, str]]) -> dict[str, Any]:
+    notes = _rule_notes([b for b in bodies if b.get("text")])
+    if notes:
+        log.info("research: models gave no notes — rule-based extraction found %d quote(s), %d cause sentence(s)",
+                 len(notes.get("statements", [])), len(notes.get("why", [])))
+    return notes
 
 
 def _gather(queries: list[str]) -> list[dict[str, str]]:

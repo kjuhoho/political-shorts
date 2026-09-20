@@ -109,34 +109,73 @@ _GENERIC_STEMS = {"국회", "정부", "대통", "여당", "야당", "민주", "�
                   "비판", "반박", "사퇴", "결정", "관련", "오늘", "이번", "지난", "청와", "후보", "대표", "의원"}
 
 
-def _related_reports(cluster_id: int, rows: list[Any], cfg: Settings, limit: int = 4) -> list[dict[str, str]]:
-    """Other clusters that cover the SAME event. A newsroom splits one event by actor ("김민석 비판"
-    / "경기도 반박"), the clusterer keeps them apart, and each video then voices only one side.
-    Two headlines are the same event when they share >=2 distinctive 2-char stems."""
-    def stems(text: str) -> set[str]:
-        return {w[:2] for w in re.findall(r"[가-힣]{3,}", clean_text(text or ""))} - _GENERIC_STEMS
+# 3-syllable name stems too common to identify an event
+_GENERIC_NAMES = {"국민의", "더불어", "대통령", "청와대", "기자회", "대변인", "후보자", "국회의", "이재명", "이대통",
+                  "의원들", "정부는", "여야는", "민주당", "관계자", "이번에", "오늘은"}
+_SAME_EVENT_SH3 = 0.06      # measured on real data: unrelated pairs top out at ~0.05, same-story pairs 0.10-0.23
+_SAME_EVENT_WINDOW_S = 36 * 3600
 
-    mine: set[str] = set()
-    for r in rows:
-        mine |= stems(r["title"])
-    if len(mine) < 2:
+
+def _event_names(text: str) -> set[str]:
+    """Proper-noun-like anchors: 3-syllable Korean stems ("경기도", "김승원") and acronyms ("DMZ"). Two-syllable
+    words are ignored on purpose, so "경기도" (the province) never matches "경기 침체" (the economy)."""
+    t = clean_text(text or "")
+    return ({w[:3] for w in re.findall(r"[가-힣]{3,}", t)} | set(re.findall(r"[A-Z]{2,}", t))) \
+        - _GENERIC_NAMES - {w[:3] for w in _GENERIC_STEMS}
+
+
+def _shingles(text: str, n: int = 3) -> set[str]:
+    s = re.sub(r"[^가-힣A-Za-z0-9]", "", clean_text(text or ""))
+    return {s[i:i + n] for i in range(len(s) - n + 1)}
+
+
+def _related_reports(cluster_id: int, rows: list[Any], cfg: Settings, limit: int = 4) -> list[dict[str, Any]]:
+    """Other clusters that cover the SAME event. A newsroom splits one event by actor ("김민석 비판"
+    / "경기도 반박"), the clusterer keeps them apart, and each video then voices only one side. Two
+    stories are the same event only if ALL hold: they share a proper noun, their title+summary text
+    overlaps (3-syllable shingles, threshold measured on real data), and they were published within
+    36 hours of each other. Each accepted pair is logged with its evidence."""
+    mine_text = " ".join(f"{r['title']} {r['summary'] or ''}" for r in rows[:4])
+    mine_names = _event_names(" ".join(str(r["title"]) for r in rows))
+    mine_sh = _shingles(mine_text)
+    mine_ts = max((int(r["published_ts"]) for r in rows if _has_ts(r)), default=0)
+    if not mine_names or not mine_sh:
         return []
     with connect(cfg.db_path) as conn:
         others = conn.execute(
-            "SELECT cluster_id, title, summary, source_name, source_lean FROM articles "
+            "SELECT cluster_id, title, summary, source_name, source_lean, published_ts FROM articles "
             "WHERE cluster_id IS NOT NULL AND cluster_id != ? ORDER BY source_weight DESC", (cluster_id,)
         ).fetchall()
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     seen: set[int] = set()
     for r in others:
-        if r["cluster_id"] in seen or len(stems(r["title"]) & mine) < 2:
+        if r["cluster_id"] in seen:
+            continue
+        shared = mine_names & _event_names(str(r["title"]))
+        if not shared:
+            continue
+        sh = _shingles(f"{r['title']} {r['summary'] or ''}")
+        score = len(mine_sh & sh) / max(1, len(mine_sh | sh))
+        if score < _SAME_EVENT_SH3:
+            continue
+        if mine_ts and _has_ts(r) and abs(int(r["published_ts"]) - mine_ts) > _SAME_EVENT_WINDOW_S:
             continue
         seen.add(r["cluster_id"])
-        out.append({"title": clean_text(r["title"]), "summary": truncate(clean_text(r["summary"] or ""), 380),
+        log.info("related: cluster %d ~ cluster %d (shared=%s, sh3=%.2f) %s", cluster_id, r["cluster_id"],
+                 ",".join(sorted(shared))[:30], score, str(r["title"])[:40])
+        out.append({"cluster_id": r["cluster_id"], "title": clean_text(r["title"]),
+                    "summary": truncate(clean_text(r["summary"] or ""), 380),
                     "source": r["source_name"] or "", "lean": r["source_lean"] or ""})
         if len(out) >= limit:
             break
     return out
+
+
+def _has_ts(row: Any) -> bool:
+    try:
+        return row["published_ts"] is not None and int(row["published_ts"]) > 0
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
 
 
 def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> None:
@@ -847,6 +886,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     agent_attempts = 0
     research_web: dict[str, Any] = {}
     chosen_viol: list[dict[str, str]] = []
+    absorbed: list[dict[str, Any]] = []
     if llm_on:
         from .hook import pick_actor as _pick_actor
         from .script_llm import rewrite_segments
@@ -869,6 +909,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         # RESEARCH: the seed articles are only the skeleton — gather extra news,
         # web/official statements and YouTube signals so the writer explains the
         # story instead of re-telling those articles. Best-effort and cached.
+        absorbed = list(meta.get("related") or [])
         meta["research"] = ""
         research_web: dict[str, Any] = {}
         if getattr(cfg, "research_enabled", True):
@@ -1119,6 +1160,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         "style": cfg.headline_style,
         "engage_question": explain.engage_question(frame, pick_actor(headline, entities, frame)),
         "invariant_violations": chosen_viol,
+        # other clusters this video already covers — recorded as "covered" when it is published
+        "absorbed": [{"title": a["title"], "cluster_id": a.get("cluster_id")} for a in absorbed],
         # the articles the research actually read — cited in the description next to the seed sources
         "research_sources": [{"title": s.get("title", ""), "url": s.get("url", "")}
                              for s in (research_web.get("sources") or []) if s.get("url")][:8],

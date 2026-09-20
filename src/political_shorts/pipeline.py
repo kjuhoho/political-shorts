@@ -323,6 +323,12 @@ def _process_story(
                     rid = next((p["remote_id"] for p in out.publishes if p["status"] == "ok"), "")
                     record_topic(conn, signature_str(sig), script["headline"],
                                  script.get("frame", ""), rid, "youtube", actor)
+                    # the same event, reported from the other side, was folded into this video:
+                    # it must not come back tomorrow as a separate "story" (actor left blank so the
+                    # same-person rule cannot over-block)
+                    for a in script.get("absorbed") or []:
+                        record_topic(conn, signature_str(story_signature(a["title"], None, "")),
+                                     a["title"], script.get("frame", ""), rid, "youtube", "")
 
         return out
 

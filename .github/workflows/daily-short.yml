@@ -37,6 +37,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: restore the research cache (the same story is researched once per two days)
+        uses: actions/cache@v4
+        with:
+          path: data/research_cache
+          key: research-${{ github.run_id }}
+          restore-keys: |
+            research-
+
       - name: system deps (ffmpeg + Korean fonts)
         run: |
           sudo apt-get update -qq

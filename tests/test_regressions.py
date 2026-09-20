@@ -156,3 +156,100 @@ def test_a_blocked_topic_is_never_made(tmp_path):
     assert P._drop_blocked(cfg, [1, 2]) == [1, 2]
     (tmp_path / "config" / "blocked_topics.json").unlink()
     assert P._drop_blocked(cfg, [1, 2]) == [1, 2]                                  # no file = nothing blocked
+
+
+# ================== round 2: the follow-ups found by reviewing round 1 ==================
+def test_incident_a_faithful_paraphrase_is_not_a_missing_quote():
+    """Whole-word comparison called '정리한/정리했다', '파기를/파기라고' different words, so a video that DID carry
+    the quote could be held as 'missing_quote'."""
+    web = {"statements": [{"who": "김민석 대표", "when": "20일",
+                           "text": "대통령이 임기 제한 문제를 분명하게 정리했기 때문에 이제 본격적인 개헌 논의로 전환해야 한다"}]}
+    narr = [_seg("what", "김민석 대표는 20일 기자회견에서 대통령이 임기 제한 문제를 분명히 정리한 만큼 본격적인 "
+                         "개헌 논의로 전환할 때라고 밝혔습니다.")]
+    assert invariants.check(narr, web) == []
+    unrelated = [_seg("what", "국회는 오늘 예산안을 처리했고 여야는 표결 끝에 합의했습니다.")]
+    assert [v["code"] for v in invariants.check(unrelated, web)] == ["missing_quote"]     # a real omission is still caught
+
+
+def test_incident_the_provinces_reason_in_the_critics_sentence_is_flagged():
+    """The published DMZ video: '김민석 대표 측은 재정 부족을 이유로 …계약 파기라고 비판' — 재정 부족 is the PROVINCE's reason."""
+    mixed = [_seg("sides", "더불어민주당 김민석 대표 측은 재정 부족을 이유로 문화 기반을 축소하는 것은 계약 파기라고 비판합니다.")]
+    codes = [v["code"] for v in invariants.check(mixed, WEB)]
+    assert "speaker_mix" in codes
+    ok = [_seg("sides", "경기도는 재정 상황과 고비용 저성과를 이유로 축소했다고 설명했습니다. "
+                        "반면 김민석 대표는 이를 계약 파기라며 비판했습니다.")]
+    assert "speaker_mix" not in [v["code"] for v in invariants.check(ok, WEB)]
+    # naming the criticised party's action inside the critic's sentence is normal, not a mix-up
+    action = [_seg("sides", "김민석 대표는 경기도가 재정 상황을 이유로 축소한 것을 계약 파기라고 비판했습니다.")]
+    assert "speaker_mix" not in [v["code"] for v in invariants.check(action, WEB)]
+
+
+def test_incident_same_event_needs_a_shared_proper_noun_similar_text_and_a_time_window(tmp_path):
+    """'경기도 영화제' (the province) must not merge with '경기 침체' (the economy); a real rebuttal must merge; a story
+    from days ago must not."""
+    cfg = dataclasses.replace(load_settings(), db_path=tmp_path / "ev.sqlite3", output_dir=tmp_path, data_dir=tmp_path)
+    init_db(cfg.db_path)
+    t0 = now()
+    arts = [
+        (1, "김민석, 경기도 DMZ다큐영화제 축소에 계약 파기 비판", "김민석 대표는 경기도의 DMZ다큐영화제 축소를 계약 파기라고 비판했다.", t0),
+        (2, "경기도, DMZ영화제 축소운영 비판에 고비용 저성과 반박", "경기도는 DMZ영화제 축소운영이 고비용 저성과 때문이라고 반박했다.", t0 + 3600),
+        (3, "경기 침체 속 내년 예산 축소 전망", "올해 경기 침체로 내년 정부 예산이 축소될 전망이다.", t0),
+        (4, "경기도, DMZ영화제 축소 논란 지난달에도 있었다", "경기도는 DMZ영화제 예산을 지난달에도 줄였다.", t0 - 5 * 86400),
+    ]
+    with connect(cfg.db_path) as conn:
+        for cid, title, summary, ts in arts:
+            url = f"https://example.com/{cid}"
+            upsert_article(conn, {"url_hash": url_hash(url), "url": url, "source_name": f"매체{cid}", "source_lean": "wire",
+                                  "source_weight": 1.0, "title": title, "summary": summary, "published_ts": ts,
+                                  "collected_ts": now(), "raw": {}})
+            conn.execute("UPDATE articles SET cluster_id=? WHERE url_hash=?", (cid, url_hash(url)))
+        rows = list(conn.execute("SELECT * FROM articles WHERE cluster_id = 1"))
+    related = SG._related_reports(1, rows, cfg)
+    titles = [r["title"] for r in related]
+    assert any("고비용" in t for t in titles)                          # the province's rebuttal joins
+    assert not any("경기 침체" in t for t in titles)                    # a different '경기' does not
+    assert not any("지난달" in t for t in titles)                       # a 5-day-old story does not
+    assert related[0]["cluster_id"] == 2
+
+
+def test_incident_a_folded_in_story_is_recorded_as_covered_when_the_video_is_published():
+    """After the video absorbs the province's rebuttal, that rebuttal must not come back as its own video."""
+    from political_shorts import topics
+    assert 'script.get("absorbed")' in __import__("inspect").getsource(P._process_story)
+    sig = topics.story_signature("경기도, DMZ영화제 축소운영 비판에 고비용 저성과 반박", None, "")
+    prev = topics.story_signature("김민석, 경기도 DMZ다큐영화제 축소에 계약 파기 비판", {"politicians": ["김민석"]}, "")
+    # the recorded signature of the absorbed headline is what a later, near-identical headline is compared against
+    later = topics.story_signature("경기도, DMZ영화제 축소운영 비판에 \"고비용·저성과\" 반박", None, "")
+    assert topics._overlap(later, sig) >= 0.6 and topics._overlap(later, prev) < 0.6
+
+
+def test_incident_an_empty_model_answer_still_yields_a_quote_and_a_cause():
+    """Groq's quota gone + Gemini failing left research empty and the video was written from one article."""
+    bodies = [{"title": "개헌", "source": "연합뉴스", "link": "https://a/1", "lean": "",
+               "text": "더불어민주당 김민석 대표는 20일 국회에서 “대통령이 임기 제한 입장을 분명히 정리한 만큼 본격적인 개헌 논의로 "
+                       "전환해야 한다”고 밝혔습니다. 경기도는 재정 부담 때문에 운영 규모를 줄였다고 설명했다."}]
+    notes = research._rule_notes(bodies)
+    assert notes["rule_based"] and notes["statements"][0]["who"] == "김민석 대표"
+    assert "개헌 논의로 전환해야 한다" in notes["statements"][0]["text"]
+    assert any("재정 부담 때문에" in w["reason"] for w in notes["why"])
+    assert notes["positions"][0]["who"] == "김민석 대표"
+    assert research._rule_notes([{"text": "특별한 내용 없는 짧은 문장입니다.", "source": "x"}]) == {}
+
+
+def test_incident_note_extraction_falls_back_to_the_rules_when_every_model_fails(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("quota")
+    monkeypatch.setattr(L, "complete", boom)
+    bodies = [{"title": "기사", "source": "매체", "link": "https://a/1", "lean": "left",
+               "text": "김민석 대표는 “경기도가 계약을 일방적으로 파기하고 축소하는 것은 문제가 있다”고 비판했습니다. " * 2}]
+    notes = research._extract_notes("영화제 축소", bodies, settings, {"event": "영화제 축소", "queries": ["영화제 축소 이유"]})
+    assert notes and notes["statements"][0]["lean"] == "진보"
+
+
+def test_incident_note_prompts_carry_only_the_relevant_sentences():
+    """Whole bodies burned the free daily token quota twice as fast."""
+    filler = "이 문장은 사건과 아무 관련이 없는 배경 설명입니다. " * 30
+    text = filler + "김민석 대표는 “경기도가 계약을 일방적으로 파기하는 것은 문제가 있다”고 밝혔습니다. " + filler
+    kws = research._kw("경기도 영화제 계약 파기 김민석")
+    picked = research._select_sentences(text, kws, budget=300)
+    assert "계약을 일방적으로 파기하는 것은 문제" in picked and len(picked) <= 300
