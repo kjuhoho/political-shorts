@@ -116,7 +116,19 @@ def _process_story(
         # first pass scored only 80 on a fresh rebuild, missing its own
         # floor. Reusing the actual best-scoring script makes the gate below
         # trivially pass (out.agent_score is already >= floor by construction).
-        script = forced_script if forced_script is not None else build_script(cluster_id, cfg)
+        def _skip_early(p: dict[str, Any]) -> bool:
+            """Already covered, or the topic is saturated? Decided BEFORE any LLM call."""
+            _sig = story_signature(p["headline"], p.get("entities"), p.get("frame", ""))
+            _pe = p.get("entities") or {}
+            _ppl = {str(n) for n in (_pe.get("politicians") or []) if n and str(n) in p["headline"]}
+            with connect(cfg.db_path) as _conn:
+                _dup, _ = recent_duplicate(_conn, _sig, cfg, actor=str(p.get("topic") or ""), people=_ppl)
+                _sat = (_theme_saturated(_conn, _sig, str(p.get("topic") or ""), cfg)
+                        if (enforce_variety and not _dup) else "")
+            return bool(_dup or _sat)
+
+        script = (forced_script if forced_script is not None
+                  else build_script(cluster_id, cfg, skip_llm_if=_skip_early))
         if script_cache is not None:
             script_cache[cluster_id] = script
         out.headline = script["headline"]

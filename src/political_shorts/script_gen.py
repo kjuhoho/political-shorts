@@ -600,7 +600,8 @@ def _sides_line(claims: list, interps: list) -> str:
     return ""
 
 
-def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]:
+def build_script(cluster_id: int, cfg: Settings | None = None, *,
+                 skip_llm_if: Any = None) -> dict[str, Any]:
     cfg = cfg or settings
     with connect(cfg.db_path) as conn:
         rows = cluster_articles(conn, cluster_id)
@@ -781,7 +782,23 @@ def build_script(cluster_id: int, cfg: Settings | None = None) -> dict[str, Any]
     # will be discarded anyway regardless of how good the rewrite is.
     _material = len(analysis.facts) + len(analysis.claims) + len(analysis.interpretations)
     material_thin = n_sources <= 1 and _material <= 3
-    llm_on = bool((getattr(cfg, "llm_provider", "") or "").strip()) and not material_thin
+    # A story the pipeline is about to throw away (already covered / topic saturated) must not
+    # cost 15-30 LLM calls first: `skip_llm_if(preview)` lets the caller veto the LLM/research
+    # stages now, using only what is known before any LLM call. The cheap template script that
+    # comes back is discarded by the same checks the caller runs afterwards.
+    _skip_llm = False
+    if skip_llm_if is not None and not material_thin:
+        try:
+            _skip_llm = bool(skip_llm_if({
+                "headline": headline, "topic": _actor, "frame": frame.kind,
+                "entities": {"president": entities.president, "politicians": entities.politicians,
+                             "parties": entities.parties, "institutions": entities.institutions}}))
+        except Exception as exc:  # pragma: no cover - defensive
+            log.info("early skip check failed (%s)", str(exc)[:80])
+        if _skip_llm:
+            log.info("no LLM spent on %r — it is already covered / saturated", headline[:40])
+    llm_on = (bool((getattr(cfg, "llm_provider", "") or "").strip())
+              and not material_thin and not _skip_llm)
     template_segments = [dict(s) for s in segments]
     agent_report = None
     agent_attempts = 0

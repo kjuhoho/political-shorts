@@ -408,7 +408,7 @@ def test_run_pipeline_promotes_the_best_candidate_when_nothing_hits_95(tmp_path,
     call_count: dict[int, int] = {}
     score_seq = [60, 90]
 
-    def fake_build_script(cluster_id, _cfg=None):
+    def fake_build_script(cluster_id, _cfg=None, **_kw):
         call_count[cluster_id] = call_count.get(cluster_id, 0) + 1
         if cluster_id not in id_to_score:
             id_to_score[cluster_id] = score_seq[min(len(id_to_score), len(score_seq) - 1)]
@@ -480,7 +480,7 @@ def test_run_pipeline_publishes_nothing_when_best_is_below_the_fallback_floor(tm
                 "raw": {},
             })
 
-    def fake_build_script(cluster_id, _cfg=None):
+    def fake_build_script(cluster_id, _cfg=None, **_kw):
         return {
             "cluster_id": cluster_id, "headline": f"헤드라인 {cluster_id}", "title": ["a", "b"],
             "topic": "정치", "frame": "clash", "entities": {}, "segments": [],
@@ -565,3 +565,46 @@ def test_well_sourced_story_is_not_caught_by_the_thin_material_gate(tmp_path, mo
     monkeypatch.setattr(pipeline, "build_script", lambda *a, **k: rich_script)
     out = _process_story(1, cfg, do_publish=False, report=RunReport())
     assert "소재 부족" not in out.reason
+
+
+def test_an_already_covered_story_spends_no_llm_calls(tmp_path, monkeypatch):
+    """Duplicate / saturated stories used to be built in full (research + writer + up to 4
+    quality rewrites = 15-30 LLM calls) and only THEN thrown away. The check now runs first."""
+    from political_shorts import pipeline as P
+    from political_shorts import script_gen as SG
+
+    cfg = replace(load_settings(), db_path=tmp_path / "early.sqlite3", output_dir=tmp_path,
+                  data_dir=tmp_path, image_enabled=False, llm_provider="groq")
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        for name, lean, w, title, summary in FAKE:
+            if "야구" in title:
+                continue
+            url = f"https://example.com/{url_hash(title)[:10]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": summary, "published_ts": now(), "collected_ts": now(), "raw": {}})
+    classify_pending(cfg)
+    cid = build_clusters(cfg)[0]
+
+    llm_calls = []
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: llm_calls.append(1) or "{}")
+
+    # (a) not covered -> the LLM stages are allowed to run
+    monkeypatch.setattr(P, "recent_duplicate", lambda *a, **k: (False, ""))
+    monkeypatch.setattr(P, "_theme_saturated", lambda *a, **k: "")
+    SG.build_script(cid, cfg, skip_llm_if=lambda p: False)
+    assert llm_calls, "control: with no veto the writer does call the LLM"
+
+    # (b) already covered -> vetoed before any LLM call
+    llm_calls.clear()
+    seen = {}
+
+    def veto(p):
+        seen.update(p)
+        return True
+
+    SG.build_script(cid, cfg, skip_llm_if=veto)
+    assert llm_calls == []
+    assert seen["headline"] and seen["frame"] and "politicians" in seen["entities"]
