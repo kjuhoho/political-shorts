@@ -277,3 +277,80 @@ def test_incident_a_render_that_is_out_of_sync_is_re_rendered_once():
     assert not P._render_defect(QR([{"severity": "critical", "code": "added-number"}]))       # a script problem needs a rewrite
     assert not P._render_defect(QR([]))
     assert "re-rendering once" in __import__("inspect").getsource(P._process_story)
+
+
+# ---------------------- the render defect: the cross-fade join came out ~30% of the clips' length
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from political_shorts import video as V  # noqa: E402
+
+_FF = settings.ffmpeg_path if shutil.which(settings.ffmpeg_path or "ffmpeg") or Path(settings.ffmpeg_path or "x").exists() else ""
+
+
+def _clip(path: Path, video_s: float, audio_s: float):
+    subprocess.run([_FF, "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=blue:s=270x480:r=30:d={video_s}",
+                    "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=48000:duration={audio_s}",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
+
+
+def test_incident_a_cross_fade_join_that_comes_out_short_is_replaced_by_a_plain_join(tmp_path, monkeypatch):
+    """CI builds (2 of the last ~10) produced a file of ~27s from ~92s of clips and then rescaled the timeline to
+    hide it. Whatever the cause, a join shorter than its clips must never be kept."""
+    calls = {"concat": 0}
+    monkeypatch.setattr(V, "_run", lambda cmd: None)                                   # the cross-fade "ran" ...
+    monkeypatch.setattr(V, "probe_duration", lambda p, cfg=None: 27.0)                  # ... but produced 27s
+    monkeypatch.setattr(V, "_concat", lambda ff, clips, out, fps: calls.__setitem__("concat", calls["concat"] + 1))
+    cfg = dataclasses.replace(settings, video_fps=30)
+    clips = [tmp_path / f"c{i}.mp4" for i in range(19)]
+    removed = V._assemble("ffmpeg", clips, [4.8] * 19, tmp_path / "out.mp4", cfg, ["dissolve"] * 18)
+    assert calls["concat"] == 1 and removed == 0.0                                      # fell back to the plain join
+
+    calls["concat"] = 0
+    monkeypatch.setattr(V, "probe_duration", lambda p, cfg=None: 4.8 * 19 - 2.0)        # a join of the RIGHT length is kept
+    removed = V._assemble("ffmpeg", clips, [4.8] * 19, tmp_path / "out.mp4", cfg, ["dissolve"] * 18)
+    assert calls["concat"] == 0 and removed > 0
+
+
+@pytest.mark.skipif(not _FF, reason="ffmpeg not available")
+def test_well_formed_clips_still_use_the_cross_fade_join(tmp_path):
+    clips = []
+    for i in range(3):
+        c = tmp_path / f"g{i}.mp4"
+        _clip(c, 3.0, 3.0)
+        clips.append(c)
+    cfg = dataclasses.replace(settings, ffmpeg_path=_FF, video_fps=30)
+    out = tmp_path / "ok.mp4"
+    removed = V._assemble(_FF, clips, [3.0, 3.0, 3.0], out, cfg, ["dissolve", "dissolve"])
+    assert removed > 0                                              # overlaps were applied (not the plain fallback)
+    assert 8.0 <= V.probe_duration(out, cfg) <= 9.0                 # 9s of clips minus the overlaps
+
+
+def test_incident_still_clips_hold_their_last_frame_until_the_planned_length(monkeypatch, tmp_path):
+    assert "tpad=stop_mode=clone:stop_duration=5.70" in V._hold_tail(5.2)
+    seen = {}
+    monkeypatch.setattr(V, "_run", lambda cmd: seen.update(cmd=cmd))
+    from political_shorts.tts import Narration
+    cfg = dataclasses.replace(settings, ken_burns=True)
+    V._segment_clip("ffmpeg", tmp_path / "b.jpg", True, tmp_path / "o.png", Narration(0, "t", None, 0.0),
+                    5.2, tmp_path / "c.mp4", cfg, 0, "punch")
+    filt = seen["cmd"][seen["cmd"].index("-filter_complex") + 1]
+    assert "tpad=stop_mode=clone:stop_duration=5.70[bg]" in filt          # the picture can never end before the voice
+    cfg2 = dataclasses.replace(settings, ken_burns=False)
+    V._segment_clip("ffmpeg", tmp_path / "b.jpg", True, tmp_path / "o.png", Narration(0, "t", None, 0.0),
+                    5.2, tmp_path / "c.mp4", cfg2, 0, "punch")
+    assert "tpad=stop_mode=clone" in seen["cmd"][seen["cmd"].index("-filter_complex") + 1]
+
+
+def test_incident_two_voiced_parties_are_enough_when_the_research_lists_more():
+    """The 강선우·김경 story lists several actors (co-defendants, prosecutors, court); demanding ALL of them in the
+    sides card held a fine video. One voiced party is still one-sided; two is not."""
+    web = {"positions": [{"who": "강선우", "position": "혐의를 부인", "why": ""}, {"who": "김경", "position": "공천 대가 인정", "why": ""},
+                         {"who": "검찰", "position": "구속 기간 연장 요청", "why": ""}, {"who": "법원", "position": "석방 여부 심리", "why": ""}]}
+    one = [_seg("sides", "강선우 의원은 혐의를 부인하고 있습니다.")]
+    two = [_seg("sides", "강선우 의원은 혐의를 부인하고 있습니다. 반면 김경 전 시의원은 공천 대가를 인정했습니다.")]
+    assert [v["code"] for v in invariants.check(one, web)] == ["one_sided"]
+    assert invariants.check(two, web) == []

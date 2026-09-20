@@ -769,6 +769,15 @@ def _kb_expr(zoom: str, w: int, duration: float, idx: int, is_photo: bool) -> tu
     return (1.18 if is_photo else 1.12), "(1+0.05*exp(-t*6))", px, ("0.5" if idx % 2 == 0 else "0.32")
 
 
+def _hold_tail(duration: float) -> str:
+    """Freeze the last frame so a still-image clip's VIDEO stream always reaches its planned length.
+    Defensive only: CI builds intermittently produced a joined file ~30% of the clips' combined length
+    (planned 92s -> 27s) and the exact cause is NOT yet identified — a short picture stream was the first
+    suspect but could not be reproduced. The length guard in `_assemble` and the per-clip diagnostics are
+    what protect and, next time, explain."""
+    return f"tpad=stop_mode=clone:stop_duration={duration + 0.5:.2f}"
+
+
 def _segment_clip(
     ffmpeg: str, base_img: Path, is_photo: bool, overlay: Path,
     nar: Narration, duration: float, out_mp4: Path, cfg: Settings, idx: int,
@@ -784,9 +793,9 @@ def _segment_clip(
         sw, sh = int(w * over), int(h * over)
         vbg = (f"[0:v]scale=w='{sw}*{pz}':h='{sh}*{pz}':eval=frame,"
                f"crop={w}:{h}:x='{px}':y='(ih-{h})*{yb}',"
-               f"setsar=1,fps={fps}[bg]")
+               f"setsar=1,fps={fps},{_hold_tail(duration)}[bg]")
     else:
-        vbg = f"[0:v]scale={w}:{h},setsar=1,fps={fps}[bg]"
+        vbg = f"[0:v]scale={w}:{h},setsar=1,fps={fps},{_hold_tail(duration)}[bg]"
 
     cmd = [
         ffmpeg, "-y", "-loglevel", "error",
@@ -925,6 +934,15 @@ def _assemble(ffmpeg: str, clips: list[Path], durs: list[float],
     ]
     try:
         _run(cmd)
+        got = probe_duration(out_mp4, cfg)
+        expected = acc
+        if got > 0 and abs(got - expected) > max(1.5, 0.08 * expected):
+            # The join must be as long as the clips it joins (minus the overlaps). If not, scenes were
+            # cut — never ship that: join the whole clips instead.
+            log.warning("xfade assemble produced %.1fs, expected %.1fs (%d clips, clip lengths %s) — plain concat",
+                        got, expected, n, [round(d, 1) for d in durs[:6]])
+            _concat(ffmpeg, clips, out_mp4, fps)
+            return 0.0
         return removed
     except Exception as exc:
         log.warning("xfade assemble failed (%s); plain concat", exc)
@@ -1053,6 +1071,11 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
         # prediction (a short b-roll loop etc. would otherwise desync it).
         thumb_n = len(clip_paths) - len(segments)
         measured = [probe_duration(p, cfg) for p in clip_paths]
+        for k, (p, m) in enumerate(zip(clip_paths, measured)):
+            planned = clip_durs[k]
+            if m and planned and abs(m - planned) > max(0.4, 0.15 * planned):
+                log.warning("clip %d: planned %.2fs but rendered %.2fs (streams: %s)", k, planned, m,
+                            _stream_durations(p, cfg))
         clip_durs = [m if m and m > 0.2 else clip_durs[k] for k, m in enumerate(measured)]
         tl = _tl.retime(tl, clip_durs[thumb_n:]) if thumb_n >= 0 else tl
 
@@ -1131,6 +1154,20 @@ def _ffprobe_bin(cfg: Settings) -> str | None:
         if c and (shutil.which(c) or Path(c).exists()):
             return c
     return None
+
+
+def _stream_durations(path: Path, cfg: Settings | None = None) -> str:
+    """'video=1.5s audio=5.2s' — the two streams of one clip, for the logs."""
+    exe = _ffprobe_bin(cfg or settings)
+    if not exe:
+        return "n/a"
+    try:
+        out = subprocess.run([exe, "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", str(path)],
+                             capture_output=True, text=True, timeout=25)
+        return " ".join(f"{s.get('codec_type')}={float(s.get('duration', 0)):.1f}s"
+                        for s in json.loads(out.stdout).get("streams", []))
+    except Exception:
+        return "n/a"
 
 
 def probe_duration(path: Path, cfg: Settings | None = None) -> float:

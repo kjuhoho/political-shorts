@@ -105,11 +105,14 @@ def check(segments: list[dict[str, Any]], research_web: dict[str, Any] | None, *
                 actors.append(k)
     if len(actors) >= 2:
         sides_text = " ".join(s.get("narration", "") or "" for s in segments if s.get("role") == "sides")
-        missing = [a for a in actors[:3] if a not in sides_text]
-        if missing:
+        voiced = [a for a in actors[:4] if a in sides_text]
+        # at least TWO parties must speak: "all of them" demanded co-defendants (강선우, 김경) and every
+        # bit-player be listed, and held a fine video; one party alone is the one-sided video we ship-block.
+        if len(voiced) < 2:
+            missing = [a for a in actors[:4] if a not in voiced]
             out.append({"code": "one_sided",
-                        "message": f"입장이 갈리는 사안인데 sides 카드에 {', '.join(missing)}의 입장이 없습니다 — "
-                                   f"자료에 있는 모든 주체({', '.join(actors[:3])})를 각각 그 주체를 주어로 한 문장으로 넣을 것."})
+                        "message": f"입장이 갈리는 사안인데 sides 카드에 {', '.join(voiced) or '한 쪽'}의 입장뿐입니다 — "
+                                   f"{', '.join(missing[:2])}의 입장도 각각 그 주체를 주어로 한 문장으로 넣을 것."})
 
     # what the key person actually said must appear
     quotes = [s for s in web.get("statements") or []
