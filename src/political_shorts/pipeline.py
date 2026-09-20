@@ -290,10 +290,16 @@ def _process_story(
 
         # needs_review no longer holds publish on its own (see the note
         # above) — only quality.py's own publishable check does.
-        hold_publish = not qr.publishable
+        _viol = script.get("invariant_violations") or []
+        hold_publish = (not qr.publishable) or bool(_viol)
+        if _viol:
+            out.safety_warnings = [*out.safety_warnings,
+                                   "구조 검사 미충족 — 자동 게시 보류: " + "; ".join(v["code"] for v in _viol)]
         out.held = hold_publish
         if do_publish and hold_publish:
-            out.reason = f"보류: {qr.band} (quality {qr.score}/100) — 빌드 완료, 게시 안 함"
+            out.reason = (f"보류: {qr.band} (quality {qr.score}/100)"
+                          + (f", 구조 검사 미충족({', '.join(v['code'] for v in _viol)})" if _viol else "")
+                          + " — 빌드 완료, 게시 안 함")
             log.warning("cluster %d built but held from publish (quality=%d/%s)",
                         cluster_id, qr.score, qr.band)
         if do_publish and not hold_publish:
@@ -332,6 +338,29 @@ def _process_story(
         report.errors.append(f"cluster {cluster_id}: {out.reason}")
         log.error("cluster %d ERROR\n%s", cluster_id, traceback.format_exc())
         return out
+
+
+def _drop_blocked(cfg: Settings, cluster_ids: list[int]) -> list[int]:
+    """config/blocked_topics.json = [["DMZ","영화제"], ...]: a cluster whose titles contain ALL the words
+    of any entry is never made. The owner's way to say "not this story again"."""
+    path = Path(cfg.root) / "config" / "blocked_topics.json"
+    try:
+        rules = [[str(w) for w in r if w] for r in json.loads(path.read_text(encoding="utf-8")) if r]
+    except Exception:
+        return cluster_ids
+    if not rules:
+        return cluster_ids
+    from .db import cluster_articles
+
+    keep: list[int] = []
+    with connect(cfg.db_path) as conn:
+        for cid in cluster_ids:
+            titles = " ".join(str(r["title"]) for r in cluster_articles(conn, cid))
+            if any(all(w in titles for w in rule) for rule in rules):
+                log.info("cluster %d blocked by config/blocked_topics.json (%s)", cid, titles[:50])
+                continue
+            keep.append(cid)
+    return keep
 
 
 def _focus_clusters(cfg: Settings, cluster_ids: list[int], focus: str) -> list[int]:
@@ -384,6 +413,7 @@ def run_pipeline(
         report.clusters = len(cluster_ids)
 
         # --focus "키워드 …": work ONLY on clusters about that story (and let thin ones be researched)
+        cluster_ids = _drop_blocked(cfg, cluster_ids)
         focus_on = bool((focus or "").strip())
         if focus_on:
             cluster_ids = _focus_clusters(cfg, cluster_ids, focus)

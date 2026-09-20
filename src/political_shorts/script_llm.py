@@ -263,6 +263,7 @@ def _analysis_payload(meta: dict[str, Any]) -> str:
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []), 8)}\n\n"
         f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 6)}\n\n"
         f"[등장 인물·정당] {who}\n\n"
+        f"{_related_block(meta)}"
         f"{meta.get('research', '')}"
         "위 내용을 다 읽고 이해한 대로 JSON 하나로 정리하세요."
     )
@@ -349,6 +350,19 @@ def _valid_hook(text: Any, meta: dict[str, Any]) -> str:
     if toks and not any(w in t for w in toks):     # names nothing from this story
         return ""
     return t
+
+
+def _related_block(meta: dict[str, Any]) -> str:
+    """Coverage of the same event by other clusters — usually the OTHER party's side."""
+    rel = [r for r in (meta.get("related") or []) if isinstance(r, dict) and r.get("title")]
+    if not rel:
+        return ""
+    lean_ko = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송"}
+    lines = "\n".join(
+        f"- ({r.get('source', '')}{', ' + lean_ko[r['lean']] if r.get('lean') in lean_ko else ''}) "
+        f"{r['title']}: {r.get('summary', '')}" for r in rel[:4])
+    return ("[같은 사안의 다른 보도 — 상대편의 입장·반박·해명이 있으면 반드시 sides에 각각 별도 주체로 "
+            f"반영하고, 이 보도에 나온 인물의 발언도 인용할 것]\n{lines}\n\n")
 
 
 # the four attempts of one story read the SAME source: stage 1 is computed once
@@ -468,6 +482,7 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]],
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []))}\n\n"
         f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 5)}\n\n"
         f"[등장 인물·정당] {who}\n"
+        f"{_related_block(meta)}"
         f"{meta.get('research', '')}"
         f"[보도 매체 성향] {', '.join(meta.get('leans', [])) or '(불명)'}\n"
         f"[이 기사의 핵심 인물/주제] {meta.get('topic', '') or '(없음)'}\n\n"

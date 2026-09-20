@@ -25,6 +25,7 @@ from .hook import (
     _NOT_TARGET, detect_entities, detect_frame, josa, make_factcheck, make_hook,
     make_title, pick_actor, simplify, strip_wire_marks, to_polite,
 )
+from . import invariants
 from .logging_setup import get_logger
 from .subtitle import _complete as _sentence_complete
 from .textutil import clean_text, clip_sentence, strip_byline, truncate
@@ -43,7 +44,7 @@ MAX_WHAT = 1
 MAX_VIDEO_SECONDS = 66.0
 # the LLM writes real background + explanation now, so a card can run longer
 # and the whole video too — a viewer who doesn't follow politics needs it.
-MAX_VIDEO_SECONDS_LLM = 82.0
+MAX_VIDEO_SECONDS_LLM = 110.0
 _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
@@ -101,6 +102,41 @@ def _spoken(text: str) -> str:
             ("다", "요", "죠", "까", "음", "됨", "함", "임", "것", "중"))):
         return t if t[-1] in ".!?" else t + "."
     return ""
+
+
+# generic 2-char word stems that say nothing about WHICH story two headlines share
+_GENERIC_STEMS = {"국회", "정부", "대통", "여당", "야당", "민주", "국힘", "정치", "논란", "의혹", "발언", "입장",
+                  "비판", "반박", "사퇴", "결정", "관련", "오늘", "이번", "지난", "청와", "후보", "대표", "의원"}
+
+
+def _related_reports(cluster_id: int, rows: list[Any], cfg: Settings, limit: int = 4) -> list[dict[str, str]]:
+    """Other clusters that cover the SAME event. A newsroom splits one event by actor ("김민석 비판"
+    / "경기도 반박"), the clusterer keeps them apart, and each video then voices only one side.
+    Two headlines are the same event when they share >=2 distinctive 2-char stems."""
+    def stems(text: str) -> set[str]:
+        return {w[:2] for w in re.findall(r"[가-힣]{3,}", clean_text(text or ""))} - _GENERIC_STEMS
+
+    mine: set[str] = set()
+    for r in rows:
+        mine |= stems(r["title"])
+    if len(mine) < 2:
+        return []
+    with connect(cfg.db_path) as conn:
+        others = conn.execute(
+            "SELECT cluster_id, title, summary, source_name, source_lean FROM articles "
+            "WHERE cluster_id IS NOT NULL AND cluster_id != ? ORDER BY source_weight DESC", (cluster_id,)
+        ).fetchall()
+    out: list[dict[str, str]] = []
+    seen: set[int] = set()
+    for r in others:
+        if r["cluster_id"] in seen or len(stems(r["title"]) & mine) < 2:
+            continue
+        seen.add(r["cluster_id"])
+        out.append({"title": clean_text(r["title"]), "summary": truncate(clean_text(r["summary"] or ""), 380),
+                    "source": r["source_name"] or "", "lean": r["source_lean"] or ""})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> None:
@@ -810,6 +846,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     agent_report = None
     agent_attempts = 0
     research_web: dict[str, Any] = {}
+    chosen_viol: list[dict[str, str]] = []
     if llm_on:
         from .hook import pick_actor as _pick_actor
         from .script_llm import rewrite_segments
@@ -817,6 +854,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         _LEAN_KO = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송", "center": "중도"}
         meta = {
             "headline": headline,
+            "related": _related_reports(cluster_id, rows, cfg),
             "source_text": f"{titles}\n{summaries}",
             # classified + cross-source-verified view (FACT CHECK ENGINE)
             "facts": [u.text for u in fc.facts] or [f.text for f in analysis.facts],
@@ -868,10 +906,11 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         feedback_history: list[str] = []
         best_score = -1
         best_segments, best_title, best_report = segments, llm_title, None
+        best_viol: list[dict[str, str]] = []
         stale = 0
         # an analysis with real background, a full quote, positions and pros/cons
-        # needs more room than a one-fact brief — lift the target to ~90s
-        _budget = max((max(lp.target_s, 90.0) if rich else lp.target_s) * 0.80, 26.0)
+        # needs more room than a one-fact brief — lift the target to ~120s (budget ~96s)
+        _budget = max((max(lp.target_s, 120.0) if rich else lp.target_s) * 0.80, 26.0)
         # 3 attempts, not 4: in a real run the 4th never beat the best of the first three (70>75>81>80, 78>85>85>78, 70>85>85>70) — it only cost LLM calls
         for agent_attempts in range(1, 4):
             try:
@@ -889,17 +928,28 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             _ensure_comment_prompt(cand, explain.engage_question(frame, pick_actor(headline, entities, frame)))
 
             agent_report = quality_agent.review({"headline": headline, "segments": cand}, cfg)
+            # mechanical post-conditions (invariants.py) — checked in code, not by another LLM
+            viol = invariants.check(cand, research_web,
+                                    research_expected=bool(getattr(cfg, "research_enabled", True)))
             cand_score = agent_report.score if agent_report.available else -1
-            if cand_score > best_score:
+            eff_score = cand_score - 10 * len(viol)              # a violated invariant outranks a nicer style
+            if eff_score > best_score:
                 best_score, best_segments, best_title, best_report = (
-                    cand_score, cand, cand_title, agent_report)
+                    eff_score, cand, cand_title, agent_report)
+                best_viol = viol
                 stale = 0
             else:
                 stale += 1
 
-            if not agent_report.available or agent_report.score >= quality_agent.PASS_SCORE:
+            if (not agent_report.available or agent_report.score >= quality_agent.PASS_SCORE) and (
+                    not viol or not agent_report.available):
                 segments, llm_title = cand, cand_title
+                chosen_viol = viol
                 break
+            if viol:
+                feedback_history.append(f"[{agent_attempts}차 구조 검사 — 반드시 고칠 것]\n"
+                                        + "\n".join(f"- {v['message']}" for v in viol))
+                log.info("invariants violated (%s)", ", ".join(v["code"] for v in viol))
             issue_line = agent_report.feedback_text()
             if issue_line:
                 feedback_history.append(f"[{agent_attempts}차 시도 문제점]\n{issue_line}")
@@ -909,11 +959,13 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
                 # this rewrite did not beat the best so far: more rounds oscillate, they don't climb
                 log.info("quality agent plateaued at %d — stopping rewrites early", best_score)
                 segments, llm_title, agent_report = best_segments, best_title, best_report
+                chosen_viol = best_viol
                 break
         else:
             # exhausted every attempt without ever reaching PASS_SCORE — use
             # the best-scoring one tried, not necessarily the last.
             segments, llm_title, agent_report = best_segments, best_title, best_report
+            chosen_viol = best_viol
     else:
         _mark_incomplete_factcheck_rows(segments)
         _budget = max(lp.target_s * 0.80, 22.0)
@@ -1030,6 +1082,17 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         except Exception as exc:  # pragma: no cover - network dependent
             log.warning("b-roll collection failed: %s", exc)
 
+    # A portrait comes from people named anywhere in the cluster BODY, but the script is written about
+    # the headline's actor — a published video showed one politician's face over a story that never
+    # mentioned him. Keep a face only when that person is named in what the video actually says.
+    _spoken_all = " ".join([headline] + [s.get("narration", "") for s in segments])
+    _dropped = [im.get("query") for im in images
+                if im.get("kind") == "portrait" and not (im.get("query") and im["query"] in _spoken_all)]
+    if _dropped:
+        images = [im for im in images
+                  if im.get("kind") != "portrait" or (im.get("query") and im["query"] in _spoken_all)]
+        log.info("dropped portrait(s) of people the script never names: %s", ", ".join(map(str, _dropped)))
+
     script: dict[str, Any] = {
         "cluster_id": cluster_id,
         "headline": headline,
@@ -1055,6 +1118,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         "disclaimer": DISCLAIMER,
         "style": cfg.headline_style,
         "engage_question": explain.engage_question(frame, pick_actor(headline, entities, frame)),
+        "invariant_violations": chosen_viol,
         # the articles the research actually read — cited in the description next to the seed sources
         "research_sources": [{"title": s.get("title", ""), "url": s.get("url", "")}
                              for s in (research_web.get("sources") or []) if s.get("url")][:8],

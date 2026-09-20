@@ -34,3 +34,11 @@ def _fresh_llm_process_state():
     yield
     script_llm._ANALYSIS_CACHE.clear()
     llm._COOLDOWN.clear()
+
+
+@pytest.fixture(autouse=True)
+def _research_off_by_default(monkeypatch):
+    """Tests build scripts with a mocked LLM and no network. With research 'expected' the
+    invariants would (correctly) hold every such script, so settings loaded inside a test start
+    with research OFF; tests of the research/invariants layers switch it on explicitly."""
+    monkeypatch.setenv("RESEARCH_ENABLED", "false")
