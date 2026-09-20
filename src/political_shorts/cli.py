@@ -72,6 +72,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         do_collect=not args.no_collect,
         do_publish=do_publish,
         max_items=args.max,
+        focus=getattr(args, "focus", "") or "",
     )
     _print_report(rep)
     return 0 if not rep.errors or rep.built else 1
@@ -261,6 +262,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--publish", action="store_true", help="force publish (still needs ENABLE_PUBLISH)")
     r.add_argument("--no-publish", action="store_true", help="build only, never publish (for testing)")
     r.add_argument("--max", type=int, default=None, help="max shorts this run")
+    r.add_argument("--focus", default="",
+                   help='only work on the story whose titles contain these words, e.g. --focus "DMZ 영화제 축소"')
     r.set_defaults(func=cmd_run)
 
     b = sub.add_parser("build", help="build one cluster by id")

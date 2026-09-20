@@ -606,7 +606,7 @@ def _sides_line(claims: list, interps: list) -> str:
 
 
 def build_script(cluster_id: int, cfg: Settings | None = None, *,
-                 skip_llm_if: Any = None) -> dict[str, Any]:
+                 skip_llm_if: Any = None, allow_thin: bool = False) -> dict[str, Any]:
     cfg = cfg or settings
     with connect(cfg.db_path) as conn:
         rows = cluster_articles(conn, cluster_id)
@@ -786,7 +786,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     # point burning up to 4 quality-agent LLM calls polishing a script that
     # will be discarded anyway regardless of how good the rewrite is.
     _material = len(analysis.facts) + len(analysis.claims) + len(analysis.interpretations)
-    material_thin = n_sources <= 1 and _material <= 3
+    # allow_thin: a story picked ON PURPOSE (--focus) is researched even when its seed articles
+    # are few — the research stage exists to supply the missing material
+    material_thin = n_sources <= 1 and _material <= 3 and not allow_thin
     # A story the pipeline is about to throw away (already covered / topic saturated) must not
     # cost 15-30 LLM calls first: `skip_llm_if(preview)` lets the caller veto the LLM/research
     # stages now, using only what is known before any LLM call. The cheap template script that

@@ -11,6 +11,10 @@ on:
         description: "actually publish (false = build only)"
         type: boolean
         default: true
+      focus:
+        description: "optional: only make the story whose titles contain these words (e.g. DMZ 영화제 축소)"
+        type: string
+        default: ""
 
 concurrency:
   group: daily-short
@@ -99,12 +103,16 @@ jobs:
         run: python scripts/sync_topics.py import
 
       - name: run pipeline
+        env:
+          FOCUS: ${{ inputs.focus }}
         run: |
           PUB="--publish"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "false" ]; then
             PUB="--no-publish"
           fi
-          python -m political_shorts run $PUB --max 1
+          FOCUS_ARG=()
+          if [ -n "$FOCUS" ]; then FOCUS_ARG=(--focus "$FOCUS"); fi
+          python -m political_shorts run $PUB --max 1 "${FOCUS_ARG[@]}"
 
       - name: persist dedup history (commit topic_history.json back)
         if: always()

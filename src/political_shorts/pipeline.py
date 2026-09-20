@@ -4,6 +4,7 @@ analyze -> script -> safety -> render -> metadata -> persist -> publish.
 from __future__ import annotations
 
 import json
+import re
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,6 +102,7 @@ def _process_story(
     cluster_id: int, cfg: Settings, do_publish: bool, report: RunReport,
     enforce_variety: bool = True, min_agent_score: int | None = None,
     script_cache: dict[int, Any] | None = None, forced_script: Any | None = None,
+    allow_thin: bool = False,
 ) -> StoryOutcome:
     out = StoryOutcome(cluster_id=cluster_id)
     try:
@@ -128,7 +130,7 @@ def _process_story(
             return bool(_dup or _sat)
 
         script = (forced_script if forced_script is not None
-                  else build_script(cluster_id, cfg, skip_llm_if=_skip_early))
+                  else build_script(cluster_id, cfg, skip_llm_if=_skip_early, allow_thin=allow_thin))
         if script_cache is not None:
             script_cache[cluster_id] = script
         out.headline = script["headline"]
@@ -144,7 +146,7 @@ def _process_story(
         counts = script.get("counts", {}) or {}
         material = (counts.get("facts", 0) + counts.get("claims", 0)
                    + counts.get("interpretations", 0))
-        if script.get("n_sources", 0) <= 1 and material <= 3:
+        if script.get("n_sources", 0) <= 1 and material <= 3 and not allow_thin:
             out.status = "skipped"
             out.reason = f"소재 부족 (출처 {script.get('n_sources', 0)}개, 사실/주장/해석 합계 {material}개)"
             with connect(cfg.db_path) as conn:
@@ -332,12 +334,32 @@ def _process_story(
         return out
 
 
+def _focus_clusters(cfg: Settings, cluster_ids: list[int], focus: str) -> list[int]:
+    """Keep only the clusters whose article titles contain the focus words (at least two of them,
+    or the single word if that is all there is). Order is preserved."""
+    from .db import cluster_articles
+
+    words = [w for w in re.split(r"\s+", (focus or "").strip()) if w]
+    if not words:
+        return cluster_ids
+    need = min(2, len(words))
+    keep: list[int] = []
+    with connect(cfg.db_path) as conn:
+        for cid in cluster_ids:
+            titles = " ".join(str(r["title"]) for r in cluster_articles(conn, cid))
+            if sum(1 for w in words if w in titles) >= need:
+                keep.append(cid)
+    log.info("focus %r: %d of %d clusters match", focus, len(keep), len(cluster_ids))
+    return keep
+
+
 def run_pipeline(
     cfg: Settings | None = None,
     *,
     do_collect: bool = True,
     do_publish: bool | None = None,
     max_items: int | None = None,
+    focus: str = "",
 ) -> RunReport:
     cfg = cfg or settings
     init_db(cfg.db_path)
@@ -360,6 +382,11 @@ def run_pipeline(
 
         cluster_ids = build_clusters(cfg)
         report.clusters = len(cluster_ids)
+
+        # --focus "키워드 …": work ONLY on clusters about that story (and let thin ones be researched)
+        focus_on = bool((focus or "").strip())
+        if focus_on:
+            cluster_ids = _focus_clusters(cfg, cluster_ids, focus)
 
         # Re-rank so the story that's actually TRENDING on Google right now goes
         # first (best-effort; no-op if the trends feed is unreachable).
@@ -413,12 +440,12 @@ def run_pipeline(
             if _ready() >= limit or not _attempts_left():
                 break
             report.stories.append(_process_story(cid, cfg, do_publish, report,
-                                                  script_cache=script_cache))
+                                                  script_cache=script_cache, allow_thin=focus_on))
 
         # Nothing publishable yet (nothing fresh, everything a duplicate, or
         # every candidate held on quality)? Fall back to a generally-
         # newsworthy APOLITICAL story so the channel still posts.
-        if _ready() == 0 and _attempts_left():
+        if _ready() == 0 and _attempts_left() and not focus_on:
             gen_ids = build_clusters(cfg, mode="general")
             if gen_ids:
                 log.info("no publishable politics story — trying %d general-interest clusters", len(gen_ids))
@@ -442,7 +469,7 @@ def run_pipeline(
                     break
                 report.stories.append(
                     _process_story(cid, cfg, do_publish, report, enforce_variety=False,
-                                   script_cache=script_cache))
+                                   script_cache=script_cache, allow_thin=focus_on))
 
         # FALLBACK-OF-THE-DAY: nothing reached the 95 bar across every
         # candidate tried above. User: "평가를 진행하는 것은 두고 평가진행
@@ -475,7 +502,7 @@ def run_pipeline(
                 report.stories.append(_process_story(
                     best.cluster_id, cfg, do_publish, report,
                     enforce_variety=False, min_agent_score=_FALLBACK_FLOOR,
-                    forced_script=script_cache.get(best.cluster_id)))
+                    forced_script=script_cache.get(best.cluster_id), allow_thin=focus_on))
 
         report.skipped = sum(1 for s in report.stories if s.status == "skipped")
 

@@ -624,3 +624,26 @@ def test_an_already_covered_story_spends_no_llm_calls(tmp_path, monkeypatch):
     SG.build_script(cid, cfg, skip_llm_if=veto)
     assert llm_calls == []
     assert seen["headline"] and seen["frame"] and "politicians" in seen["entities"]
+
+
+def test_focus_keeps_only_the_clusters_about_the_requested_story(tmp_path):
+    from political_shorts.pipeline import _focus_clusters
+
+    cfg = replace(load_settings(), db_path=tmp_path / "focus.sqlite3", output_dir=tmp_path,
+                  data_dir=tmp_path, image_enabled=False)
+    init_db(cfg.db_path)
+    with connect(cfg.db_path) as conn:
+        for name, lean, w, title, summary in FAKE:
+            url = f"https://example.com/{url_hash(title)[:10]}"
+            upsert_article(conn, {
+                "url_hash": url_hash(url), "url": url, "source_name": name,
+                "source_lean": lean, "source_weight": w, "title": title,
+                "summary": summary, "published_ts": now(), "collected_ts": now(), "raw": {}})
+    classify_pending(cfg)
+    ids = build_clusters(cfg)
+    assert ids
+    assert _focus_clusters(cfg, ids, "예산안 본회의") == ids            # both words appear in the budget cluster
+    assert _focus_clusters(cfg, ids, "예산안") == ids                   # a single word is enough when it is all there is
+    assert _focus_clusters(cfg, ids, "DMZ 영화제") == []               # no cluster is about that
+    assert _focus_clusters(cfg, ids, "예산안 영화제") == []             # ONE of two words is not enough
+    assert _focus_clusters(cfg, ids, "   ") == ids                      # empty focus = no filtering
