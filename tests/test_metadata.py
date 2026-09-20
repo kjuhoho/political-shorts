@@ -1,4 +1,4 @@
-"""The YouTube title — one short line, curiosity first, no trailing tag."""
+"""The YouTube title — one short line, curiosity first, "#shorts" attached at the end."""
 from political_shorts.metadata import _cut_words, _title
 
 
@@ -13,30 +13,30 @@ def test_title_is_one_clean_line_no_headline_quote_tail():
     }
     t = _title(script, "09월 17일", "punchy")
     # channel feedback: the curiosity line leads, and "#shorts" is no longer glued on
-    assert t == "연장할까? 실거주 유예 내년까지"
-    assert "|" not in t and '"' not in t and "#shorts" not in t
+    assert t == "연장할까? 실거주 유예 내년까지#shorts"
+    assert "|" not in t and '"' not in t and t.endswith("#shorts")
 
 
 def test_title_leads_with_the_question_line_and_stays_short():
     script = {"headline": "김승원 사퇴", "title": ["김승원 법무장관 후보자", "오늘 국회서 직접 입 열까?"]}
     t = _title(script, "09월 19일", "punchy")
-    assert t.startswith("오늘 국회서 직접 입 열까?") and "김승원" in t
-    assert len(t) <= 40
+    assert t.startswith("오늘 국회서 직접 입 열까?") and "김승원" in t and t.endswith("#shorts")
+    assert len(t) <= 40 + len("#shorts")
     # no question line -> order is kept
     assert _title({"headline": "x", "title": ["예산안 통과", "국회 본회의"]}, "09월 17일", "punchy") \
-        == "예산안 통과 국회 본회의"
+        == "예산안 통과 국회 본회의#shorts"
 
 
 def test_title_falls_back_to_date_headline_when_no_onscreen_title():
     script = {"headline": "예산안 국회 통과", "title": []}
     t = _title(script, "09월 17일", "punchy")
-    assert t == "[09월 17일 정치] 예산안 국회 통과"
+    assert t == "[09월 17일 정치] 예산안 국회 통과#shorts"
 
 
 def test_title_neutral_style_ignores_onscreen_title():
     script = {"headline": "예산안 국회 통과", "title": ["압도적", "통과"]}
     t = _title(script, "09월 17일", "neutral")
-    assert t == "[09월 17일 정치] 예산안 국회 통과"
+    assert t == "[09월 17일 정치] 예산안 국회 통과#shorts"
 
 
 def test_cut_words_never_cuts_mid_word():

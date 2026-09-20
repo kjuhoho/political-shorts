@@ -46,9 +46,10 @@ def _title(script: dict[str, Any], date_str: str, style: str) -> str:
         t = _curiosity_first(tl)
     else:
         t = f"[{date_str} 정치] {headline}"
-    # Channel feedback: a long title with "#shorts" glued on the end is weak on a phone.
-    # Short, curiosity first, no trailing tag (#shorts stays in the description hashtags).
-    return _cut_words(t, 40).rstrip(" |·-")
+    # Channel feedback: a LONG title with a tag glued on is weak on a phone — so the title
+    # itself stays short (<=40 chars, curiosity first). The user still wants the lowercase,
+    # attached "#shorts" at the very end (…제목#shorts), so that stays; 40 + 7 is well under 100.
+    return _cut_words(t, 40).rstrip(" |·-") + "#shorts"
 
 
 _CURIOUS = re.compile(r"\?|왜|일까|할까|인가|진짜|뭘까|무엇")
