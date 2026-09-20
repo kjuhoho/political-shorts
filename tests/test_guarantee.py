@@ -121,3 +121,37 @@ def test_relaxed_hold_rule_blocks_only_unsafe_or_broken_files():
     src = inspect.getsource(P._process_story)
     assert "qr.score < _RELAX_MIN_QUALITY or _render_defect(qr)" in src and "political_safety_ok" in src
     assert P._RELAX_MIN_QUALITY == 70
+
+
+def test_ladder_prefers_the_video_that_was_actually_built_best_over_an_ai_score_guess(monkeypatch):
+    """Run 35513402741: an 88-point build held only by a structure check lost to a 79-point one."""
+    class S:
+        def __init__(self, cid, q):
+            self.cluster_id, self.status, self.quality_score = cid, "built", q
+
+    calls = []
+    monkeypatch.setattr(P, "_process_story", lambda cid, *a, **k: calls.append(cid) or type(
+        "O", (), {"status": "built", "held": cid != 3})())
+    rep = _Rep()
+    rep.stories = [S(11, 79), S(3, 88), S(2, 76)]
+    cache = {11: _sc(95), 3: _sc(60, 2), 2: _sc(90), 9: _sc(99)}          # 9 was never built
+    ready = lambda: sum(1 for s in rep.stories if s.status == "built" and not s.held)  # noqa: E731
+
+    class Cfg:
+        guarantee_publish = True
+
+    rep.stories = [S(11, 79), S(3, 88), S(2, 76)]
+    for s in rep.stories:
+        s.held = True
+    P._guarantee_publish(Cfg(), True, rep, cache, [11, 3, 2, 9], ready, 1)
+    assert calls[0] == 3                                               # highest RENDERED quality first
+    assert calls[:1] == [3]
+
+
+def test_incident_numbers_found_by_the_research_are_not_flagged_as_invented():
+    """'166종 1,431개' came from a researched article, not the seed article, and was flagged 'added-number'."""
+    import inspect
+
+    from political_shorts import script_gen as SG
+    src = inspect.getsource(SG.build_script)
+    assert '{titles} {summaries} {research_text}' in src and 'research_text = str(meta.get("research"' in src

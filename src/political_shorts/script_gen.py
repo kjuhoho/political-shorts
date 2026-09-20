@@ -895,6 +895,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     research_web: dict[str, Any] = {}
     chosen_viol: list[dict[str, str]] = []
     absorbed: list[dict[str, Any]] = []
+    research_text = ""
     if llm_on:
         from .hook import pick_actor as _pick_actor
         from .script_llm import rewrite_segments
@@ -932,6 +933,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
                 meta["missing_leans"] = list(research_web.get("missing_leans") or [])
             except Exception as exc:  # pragma: no cover - defensive
                 log.info("research skipped (%s)", str(exc)[:80])
+        research_text = str(meta.get("research", "") or "")
         rich = _research_rich(research_web)
         if rich:
             template_segments = _with_research_cards(template_segments, research_web)
@@ -1155,7 +1157,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         "segments": segments,
         "images": images,
         "est_seconds": est_seconds,
-        "source_text": clean_text(f"{titles} {summaries}")[:4000],
+        # the research articles are source material too: quality.py's "number not in the article" check
+        # flagged "166종 1,431개" (real, from a researched article) as invented and cut 10+ points
+        "source_text": clean_text(f"{titles} {summaries} {research_text}")[:8000],
         "length_class": lp.cls,
         "length_label": lp.label,
         "target_seconds": lp.target_s,

@@ -380,10 +380,20 @@ def _guarantee_publish(cfg: Settings, do_publish: bool, report: RunReport, scrip
     if not (do_publish and getattr(cfg, "guarantee_publish", True)) or ready() >= limit:
         return
     log.warning("no candidate cleared the normal bars — guarantee ladder: publishing the best available story")
-    ranked = sorted(
-        ((cid, sc) for cid, sc in script_cache.items() if isinstance(sc, dict)),
-        key=lambda kv: (len(kv[1].get("invariant_violations") or []),
-                        -int((kv[1].get("quality_agent") or {}).get("score", 0))))
+    # what was actually RENDERED and how it scored beats an AI-score guess: a video built at 88 but held only
+    # by a structure check is a better post than one built at 79
+    built_q: dict[int, int] = {}
+    for s in report.stories:
+        if getattr(s, "status", "") == "built":
+            built_q[s.cluster_id] = max(int(getattr(s, "quality_score", 0) or 0), built_q.get(s.cluster_id, 0))
+
+    def _rank(kv: tuple[int, dict[str, Any]]) -> tuple[int, int, int]:
+        cid, sc = kv
+        if cid in built_q:
+            return (0, -built_q[cid], 0)
+        return (1, len(sc.get("invariant_violations") or []), -int((sc.get("quality_agent") or {}).get("score", 0)))
+
+    ranked = sorted(((cid, sc) for cid, sc in script_cache.items() if isinstance(sc, dict)), key=_rank)
     tried = 0
     for cid, sc in ranked:
         if ready() >= limit or tried >= 4:
