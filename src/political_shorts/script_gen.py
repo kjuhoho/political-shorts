@@ -114,7 +114,12 @@ def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> Non
         if "댓글" in n:
             return
         n = re.sub(r"\s*구독과?\s*좋아요[^.!?]*[.!?]?", "", n).strip()
-        s["narration"] = f"{n} {question}".strip()
+        if re.search(r"\?|보시나요|생각하시나요|어떠신가요", n):
+            # the writer already asked its own (story-specific) question — a real published
+            # video ended with TWO opinion questions back to back; just add the ask to comment
+            s["narration"] = f"{n} 댓글로 의견을 남겨주세요.".strip()
+        else:
+            s["narration"] = f"{n} {question}".strip()
         return
 
 

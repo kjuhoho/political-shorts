@@ -283,3 +283,12 @@ def test_engage_question_is_neutral_open_and_names_a_person_only_for_personnel()
     for kind, text in explain.ENGAGE.items():
         assert "댓글" in text and "?" in text, kind
     assert explain.engage_question(Frame(kind="nonexistent")) == explain.ENGAGE["generic"]
+
+
+def test_comment_prompt_does_not_stack_a_second_question_on_the_writers_own():
+    from political_shorts import script_gen as G
+    q = "이 갈등, 어느 쪽 주장이 더 설득력 있다고 보시나요? 댓글로 남겨주세요."
+    segs = [{"role": "outro", "narration": "시각이 엇갈리고 있습니다. 이번 공방, 여러분은 어떻게 보시나요?"}]
+    G._ensure_comment_prompt(segs, q)
+    assert segs[0]["narration"] == "시각이 엇갈리고 있습니다. 이번 공방, 여러분은 어떻게 보시나요? 댓글로 의견을 남겨주세요."
+    assert segs[0]["narration"].count("?") == 1
