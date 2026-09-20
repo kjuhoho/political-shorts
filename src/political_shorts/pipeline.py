@@ -102,7 +102,7 @@ def _process_story(
     cluster_id: int, cfg: Settings, do_publish: bool, report: RunReport,
     enforce_variety: bool = True, min_agent_score: int | None = None,
     script_cache: dict[int, Any] | None = None, forced_script: Any | None = None,
-    allow_thin: bool = False,
+    allow_thin: bool = False, relax: bool = False,
 ) -> StoryOutcome:
     out = StoryOutcome(cluster_id=cluster_id)
     try:
@@ -301,7 +301,16 @@ def _process_story(
         # needs_review no longer holds publish on its own (see the note
         # above) — only quality.py's own publishable check does.
         _viol = script.get("invariant_violations") or []
-        hold_publish = (not qr.publishable) or bool(_viol)
+        if relax:
+            # GUARANTEE tiers: the video ships unless it is UNSAFE (safety.py) or BROKEN (a render/sync
+            # defect, or a score under 70). Style, structure checks and the AI bar no longer hold it.
+            hold_publish = (qr.score < _RELAX_MIN_QUALITY or _render_defect(qr)
+                            or not getattr(qr, "political_safety_ok", True))
+            if _viol:
+                out.safety_warnings = [*out.safety_warnings,
+                                       "구조 검사 미충족(보장 발행이라 게시는 진행): " + "; ".join(v["code"] for v in _viol)]
+        else:
+            hold_publish = (not qr.publishable) or bool(_viol)
         if _viol:
             out.safety_warnings = [*out.safety_warnings,
                                    "구조 검사 미충족 — 자동 게시 보류: " + "; ".join(v["code"] for v in _viol)]
@@ -354,6 +363,47 @@ def _process_story(
         report.errors.append(f"cluster {cluster_id}: {out.reason}")
         log.error("cluster %d ERROR\n%s", cluster_id, traceback.format_exc())
         return out
+
+
+_RELAX_MIN_QUALITY = 70          # under this the FILE itself is bad (sync/blank/duration), not just plain
+
+
+def _guarantee_publish(cfg: Settings, do_publish: bool, report: RunReport, script_cache: dict[int, Any],
+                       cluster_ids: list[int], ready: Any, limit: int) -> None:
+    """The channel posts twice a day, always. When every strict pass came up empty, walk a ladder that
+    lowers the STYLE bar but never the SAFETY or file-integrity bar:
+
+      tier 2  the best already-built candidates (their scripts are cached: no LLM cost), invariants and the AI
+              bar waived, quality >= 70, no render defect
+      tier 3  clusters not yet tried, built even when thin (research fills the gap), same waivers
+    Duplicates of a story already covered and safety.py blocks still skip a candidate."""
+    if not (do_publish and getattr(cfg, "guarantee_publish", True)) or ready() >= limit:
+        return
+    log.warning("no candidate cleared the normal bars — guarantee ladder: publishing the best available story")
+    ranked = sorted(
+        ((cid, sc) for cid, sc in script_cache.items() if isinstance(sc, dict)),
+        key=lambda kv: (len(kv[1].get("invariant_violations") or []),
+                        -int((kv[1].get("quality_agent") or {}).get("score", 0))))
+    tried = 0
+    for cid, sc in ranked:
+        if ready() >= limit or tried >= 4:
+            break
+        tried += 1
+        log.info("guarantee tier 2: cluster %d (AI %s, %d invariant note(s))", cid,
+                 (sc.get("quality_agent") or {}).get("score"), len(sc.get("invariant_violations") or []))
+        report.stories.append(_process_story(cid, cfg, do_publish, report, enforce_variety=False,
+                                              min_agent_score=0, forced_script=sc, allow_thin=True, relax=True))
+    tried = 0
+    for cid in cluster_ids:
+        if ready() >= limit or tried >= 3:
+            break
+        if cid in script_cache:
+            continue
+        tried += 1
+        log.info("guarantee tier 3: building cluster %d (thin material allowed)", cid)
+        report.stories.append(_process_story(cid, cfg, do_publish, report, enforce_variety=False,
+                                              min_agent_score=0, script_cache=script_cache,
+                                              allow_thin=True, relax=True))
 
 
 def _render_defect(qr: Any) -> bool:
@@ -557,6 +607,8 @@ def run_pipeline(
                     best.cluster_id, cfg, do_publish, report,
                     enforce_variety=False, min_agent_score=_FALLBACK_FLOOR,
                     forced_script=script_cache.get(best.cluster_id), allow_thin=focus_on))
+
+        _guarantee_publish(cfg, do_publish, report, script_cache, cluster_ids, _ready, limit)
 
         report.skipped = sum(1 for s in report.stories if s.status == "skipped")
 

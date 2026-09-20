@@ -2,9 +2,19 @@ name: daily political short
 
 # Runs on GitHub's servers, so it works even when your PC is off.
 on:
+  # TWO posts a day, always: one in the morning slot (04-14 KST) and one in the evening slot (14-04 KST).
+  # GitHub's cron runs 2-5 hours late and sometimes not at all, and it is worst on the hour — so each slot is
+  # scheduled several times at odd minutes, and the `gate` job below ends a trigger in seconds when the slot it
+  # is actually running in already has its video.
   schedule:
-    - cron: "0 22 * * *"     # 22:00 UTC = 07:00 KST, every day
-    - cron: "0 8 * * *"      # 08:00 UTC = 17:00 KST, every day
+    - cron: "7 21 * * *"     # 06:07 KST  } morning slot
+    - cron: "37 22 * * *"    # 07:37 KST  }
+    - cron: "7 0 * * *"      # 09:07 KST  }
+    - cron: "37 1 * * *"     # 10:37 KST  }
+    - cron: "7 7 * * *"      # 16:07 KST  } evening slot
+    - cron: "37 8 * * *"     # 17:37 KST  }
+    - cron: "7 10 * * *"     # 19:07 KST  }
+    - cron: "37 11 * * *"    # 20:37 KST  }
   workflow_dispatch:          # lets you run it by hand from the Actions tab
     inputs:
       publish:
@@ -21,7 +31,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      skip: ${{ steps.gate.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 scripts/slot_gate.py
+
   build-and-publish:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 55  # the pipeline now keeps trying candidates until one
                          # is actually publishable (not just "built"), not
