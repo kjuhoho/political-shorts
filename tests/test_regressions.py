@@ -354,3 +354,73 @@ def test_incident_two_voiced_parties_are_enough_when_the_research_lists_more():
     two = [_seg("sides", "강선우 의원은 혐의를 부인하고 있습니다. 반면 김경 전 시의원은 공천 대가를 인정했습니다.")]
     assert [v["code"] for v in invariants.check(one, web)] == ["one_sided"]
     assert invariants.check(two, web) == []
+
+
+# ===================== round 3: other sides are always included (the 93억 북한 의료장비 video) =====================
+def _script_of(*pairs):
+    return [_seg(r, n) for r, n in pairs]
+
+
+NK_WEB = {
+    "statements": [
+        {"who": "박충권 의원", "text": "북한 무기 개발자의 건강까지 챙기는 것이 우리 정부가 할 일이냐", "lean": "보수", "source": "자유일보"},
+        {"who": "통일부", "text": "인도적 지원은 정치와 별개로 추진하겠다", "lean": "진보", "source": "연합뉴스"},
+    ],
+    "positions": [{"who": "통일부", "position": "의료장비 166종 지원을 추진", "why": "인도적 지원", "lean": "진보"}],
+}
+
+
+def test_incident_a_video_voicing_only_the_government_gets_the_opposition_added():
+    """Run 35513402741: 통일부's view only; 박충권 의원's criticism was researched but appeared only in the source list."""
+    gov_only = _script_of(("hook", "정부는 왜 북한에 93억 원 의료장비를 지원할까요?"),
+                          ("summary", "통일부는 남북 보건의료 협력을 총괄합니다."),
+                          ("what", "통일부는 인도적 지원은 정치와 별개로 추진하겠다고 밝혔습니다."),
+                          ("outro", "여러분은 어떻게 보시나요? 댓글로 남겨주세요."))
+    out = SG._balance_patch(gov_only, NK_WEB)
+    roles = [s["role"] for s in out]
+    assert roles == ["hook", "summary", "what", "sides", "outro"]                   # a sides card appeared before the outro
+    sides = next(s for s in out if s["role"] == "sides")["narration"]
+    assert sides.startswith("박충권 의원은 \"북한 무기 개발자의 건강까지") and sides.endswith("라고 밝혔습니다.")
+    assert invariants.check(out, {**NK_WEB, "positions": NK_WEB["positions"]}) is not None
+    # and the input list was not mutated
+    assert [s["role"] for s in gov_only] == ["hook", "summary", "what", "outro"]
+
+
+def test_balance_patch_extends_an_existing_sides_card_and_prefers_the_opposite_camp():
+    web = {"statements": [
+        {"who": "여당 대표", "text": "이번 지원은 인도주의 원칙에 따른 것이다 분명히 밝힌다", "lean": "진보"},
+        {"who": "야당 의원", "text": "국민 동의 없는 지원은 절대 안 된다고 강하게 반대한다", "lean": "보수"},
+        {"who": "시민단체", "text": "지원 규모와 절차를 투명하게 공개해야 한다는 입장이다", "lean": "기타"}]}
+    segs = _script_of(("what", "여당 대표는 이번 지원이 인도주의 원칙이라고 밝혔습니다."),
+                      ("sides", "정부는 지원을 서두르고 있습니다."), ("outro", "끝."))
+    out = SG._balance_patch(segs, web)
+    sides = next(s for s in out if s["role"] == "sides")["narration"]
+    assert sides.startswith("정부는 지원을 서두르고 있습니다.") and "야당 의원은" in sides       # the OPPOSITE camp's voice, appended
+    assert "시민단체" not in sides                                                       # only as many as needed to reach two voices
+
+
+def test_balance_patch_leaves_a_balanced_or_unresearched_script_alone():
+    both = _script_of(("what", "통일부는 지원을 밝혔고 박충권 의원은 비판했습니다."), ("outro", "끝."))
+    assert SG._balance_patch(both, NK_WEB) == both                                      # two voices already present
+    assert SG._balance_patch(both, {}) == both and SG._balance_patch(both, None) == both  # nothing researched: nothing invented
+    one_voice_only = {"statements": [{"who": "통일부", "text": "인도적 지원은 정치와 별개로 추진하겠다", "lean": ""}]}
+    assert SG._balance_patch(_script_of(("what", "통일부는 밝혔습니다.")), one_voice_only)[0]["narration"] == "통일부는 밝혔습니다."
+
+
+def test_a_position_that_is_a_phrase_is_written_as_a_stance_not_a_broken_sentence():
+    web = {"positions": [{"who": "야당", "position": "대북 지원 전면 재검토", "lean": "보수"},
+                         {"who": "여당", "position": "지원 확대를 주장한다", "lean": "진보"}]}
+    out = SG._balance_patch(_script_of(("what", "정부는 지원을 추진합니다."), ("outro", "끝.")), web)
+    sides = next(s for s in out if s["role"] == "sides")["narration"]
+    assert "야당은 '대북 지원 전면 재검토'라는 입장입니다." in sides
+
+
+def test_incident_the_research_plan_always_asks_for_the_other_side(monkeypatch):
+    assert "반드시 1개는 반대편의 입장을 겨냥" in research._PLAN_SYSTEM
+    assert "찬성·지지하는 쪽과 반대·비판하는 쪽을 둘 다" in research._EXTRACT_SYSTEM
+
+    def boom(*a, **k):
+        raise RuntimeError("no llm")
+    monkeypatch.setattr(L, "complete", boom)
+    plan = research.plan_research("정부 대북 의료장비 지원 추진", "통일부", "", settings)
+    assert len(plan["queries"]) == 2 and "비판 반박" in plan["queries"][1]

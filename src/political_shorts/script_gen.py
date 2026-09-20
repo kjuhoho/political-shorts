@@ -178,6 +178,69 @@ def _has_ts(row: Any) -> bool:
         return False
 
 
+def _voices(web: dict[str, Any]) -> list[dict[str, str]]:
+    """Every distinct speaker the research found, direct quotes first: [{who, key, text, kind, lean}]."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for s in web.get("statements") or []:
+        if isinstance(s, dict) and s.get("who") and len(str(s.get("text", ""))) >= 12:
+            k = invariants._key(s["who"])
+            if k and k not in seen:
+                seen.add(k)
+                out.append({"who": str(s["who"]).strip(), "key": k, "text": str(s["text"]).strip(),
+                            "kind": "quote", "lean": str(s.get("lean", ""))})
+    for p in web.get("positions") or []:
+        if isinstance(p, dict) and p.get("who") and p.get("position"):
+            k = invariants._key(p["who"])
+            if k and k not in seen:
+                seen.add(k)
+                out.append({"who": str(p["who"]).strip(), "key": k, "text": str(p["position"]).strip(),
+                            "kind": "position", "lean": str(p.get("lean", ""))})
+    return out
+
+
+def _voice_sentence(v: dict[str, str]) -> str:
+    """One attributed sentence for a researched voice — the person's own words, not a paraphrase of ours."""
+    who = josa(v["who"], ("은", "는"))
+    text = v["text"].strip().strip('"“”')
+    if v["kind"] == "quote":
+        return f"{who} \"{clip_sentence(text, 90, ell='').rstrip(' .,')}\"라고 밝혔습니다."
+    if text.endswith(("다", "다.", "습니다", "습니다.")):
+        return f"{who} {to_polite(text.rstrip('.'))}."
+    return f"{who} '{clip_sentence(text, 60, ell='').rstrip(' .,')}'라는 입장입니다."
+
+
+def _balance_patch(segments: list[dict[str, Any]], web: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """BALANCE, guaranteed in code. A video should carry the other side too: when the script voices fewer than
+    two of the parties the research found, the missing voice(s) are added to the "갈리는 입장" card as attributed
+    sentences (a voice from the opposite camp first). The last video shipped only the government's view while
+    the opposition's criticism sat in its source list — the structure check that should have caught it looked at
+    positions only and is waived in the guarantee tiers, so this does not depend on it."""
+    voices = _voices(web or {})
+    if not voices:
+        return segments
+    text = " ".join(s.get("narration", "") or "" for s in segments)
+    voiced = [v for v in voices if v["key"] in text]
+    if len(voiced) >= 2 or len(voiced) == len(voices):
+        return segments
+    voiced_leans = {v["lean"] for v in voiced if v["lean"] in ("진보", "보수")}
+    pool = sorted((v for v in voices if v not in voiced),
+                  key=lambda v: 0 if v["lean"] in ("진보", "보수") and v["lean"] not in voiced_leans else 1)
+    add = pool[:max(1, 2 - len(voiced))]
+    extra = " ".join(_voice_sentence(v) for v in add)
+    out = [dict(s) for s in segments]
+    sides = next((s for s in out if s.get("role") == "sides"), None)
+    if sides is not None:
+        sides["narration"] = f"{sides.get('narration', '').rstrip()} {extra}".strip()
+        sides.pop("caption", None)
+    else:
+        idx = next((i for i, s in enumerate(out) if s.get("role") == "outro"), len(out))
+        out.insert(idx, {"role": "sides", "kicker": "갈리는 입장", "caption": clip_sentence(extra, CAPTION_LIMIT + 12),
+                         "narration": extra, "attributed": True, "cues": []})
+    log.info("balance patch: added the voice of %s", ", ".join(v["who"] for v in add))
+    return out
+
+
 def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> None:
     """Every video ends by asking the viewer for an opinion. The LLM is told to, but
     this makes it certain: an outro without a comment prompt gets the question appended
@@ -976,6 +1039,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             cand = [dict(s) for s in cand]
             _mark_incomplete_factcheck_rows(cand)
             cand = _fit_duration(cand, budget=_budget, caps=_NARR_CAP_LLM)
+            # after trimming, so a length cut can never remove the other side's voice again
+            cand = _balance_patch(cand, research_web)
             _ensure_comment_prompt(cand, explain.engage_question(frame, pick_actor(headline, entities, frame)))
 
             agent_report = quality_agent.review({"headline": headline, "segments": cand}, cfg)

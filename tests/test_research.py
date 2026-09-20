@@ -231,7 +231,8 @@ def test_plan_research_falls_back_to_the_headline_query(monkeypatch):
 
     monkeypatch.setattr(L, "complete", boom)
     plan = research.plan_research("이재명 대통령 이란 파병", "이재명", "", settings)
-    assert plan["queries"] == [research.build_query("이재명 대통령 이란 파병", "이재명")]
+    base = research.build_query("이재명 대통령 이란 파병", "이재명")
+    assert plan["queries"][0] == base and len(plan["queries"]) == 2            # + one aimed at criticism / rebuttal
     monkeypatch.setattr(L, "complete", lambda *a, **k: "not json")
     assert research.plan_research("헤드라인", "", "", settings)["queries"]
 

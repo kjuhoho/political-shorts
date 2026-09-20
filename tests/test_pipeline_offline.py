@@ -656,8 +656,7 @@ def test_violated_invariants_are_fed_back_to_the_writer_and_hold_the_video(tmp_p
 
     cfg = replace(_llm_cfg(tmp_path, "inv1.sqlite3"), research_enabled=True)
     cluster_id = _seed_rich_cluster(cfg)
-    web = {"positions": [{"who": "여당", "position": "예산안 처리를 주장", "why": "민생", "lean": "진보"},
-                         {"who": "야당", "position": "독소조항을 지적", "why": "재정", "lean": "보수"}],
+    web = {"why": [{"reason": "예산 규모를 둘러싼 논란이 커졌기 때문에 처리가 지연됐다", "evidence": "3일", "source": "s"}],
            "background": "예산안 처리를 둘러싼 배경입니다 " * 3}
     monkeypatch.setattr(research, "build_pack", lambda *a, **k: {"plan": {}, "news": [], "web": web, "youtube": {}})
     monkeypatch.setattr(quality_agent, "review", lambda script, cfg: quality_agent.AgentReport(
@@ -668,14 +667,14 @@ def test_violated_invariants_are_fed_back_to_the_writer_and_hold_the_video(tmp_p
         if "카드별 역할" in k.get("system", ""):
             seen.append(payload)
             return json.dumps({"what": "여당이 예산안 처리를 주장했습니다.",
-                               "sides": "여당은 민생을 이유로 예산안 처리를 주장했습니다."})   # ... but 야당 is never voiced
+                               "sides": "여당은 민생을 이유로 예산안 처리를 주장했습니다."})   # ... but the researched cause is never stated
         return "not json"
 
     monkeypatch.setattr(llm, "complete", fake_complete)
     script = build_script(cluster_id, cfg)
     codes = [v["code"] for v in script["invariant_violations"]]
-    assert "one_sided" in codes                                    # ... so the code check still objects
-    assert len(seen) >= 2 and "구조 검사" in seen[1] and "야당" in seen[1]      # fed back on the next attempt
+    assert "missing_cause" in codes                                # ... so the code check still objects
+    assert len(seen) >= 2 and "구조 검사" in seen[1] and "예산 규모" in seen[1]  # fed back on the next attempt
     # the pipeline holds a built video whose script still carries a violation (pipeline.py: hold_publish)
     import inspect
     src = inspect.getsource(pipeline._process_story)

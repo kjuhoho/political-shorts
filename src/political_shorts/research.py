@@ -337,9 +337,10 @@ _PLAN_SYSTEM = (
     "사퇴한 일)을 event로 잡을 것.\n"
     "2) question: 시청자가 가장 궁금해할 핵심 질문 한 문장. 대부분 '왜 그런 일이 벌어졌나(원인)'. "
     "예: '김승원 후보자는 왜 사퇴했나?'\n"
-    "3) queries: 그 원인·배경·경위를 찾을 검색어 3~4개. 뉴스 제목에 나올 법한 표현으로, 각 25자 "
-    "이내. 반응·논평이 아니라 원인과 발단(의혹, 논란, 청문회, 쟁점, 경위)을 겨냥할 것. 예: "
-    "['김승원 후보자 사퇴 이유', '김승원 후보자 의혹 청문회 논란', '김승원 후보자 자진 사퇴 배경'].\n"
+    "3) queries: 검색어 3~4개, 뉴스 제목에 나올 법한 표현으로 각 25자 이내. 대부분은 원인과 발단(의혹, "
+    "논란, 청문회, 쟁점, 경위)을 겨냥하고, **반드시 1개는 반대편의 입장을 겨냥**할 것 — 비판·반대·우려·"
+    "반박·해명 중 이 사안에 맞는 말을 붙여(예: '정부 대북 의료지원 야당 비판', '경기도 영화제 축소 해명'). "
+    "예: ['김승원 후보자 사퇴 이유', '김승원 후보자 의혹 청문회 논란', '김승원 후보자 사퇴 야당 반응'].\n"
     'JSON 하나만: {"event":"","question":"","queries":["",""]}'
 )
 
@@ -348,8 +349,10 @@ def plan_research(headline: str, topic: str, context: str, cfg: Settings) -> dic
     """Decide what the viewer wants to know and which searches answer it — the
     step that keeps the research from just re-finding more articles about the
     same reaction. Falls back to the headline query when no LLM is available."""
+    base_q = build_query(headline, topic)
+    # even without an LLM the plan asks for the other side: one plain query, one aimed at criticism / rebuttal
     fallback = {"event": clean_text(headline), "question": "",
-                "queries": [build_query(headline, topic)]}
+                "queries": [base_q, f"{base_q[:40]} 비판 반박"]}
     from .llm import complete
 
     prompt = (f"[헤드라인] {clean_text(headline)}\n[핵심 인물] {topic or '(없음)'}\n"
@@ -381,7 +384,8 @@ _EXTRACT_SYSTEM = (
     "reactions에 넣을 것. 본문이 원인을 밝히지 않았으면 why는 빈 배열로 두고, 추측하지 말 것.\n"
     "3) statements: 정치인·정부·정당의 발언은 요약하지 말고 본문에 적힌 말을 끝까지 그대로 "
     "옮길 것(누가·언제·어디서). 출처는 매체명.\n"
-    "4) positions: 정부·여당·야당·기관의 입장과 그 이유. experts: 전문가·학계 평가.\n"
+    "4) positions: 정부·여당·야당·기관의 입장과 그 이유. 찬성·지지하는 쪽과 반대·비판하는 쪽을 둘 다 "
+    "빠짐없이 별도 항목으로 넣을 것(한쪽만 있으면 있는 쪽만). experts: 전문가·학계 평가.\n"
     "5) pros / cons: 이 사안의 장점(기대 효과)과 단점(우려·비판)을 각각 본문 근거가 있는 "
     "것만, 객관적으로. 한쪽 편을 들지 말 것.\n"
     "6) reactions: 여론조사·시민단체·온라인 반응. 검증되지 않은 반응은 그렇게 표시.\n"
