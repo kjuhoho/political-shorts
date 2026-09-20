@@ -21,6 +21,7 @@ def main() -> int:
         return 2
     headline = sys.argv[1]
     topic = sys.argv[2] if len(sys.argv) > 2 else ""
+    seed = [x for x in (sys.argv[3].split(",") if len(sys.argv) > 3 else []) if x]
     cfg = load_settings()
     print(f"provider={cfg.llm_provider!r} youtube_key={'set' if cfg.youtube_api_key else 'missing'} "
           f"research_enabled={cfg.research_enabled}")
@@ -41,7 +42,11 @@ def main() -> int:
         print(f"  - {it['title'][:60]} ({it['source']})")
     print()
 
-    web = research.web_notes(headline, topic, cfg, plan=plan)
+    web = research.web_notes(headline, topic, cfg, plan=plan, seed_leans=seed or None)
+    print("seed leans:", seed, "| leans of sources used:",
+          sorted({research.lean_of(s.get("url", "")) or "-" for s in web.get("sources", [])}))
+    for s in web.get("sources", []):
+        print("   src:", research.lean_of(s.get("url", "")) or "-", s.get("url", "")[:80])
     print(f"\n== web/official: {'ok' if web else 'EMPTY'}  keys={sorted(web)}")
     print(f"  WHY (causes): {len(web.get('why') or [])}")
     for item in (web.get("why") or [])[:5]:

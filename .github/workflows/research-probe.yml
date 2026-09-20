@@ -12,6 +12,9 @@ on:
       actor:
         description: "main person (optional)"
         default: "이재명"
+      seed_leans:
+        description: "leans of the seed articles, e.g. left  (tests the other-side search)"
+        default: ""
 
 jobs:
   probe:
@@ -40,4 +43,5 @@ jobs:
         env:
           TOPIC: ${{ inputs.topic }}
           ACTOR: ${{ inputs.actor }}
-        run: python scripts/research_probe.py "$TOPIC" "$ACTOR"
+          SEED: ${{ inputs.seed_leans }}
+        run: python scripts/research_probe.py "$TOPIC" "$ACTOR" "$SEED"
