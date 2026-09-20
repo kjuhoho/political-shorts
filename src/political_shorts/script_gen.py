@@ -809,6 +809,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     template_segments = [dict(s) for s in segments]
     agent_report = None
     agent_attempts = 0
+    research_web: dict[str, Any] = {}
     if llm_on:
         from .hook import pick_actor as _pick_actor
         from .script_llm import rewrite_segments
@@ -1054,6 +1055,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         "disclaimer": DISCLAIMER,
         "style": cfg.headline_style,
         "engage_question": explain.engage_question(frame, pick_actor(headline, entities, frame)),
+        # the articles the research actually read — cited in the description next to the seed sources
+        "research_sources": [{"title": s.get("title", ""), "url": s.get("url", "")}
+                             for s in (research_web.get("sources") or []) if s.get("url")][:8],
         "quality_agent": {
             "available": bool(agent_report and agent_report.available),
             "score": agent_report.score if agent_report else 0,

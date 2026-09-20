@@ -262,3 +262,50 @@ def test_quality_rubric_does_not_punish_the_required_opinion_question_or_a_concr
     assert "필수 규칙" in s and "절대 감점하지 말 것" in s                 # closing question is exempt
     assert "질문형 훅" in s and "좋은 훅이므로" in s                        # concrete question hooks are good
     assert "정상이므로 감점하지 말 것" in s                                # naming the criticised action is fine
+
+
+# ----------------------------------------------- truncated model answers are salvaged, sources are cited
+def test_a_truncated_json_answer_keeps_everything_that_was_complete():
+    cut = ('{"why":[{"reason":"청문회 의혹이 불거졌다","evidence":"9월 15일","source":"한겨레"}],'
+           '"background":"배경입니다","positions":[{"who":"경기도","position":"축소 불가피","why":"재정"},'
+           '{"who":"김민석 대표","position":"계약 파')                       # cut off mid-value
+    obj = research._json_obj(cut)
+    assert obj and obj["why"][0]["reason"].startswith("청문회") and obj["background"] == "배경입니다"
+    assert obj["positions"][0] == {"who": "경기도", "position": "축소 불가피", "why": "재정"}
+    assert all("position" not in p or p["position"] for p in obj["positions"][1:])    # the cut item never gets a made-up value
+    block = research.pack_block({"web": obj})
+    assert "경기도" in block and "김민석 대표: " not in block                          # ... and the half item is not shown
+    assert research._json_obj("not json at all") is None
+    assert research._json_obj('{"a": "x, y", "b": [1, 2') == {"a": "x, y", "b": [1]}          # commas inside strings are not cut points
+
+
+def test_note_extraction_retries_with_more_room_when_the_answer_was_cut_off(monkeypatch):
+    calls = []
+
+    def fake_complete(prompt, cfg, max_tokens=400, system=""):
+        calls.append(max_tokens)
+        if len(calls) == 1:
+            return '{"why": [{"reason": "'                                  # nothing usable, cut off
+        return json.dumps({"background": "배경입니다 " * 5}, ensure_ascii=False)
+
+    monkeypatch.setattr(L, "complete", fake_complete)
+    bodies = [{"title": "기사", "source": "매체", "link": "https://a/1", "text": "본문입니다. " * 40, "lean": ""}]
+    notes = research._extract_notes("주제", bodies, settings, {})
+    assert notes["background"].startswith("배경") and calls == [3800, 6000]
+
+
+def test_note_extraction_does_not_retry_an_answer_that_was_complete_but_empty(monkeypatch):
+    calls = []
+    monkeypatch.setattr(L, "complete", lambda *a, **k: calls.append(1) or json.dumps({"background": ""}))
+    bodies = [{"title": "기사", "source": "매체", "link": "https://a/1", "text": "본문입니다. " * 40, "lean": ""}]
+    assert research._extract_notes("주제", bodies, settings, {}) == {} and len(calls) == 1
+
+
+def test_description_cites_the_extra_articles_the_research_read():
+    from political_shorts.metadata import build_metadata
+    script = {"headline": "경기도 영화제 축소", "title": ["영화제 축소", "왜일까?"], "segments": [],
+              "sources": [{"name": "연합뉴스", "url": "https://yna/1", "lean": "wire"}],
+              "research_sources": [{"title": "경기도 반박 기사 제목", "url": "https://news/2"}], "entities": {}}
+    meta = build_metadata(script, {"passed": True, "warnings": []}, __import__("pathlib").Path("x.mp4"))
+    assert "■ 추가 조사 자료" in meta["description"] and "https://news/2" in meta["description"]
+    assert "■ 추가 조사 자료" not in build_metadata(dict(script, research_sources=[]), {"passed": True}, __import__("pathlib").Path("x.mp4"))["description"]

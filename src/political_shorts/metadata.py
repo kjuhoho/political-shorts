@@ -105,6 +105,13 @@ def build_metadata(
         lean = {"left": "(진보 성향)", "right": "(보수 성향)", "wire": "(통신·방송)"}.get(s.get("lean", ""), "")
         lines.append(f"- {s['name']} {lean}: {s['url']}")
 
+    extra = [x for x in (script.get("research_sources") or []) if x.get("url")]
+    if extra:
+        lines.append("")
+        lines.append("■ 추가 조사 자료 (이 영상을 위해 더 읽은 기사)")
+        for x in extra[:8]:
+            lines.append(f"- {truncate(clean_text(x.get('title', '')), 50) or '기사'}: {x['url']}")
+
     images = script.get("images", [])
     has_video = any(im.get("kind") == "video" for im in images)
     has_pexels = any((im.get("license", "") == "Pexels") for im in images)

@@ -255,6 +255,44 @@ _WEB_PROMPT = (
 )
 
 
+def _salvage_json(txt: str) -> dict[str, Any] | None:
+    """A model answer cut off mid-way (output token limit) is still mostly valid: keep the longest
+    prefix that ends at a comma between items and close whatever brackets are still open."""
+    start = txt.find("{")
+    if start < 0:
+        return None
+    s = txt[start:]
+    stack: list[str] = []
+    in_str = esc = False
+    cuts: list[tuple[int, str]] = []                 # (index of a top-level-item comma, closers needed there)
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+        elif ch == "," and stack:
+            cuts.append((i, "".join(reversed(stack))))
+    for i, closers in reversed(cuts):
+        try:
+            obj = json.loads(s[:i] + closers)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
 def _json_obj(raw: str) -> dict[str, Any] | None:
     txt = (raw or "").strip()
     if txt.startswith("```"):
@@ -270,7 +308,7 @@ def _json_obj(raw: str) -> dict[str, Any] | None:
                     return obj
             except Exception:
                 continue
-    return None
+    return _salvage_json(txt)
 
 
 def _has_content(obj: dict[str, Any]) -> bool:
@@ -384,13 +422,21 @@ def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
     if plan.get("question"):
         head += f"[핵심 질문] {plan['question']}\n"
     prompt = f"{head}\n{docs[:10000]}\n\n위 기사들만 근거로 조사 노트 JSON을 작성하세요."
-    try:
-        raw = complete(prompt, cfg, max_tokens=2000, system=_EXTRACT_SYSTEM)
-    except Exception as exc:  # pragma: no cover - network dependent
-        log.info("research: note extraction failed (%s)", str(exc)[:100])
-        return {}
-    obj = _json_obj(raw)
-    return obj if obj is not None and _has_content(obj) else {}
+    for max_tokens in (3800, 6000):
+        try:
+            raw = complete(prompt, cfg, max_tokens=max_tokens, system=_EXTRACT_SYSTEM)
+        except Exception as exc:  # pragma: no cover - network dependent
+            log.info("research: note extraction failed (%s)", str(exc)[:100])
+            return {}
+        obj = _json_obj(raw)
+        if obj is not None and _has_content(obj):
+            return obj
+        log.info("research: notes unusable (%d chars, ends %r) — %s", len(raw or ""), (raw or "")[-30:],
+                 "retrying with more room" if max_tokens == 3800 and not (raw or "").rstrip().endswith("}")
+                 else "giving up")
+        if (raw or "").rstrip().endswith("}"):        # complete but empty: a bigger budget won't help
+            break
+    return {}
 
 
 def _gather(queries: list[str]) -> list[dict[str, str]]:
@@ -600,7 +646,7 @@ def pack_block(pack: dict[str, Any]) -> str:
          for s in web.get("statements") or [] if isinstance(s, dict) and s.get("text")], 6, 320))
     add("입장(정부·여당·야당 등)", _lines(
         [f"{p.get('who', '')}{_lt(p)}: {p.get('position', '')} (이유: {p.get('why', '')}) [{p.get('source', '')}]"
-         for p in web.get("positions") or [] if isinstance(p, dict) and p.get("who")], 6, 300))
+         for p in web.get("positions") or [] if isinstance(p, dict) and p.get("who") and p.get("position")], 6, 300))
     add("전문가 평가", _lines(
         [f"{e.get('who', '')}: {e.get('view', '')} [{e.get('source', '')}]"
          for e in web.get("experts") or [] if isinstance(e, dict) and e.get("view")], 4, 260))
