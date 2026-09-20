@@ -253,3 +253,12 @@ def test_sides_card_states_honestly_that_a_camp_had_no_coverage(monkeypatch):
     assert "자유롭게 쓴" not in sides
     assert sides.endswith("보수 성향 매체 보도에서는 이 사안에 대한 별도 입장을 확인하지 못했습니다.")
     assert hook == "경기도는 왜 영화제 예산을 줄였을까요?"                        # the vetted, concrete hook replaced the vague one
+
+
+def test_quality_rubric_does_not_punish_the_required_opinion_question_or_a_concrete_question_hook():
+    """A real run scored 85 on repeat because the judge read our own rubric as forbidding the
+    closing opinion question, question hooks, and a critic naming the target's action."""
+    s = quality_agent._SYSTEM
+    assert "필수 규칙" in s and "절대 감점하지 말 것" in s                 # closing question is exempt
+    assert "질문형 훅" in s and "좋은 훅이므로" in s                        # concrete question hooks are good
+    assert "정상이므로 감점하지 말 것" in s                                # naming the criticised action is fine
