@@ -212,15 +212,24 @@ def _retry_after(message: str) -> float:
     return total
 
 
+# The free tier caps one request at 8,000 tokens a minute (prompt + answer): a bigger request answers 413 and can
+# never succeed. The first 413 records the size; a request at least that big is not sent again this run.
+_GROQ_TOO_BIG: dict[str, int] = {}
+
+
 def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str, models: list[str] | None = None) -> str:
     key = (getattr(cfg, "groq_api_key", "") or os.environ.get("GROQ_API_KEY", "")).strip()
     if not key:
         raise RuntimeError("GROQ_API_KEY not set")
     models = models or ([cfg.llm_model] if cfg.llm_model else list(_GROQ_MODELS))
+    size = len(prompt) + len(system) + 4 * max_tokens
     last = ""
     for model in models:
         if _cooling(f"groq:{model}"):     # daily/long limit already hit — don't burn retries on it
             last = f"{model} -> cooling down"
+            continue
+        if size >= _GROQ_TOO_BIG.get(model, 1 << 30):
+            last = f"{model} -> request too large for the free tier (skipped, no request sent)"
             continue
         body = {
             "model": model, "max_tokens": max_tokens, "temperature": 0.5,
@@ -249,15 +258,17 @@ def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str, models: list
                 last = f"{model} -> {status}: {(r.json().get('error') or {}).get('message', '')}".strip()
             except Exception:
                 last = f"{model} -> HTTP {status}"
+            if status == 413:
+                _GROQ_TOO_BIG[model] = min(size, _GROQ_TOO_BIG.get(model, 1 << 30))
+                break
             if status == 429:
-                wait = _retry_after(last)
-                if wait > 20:
-                    # "try again in 40m38s" is a per-day/long limit: retrying for a few
-                    # seconds is pointless, so sit this model out and move on at once
-                    _COOLDOWN[f"groq:{model}"] = time.time() + min(wait, 3600.0)
-                    log.info("groq: %s rate-limited for ~%.0fs — cooling it down", model, wait)
-                    break
-            if status in (429, 500, 502, 503) and attempt < 2:
+                # a per-minute or per-day limit: retrying after 3 s only collects more 429s, so sit this model
+                # out for the wait Groq names (at least 20 s) and let the next tier answer
+                wait = max(_retry_after(last), 20.0)
+                _COOLDOWN[f"groq:{model}"] = time.time() + min(wait, 3600.0)
+                log.info("groq: %s rate-limited for ~%.0fs — cooling it down", model, wait)
+                break
+            if status in (500, 502, 503) and attempt < 2:
                 time.sleep(3.0)
                 continue
             break

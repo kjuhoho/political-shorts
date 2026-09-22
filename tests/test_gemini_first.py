@@ -165,3 +165,54 @@ def test_the_full_flash_models_come_before_the_lite_ones_and_no_retired_model_is
     first_lite = min(i for i, m in enumerate(models) if "lite" in m)
     assert all("lite" not in m for m in models[:first_lite]) and first_lite >= 2
     assert not any(m.startswith(("gemini-2.0", "gemini-2.5")) for m in models)
+
+
+def _groq_env(monkeypatch, status_for):
+    import political_shorts.llm as L
+
+    posted = []
+
+    class _R:
+        def __init__(self, status):
+            self.status_code = status
+
+        def json(self):
+            if self.status_code == 200:
+                return {"choices": [{"message": {"content": '{"ok":1}'}}]}
+            return {"error": {"message": {413: "Request too large for model", 429:
+                    "Rate limit reached on tokens per minute (TPM). Please try again in 8.2s."}[self.status_code]}}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        posted.append(len(json["messages"][1]["content"]))
+        return _R(status_for(json))
+
+    monkeypatch.setattr(L, "requests", type("m", (), {"post": staticmethod(fake_post)}))
+    monkeypatch.setattr(L.time, "sleep", lambda s: None)
+    monkeypatch.setattr(L, "_COOLDOWN", {})
+    monkeypatch.setattr(L, "_GROQ_TOO_BIG", {})
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    return posted, dataclasses.replace(settings, llm_provider="groq", llm_model="")
+
+
+def test_a_request_groq_rejected_as_too_large_is_not_sent_again_at_that_size(monkeypatch):
+    """Evening run 2026-09-22: three 413s from gpt-oss-120b for the same kind of long prompt."""
+    import pytest
+
+    posted, cfg = _groq_env(monkeypatch, lambda j: 413 if len(j["messages"][1]["content"]) > 1000 else 200)
+    with pytest.raises(RuntimeError):
+        llm._groq("가" * 2000, cfg, 300, "")
+    with pytest.raises(RuntimeError):
+        llm._groq("가" * 3000, cfg, 300, "")               # bigger than a known 413: no request at all
+    assert posted == [2000]
+    assert llm._groq("짧은 요청", cfg, 300, "") == '{"ok":1}'   # a small request still goes through
+
+
+def test_a_groq_rate_limit_is_waited_out_on_the_next_tier_not_retried(monkeypatch):
+    import pytest
+
+    posted, cfg = _groq_env(monkeypatch, lambda j: 429)
+    with pytest.raises(RuntimeError):
+        llm._groq("x", cfg, 300, "")
+    with pytest.raises(RuntimeError):
+        llm._groq("x", cfg, 300, "")                        # still cooling down: no request
+    assert len(posted) == 1
