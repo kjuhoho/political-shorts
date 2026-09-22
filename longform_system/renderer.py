@@ -33,7 +33,7 @@ def clean_script(path: Path) -> list[tuple[str, str]]:
         label = re.sub(r"^\d+:\d+[–-]\d+:\d+\s*\|\s*", "", lines[0])
         body = " ".join(lines[1:])
         body = re.sub(r"\[SHORTS_HOOK\]\s*", "", body)
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body) if len(s.strip()) > 10]
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body) if s.strip()]
         for i in range(0, len(sentences)):
             text = sentences[i]
             if text:

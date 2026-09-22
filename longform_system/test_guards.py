@@ -60,6 +60,14 @@ class PublicationGuards(unittest.TestCase):
             chunks = clean_script(path)
         self.assertEqual(chunks, [('핵심 1','첫 문장은 음성에 반드시 포함됩니다.')])
 
+    def test_short_sentences_are_not_silently_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'script.md'
+            path.write_text('## 4:20–5:00 | 요약 + 예고\n첫째. 아직 미정입니다. 후속 발표를 확인하겠습니다.', encoding='utf-8')
+            chunks = clean_script(path)
+        self.assertEqual(' '.join(text for _, text in chunks),
+                         '첫째. 아직 미정입니다. 후속 발표를 확인하겠습니다.')
+
 
 if __name__ == '__main__':
     unittest.main()
