@@ -59,7 +59,8 @@ jobs:
               except urllib.error.HTTPError as e:
                   try:
                       err = json.loads(e.read()).get("error", {})
-                      msg = f"{err.get('status', '')}: {err.get('message', '')}"
+                      det = [{k: v for k, v in x.items() if k in ("violations", "retryDelay")} for x in err.get("details", [])]
+                      msg = f"{err.get('status', '')}: {json.dumps([x for x in det if x], ensure_ascii=False)[:500]}"
                   except Exception:
                       msg = ""
                   print(f"{m:26s} {e.code} {msg[:300]}")
