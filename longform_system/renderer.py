@@ -37,7 +37,17 @@ def clean_script(path: Path) -> list[tuple[str, str]]:
         for i in range(0, len(sentences)):
             text = sentences[i]
             if text:
-                chunks.append((label, text))
+                # Preserve every word while limiting one readable screen.
+                piece = ''
+                for word in text.split():
+                    candidate = (piece + ' ' + word).strip()
+                    if len(candidate) > 110 and piece:
+                        chunks.append((label, piece))
+                        piece = word
+                    else:
+                        piece = candidate
+                if piece:
+                    chunks.append((label, piece))
     return chunks
 
 

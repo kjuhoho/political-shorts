@@ -2,6 +2,12 @@
 import re
 from .research import blocked, now
 
+# Same exclusions as the existing channel safety policy, kept independent of
+# its imports/provider configuration. Quoting these in a briefing also holds it.
+HARMFUL = ('빨갱이','수구꼴통','토착왜구','친일파 새끼','국개','쓰레기 정당',
+           '죽여','때려죽','몰살','처단하자','테러하','화형','목매달','쳐죽',
+           '정신병자','틀딱','급식충','맘충','홍어','전라디언','착짱죽짱')
+
 RUBRIC = '''100점에서 감점. 주제 일치, 쉬운 배경 설명, 완결된 문장, 용어 풀이,
 구체적인 후속 확인 사항, 자연스러운 한국어, 발언 귀속 정확성, 원인과 반응 구분,
 자료에 있는 상대 입장 포함, 날짜 정확성을 평가한다. 명백한 오류는 점수와 관계없이 차단.
@@ -26,6 +32,8 @@ def review(writer, text, sources):
 def validate(script, stories):
     if blocked(script):
         raise RuntimeError('Blocked topic in script')
+    if any(term in script for term in HARMFUL):
+        raise RuntimeError('Harmful wording in script')
     headings = re.findall(r'^## .*\| (.+)$', script, re.M)
     if headings != ['훅','맥락','핵심 1','핵심 2','핵심 3','시사점','요약 + 예고']:
         raise RuntimeError('Invalid section order')
