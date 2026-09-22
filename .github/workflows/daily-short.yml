@@ -156,7 +156,14 @@ jobs:
           git add -f data/topic_history.json || true
           if ! git diff --cached --quiet; then
             git commit -m "run: update topic history [skip ci]"
-            git push
+            # other bots push to main too (the longform workflow records its day); a rejected push would lose
+            # this slot's record, and the slot gate would then publish the slot a second time
+            for i in 1 2 3 4 5; do
+              git push && break
+              echo "push rejected (attempt $i) - rebasing onto the new main"
+              git pull --rebase -X theirs origin main || { git rebase --abort; sleep 5; }
+              sleep $((i * 3))
+            done
           else
             echo "topic_history.json unchanged — nothing to commit"
           fi
