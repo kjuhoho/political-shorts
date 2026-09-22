@@ -91,7 +91,7 @@ def select(articles):
         terms = tokens(lead)
         if lead['url'] in used or any(len(terms & tokens(s['sources'][0])) >= 2 for s in selected):
             continue
-        related = sorted((a for a in articles if a['url'] != lead['url']),
+        related = sorted((a for a in articles if a['url'] != lead['url'] and a['name'] != lead['name']),
                          key=lambda a: len(terms & tokens(a)), reverse=True)
         related = [a for a in related if len(terms & tokens(a)) >= 2][:1]
         sources = [lead, *related]

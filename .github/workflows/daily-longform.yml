@@ -12,6 +12,10 @@ on:
         description: "Publish to 오늘의 엔터 (false builds an artifact only)"
         type: boolean
         default: false
+      resume_run:
+        description: 'Optional same-day run whose draft should be repaired and re-reviewed'
+        type: string
+        default: ''
 
 concurrency:
   group: daily-longform
@@ -23,6 +27,7 @@ jobs:
     timeout-minutes: 55
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - id: gate
@@ -38,6 +43,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - if: github.event_name == 'workflow_dispatch' && inputs.resume_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume_run }}
+          pattern: longform-*
+          merge-multiple: true
+          path: longform_resume
       - if: steps.gate.outputs.skip != 'true'
         run: |
           sudo apt-get update -qq
@@ -59,11 +72,14 @@ jobs:
           LONGFORM_GROQ_API_KEY: ${{ secrets.LONGFORM_GROQ_API_KEY }}
           LONGFORM_AUTO_PUBLISH: ${{ secrets.LONGFORM_AUTO_PUBLISH }}
           GH_TOKEN: ${{ github.token }}
+          RESUME_RUN: ${{ inputs.resume_run }}
         run: |
           publish=""
           if [ "${{ github.event_name }}" = "schedule" ] && [ "$LONGFORM_AUTO_PUBLISH" = "true" ]; then publish="--publish"; fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "true" ]; then publish="--publish"; fi
-          python -m longform_system.daily $publish
+          resume=""
+          if [ -n "$RESUME_RUN" ]; then resume="--resume-dir longform_resume"; fi
+          python -m longform_system.daily $publish $resume
       - if: always() && steps.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:

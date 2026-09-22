@@ -16,7 +16,7 @@ class Writer:
         print(f'Longform model: {self.model}', flush=True)
 
     def ask(self, prompt, limit=1600):
-        if self.calls >= 18 or self.tokens >= 55000:
+        if self.calls >= 24 or self.tokens >= 55000:
             raise RuntimeError('Longform API budget exhausted; no paid fallback')
         time.sleep(max(0, 65 - (time.monotonic() - self.last)))
         self.calls += 1

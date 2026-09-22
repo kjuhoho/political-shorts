@@ -21,10 +21,17 @@ def save(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
-def generate(writer, stories, out):
+def generate(writer, stories, out, existing=None):
     drafts, reports = [], []
     date = now().strftime('%Y년 %m월 %d일')
+    if existing:
+        for section in re.split(r'(?m)^## .*\n', existing)[1:]:
+            drafts.append(re.sub(r'(?m)^\[화면 출처.*$', '', section).replace('[SHORTS_HOOK]', '').strip())
+        if len(drafts) != 7:
+            raise RuntimeError('Resume artifact has invalid sections')
     for index, (stamp, label, budget) in enumerate(SECTIONS):
+        if existing:
+            break
         source = evidence(stories[index-2]) if 2 <= index <= 4 else '\n'.join(
             f"{s['headline']}\n" + (drafts[j+2] if len(drafts) > j+2 else evidence(s)[:1600])
             for j,s in enumerate(stories))
@@ -46,28 +53,79 @@ def generate(writer, stories, out):
         drafts.append(text)
         out.with_suffix('.draft.md').write_text('\n\n'.join(drafts), encoding='utf-8')
         print(f'Section {label}: {len(text.split())} words', flush=True)
-    parts = []
-    for i, ((stamp,label,_), body) in enumerate(zip(SECTIONS,drafts)):
-        if 2 <= i <= 4:
-            body = '[SHORTS_HOOK] ' + body
-            s = stories[i-2]['sources'][0]
-            body += f"\n[화면 출처 텍스트: {s['name']} | {s['published'][:10]} | {s['url']}]"
-        parts.append(f'## {stamp} | {label}\n{body}')
-    script = '\n\n'.join(parts)
+    # Repair only the section responsible for an out-of-band total. Always
+    # retain original evidence and re-review the final assembled narration.
+    for attempt in range(3):
+        total = sum(len(d.split()) for d in drafts)
+        if 750 <= total <= 850:
+            break
+        deltas = [len(d.split())-SECTIONS[i][2] for i,d in enumerate(drafts)]
+        i = (max if total > 850 else min)(range(7), key=lambda n: deltas[n])
+        target = max(35, len(drafts[i].split()) + 800-total)
+        source = evidence(stories[i-2]) if 2 <= i <= 4 else '\n'.join(evidence(s)[:1600] for s in stories)
+        revised = writer.ask(f'''기준일 {date}. 아래 '{SECTIONS[i][1]}' 대본의 분량만 조절하라.
+현재 전체 {total}어절. 이 구간을 공백 기준 약 {target}어절로 {'줄여라' if total > 850 else '풀어 설명하라'}.
+원문에 없는 사실/날짜/수치/전망을 추가하지 마라. 상대 입장과 주장 귀속 보존. 중복 반복 금지.
+완결된 한국어 내레이션만 반환. 훅의 기준일은 보존.
+근거:\n{source}\n기존 대본:\n{drafts[i]}''', 3200)
+        candidate_total = total-len(drafts[i].split())+len(revised.split())
+        if abs(candidate_total-800) < abs(total-800):
+            drafts[i] = revised
+    def assemble():
+        parts = []
+        for i, ((stamp,label,_), body) in enumerate(zip(SECTIONS,drafts)):
+            if 2 <= i <= 4:
+                body = '[SHORTS_HOOK] ' + body
+                s = stories[i-2]['sources'][0]
+                body += f"\n[화면 출처 텍스트: {s['name']} | {s['published'][:10]} | {s['url']}]"
+            parts.append(f'## {stamp} | {label}\n{body}')
+        return '\n\n'.join(parts)
+    script = assemble()
     out.write_text(script, encoding='utf-8')
     validate(script, stories)
     for i, story in enumerate(stories):
         report = review(writer, drafts[i+2], evidence(story))
+        save(out.with_suffix(f'.issue-{i+1}-initial.json'), report)
+        if not accepted(report):
+            drafts[i+2] = writer.ask(f'''기준일 {date}. 원문과 대조한 편집 검수에서 아래 오류가 발견됐다.
+{json.dumps(report,ensure_ascii=False)}
+지적을 전부 수정하라. 원문에 없는 확정적 인과관계·전망·반론을 없애고, 불확실한 사실은
+누구의 추정인지 귀속해라. 기관명은 원문 그대로 쓰고 유엔사와 유엔 사무국을 혼동하지 마라.
+기사 발행일과 사건 발생일을 구분. 예정인 연설을 이미 완료했다고 쓰지 마라.
+약 {len(drafts[i+2].split())}어절의 내레이션 본문만 반환.
+원문:\n{evidence(story)}\n대본:\n{drafts[i+2]}''', 3200)
+            out.write_text(assemble(), encoding='utf-8')
+            report = review(writer, drafts[i+2], evidence(story))
         reports.append(report)
         save(out.with_suffix('.quality.json'), reports)
         if not accepted(report):
             raise RuntimeError(f'Issue {i+1} failed 95-point review: {report}')
-    frame = '\n'.join(drafts[i] for i in (0,1,5,6))
-    report = review(writer, frame, '\n'.join(evidence(s)[:3000] for s in stories))
+    indices = (0,1,5,6)
+    frame = '\n'.join(f'[{SECTIONS[i][1]}]\n{drafts[i]}' for i in indices)
+    frame_evidence = '\n'.join(evidence(s)[:2000] for s in stories)
+    report = review(writer, frame, frame_evidence)
+    save(out.with_suffix('.framing-initial.json'), report)
+    if not accepted(report):
+        fixed = writer.json(f'''기준일 {date}. 아래 검수 오류를 원문에 근거해서 모두 수정하라.
+{json.dumps(report,ensure_ascii=False)}
+기관명·사건 발생일 정확성, 주장 귀속, 아직 예정인 일의 시제를 확인.
+훅에 기준일 유지. 각 구간 분량 유지. 요약에는 반드시 서로 다른 세 이슈 모두 포함.
+JSON 형식: {{"hook":"본문","context":"본문","implications":"본문","outro":"본문"}}
+원문:\n{frame_evidence}\n대본:\n{frame}''', 3200)
+        for i,key in zip(indices,('hook','context','implications','outro')):
+            if not isinstance(fixed.get(key),str) or not fixed[key].strip():
+                raise RuntimeError('Invalid framing revision')
+            drafts[i] = fixed[key].strip()
+        out.write_text(assemble(), encoding='utf-8')
+        frame = '\n'.join(f'[{SECTIONS[i][1]}]\n{drafts[i]}' for i in indices)
+        report = review(writer, frame, frame_evidence)
     reports.append(report)
     save(out.with_suffix('.quality.json'), reports)
     if not accepted(report):
         raise RuntimeError(f'Framing failed 95-point review: {report}')
+    script = assemble()
+    out.write_text(script, encoding='utf-8')
+    validate(script, stories)
     return script, reports
 
 
@@ -75,6 +133,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--publish', action='store_true')
     ap.add_argument('--output-dir', type=Path, default=ROOT/'longform_output')
+    ap.add_argument('--resume-dir', type=Path)
     args = ap.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     day = now().date().isoformat()
@@ -83,11 +142,20 @@ def main():
         if Ledger().get(episode_key(day)):
             print('Daily episode already reserved or uploaded. Skip.', flush=True)
             return
-    stories = select(collect())
+    existing = None
+    if args.resume_dir:
+        source_path = args.resume_dir/'sources.json'
+        draft_path = args.resume_dir/f'{day}.script.md'
+        if not draft_path.exists():
+            raise RuntimeError('Resume draft not from today')
+        stories = json.loads(source_path.read_text(encoding='utf-8'))
+        existing = draft_path.read_text(encoding='utf-8')
+    else:
+        stories = select(collect())
     save(args.output_dir/'sources.json', stories)
     writer = Writer()
     script_path = args.output_dir/f'{day}.script.md'
-    script, reports = generate(writer, stories, script_path)
+    script, reports = generate(writer, stories, script_path, existing)
     package = build_title_package({'theme':stories[0]['headline'], 'chapters':stories})
     title_review = review(writer, '제목만 검수 (본문 배경설명 요구 금지): '+package.title, evidence(stories[0]))
     save(args.output_dir/'title-review.json', title_review)
