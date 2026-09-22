@@ -103,10 +103,13 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라.
     if not model:
         raise RuntimeError("Groq 계정에서 사용 가능한 롱폼 대본 모델을 찾지 못했습니다")
     raw = client.chat.completions.create(
-        model=model, temperature=0.15,
-        messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"},
-    ).choices[0].message.content
-    data = json.loads(raw)
+        model=model, temperature=0.15, max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    ).choices[0].message.content or ""
+    match = re.search(r"\{.*\}", raw, re.S)
+    if not match:
+        raise RuntimeError("자동 승인 보류: 대본 생성 결과가 JSON 형식이 아닙니다")
+    data = json.loads(match.group(0))
     script, theme = str(data.get("script", "")).strip(), str(data.get("theme", "")).strip()
     words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", script)))
     if not (700 <= words <= 900):
