@@ -113,9 +113,9 @@ jobs:
             echo "PEXELS_API_KEY=$PS_PEXELS_KEY" >> .env
             echo "BROLL_ENABLED=true" >> .env
           fi
-          # Natural-narration rewrite. Preference: OpenAI (paid, most reliable) ->
-          # Groq (FREE, no card, steady) -> Gemini (FREE but flaky). No key at
-          # all -> the templated explainer (explain.py) still carries background.
+          # Natural-narration rewrite. Preference: Gemini (FREE) -> Groq (FREE; its daily
+          # quota is shared with the longform workflow and was hitting 413/429) -> OpenAI.
+          # No key at all -> the templated explainer (explain.py) still carries background.
           # Every key that exists is written, so llm.complete() can fall back to
           # the next provider when the preferred one is down or rate-limited.
           [ -n "$PS_OPENAI_KEY" ] && echo "OPENAI_API_KEY=$PS_OPENAI_KEY" >> .env
@@ -123,12 +123,12 @@ jobs:
           [ -n "$PS_GEMINI_KEY" ] && echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
           # research stage: YouTube coverage + comments (optional; skipped without the key)
           [ -n "$PS_YT_API_KEY" ]  && echo "YOUTUBE_API_KEY=$PS_YT_API_KEY" >> .env
-          if [ -n "$PS_OPENAI_KEY" ]; then
-            echo "LLM_PROVIDER=openai" >> .env
+          if [ -n "$PS_GEMINI_KEY" ]; then
+            echo "LLM_PROVIDER=gemini" >> .env
           elif [ -n "$PS_GROQ_KEY" ]; then
             echo "LLM_PROVIDER=groq" >> .env
-          elif [ -n "$PS_GEMINI_KEY" ]; then
-            echo "LLM_PROVIDER=gemini" >> .env
+          elif [ -n "$PS_OPENAI_KEY" ]; then
+            echo "LLM_PROVIDER=openai" >> .env
           fi
 
       - name: seed dedup history from the repo

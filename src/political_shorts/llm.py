@@ -36,14 +36,8 @@ def _has_key(provider: str, cfg: Settings) -> bool:
     return bool((getattr(cfg, f"{provider}_api_key", "") or "").strip())
 
 
-def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800, accept=None) -> str:
-    """One question answered with LIVE web search. Groq's `groq/compound` does
-    the searching itself; if it is unavailable or rate-limited, Gemini with the
-    Google Search tool is tried. Returns the answer text ("" if neither worked) —
-    callers treat the text as unverified research notes, never as ground truth.
-    `accept(text) -> bool` lets the caller reject an answer that has no real
-    content (e.g. an empty JSON skeleton) so the next model/provider is tried."""
-    errs: list[str] = []
+def _web_search_groq(prompt: str, cfg: Settings, max_tokens: int, accept, errs: list[str]) -> str:
+    """groq/compound answers with its own live search; '' when unavailable."""
     gkey = (getattr(cfg, "groq_api_key", "") or os.environ.get("GROQ_API_KEY", "")).strip()
     if gkey:
         for model in ("groq/compound", "groq/compound-mini"):
@@ -63,6 +57,11 @@ def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800, accept=None) 
                 errs.append(f"{model} -> {r.status_code}")
             except Exception as exc:  # pragma: no cover - network dependent
                 errs.append(f"{model} -> {str(exc)[:60]}")
+    return ""
+
+
+def _web_search_gemini(prompt: str, cfg: Settings, max_tokens: int, accept, errs: list[str]) -> str:
+    """Gemini with the Google Search tool; '' when unavailable."""
     mkey = (getattr(cfg, "gemini_api_key", "") or "").strip()
     if mkey:
         for model in ("gemini-2.5-flash", "gemini-flash-latest"):
@@ -86,12 +85,32 @@ def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800, accept=None) 
                 errs.append(f"{model} -> {r.status_code}")
             except Exception as exc:  # pragma: no cover - network dependent
                 errs.append(f"{model} -> {str(exc)[:60]}")
+    return ""
+
+
+# Gemini first for every shorts call (user, 2026-09-22): the Groq free tier is shared with the longform
+# workflow and was already hitting 413/429; Groq stays as the fallback.
+_WEB_SEARCH = {"gemini": _web_search_gemini, "groq": _web_search_groq}
+_WEB_SEARCH_ORDER = ["gemini", "groq"]
+
+
+def web_search(prompt: str, cfg: Settings, max_tokens: int = 1800, accept=None) -> str:
+    """One question answered with LIVE web search, by the providers in _WEB_SEARCH_ORDER: Gemini with the
+    Google Search tool first, then Groq's `groq/compound` (which does the searching itself). Returns the
+    answer text ("" if neither worked) — callers treat the text as unverified research notes, never as ground truth.
+    `accept(text) -> bool` lets the caller reject an answer that has no real
+    content (e.g. an empty JSON skeleton) so the next model/provider is tried."""
+    errs: list[str] = []
+    for provider in _WEB_SEARCH_ORDER:
+        txt = _WEB_SEARCH[provider](prompt, cfg, max_tokens, accept, errs)
+        if txt:
+            return txt
     log.info("web_search: no answer (%s)", "; ".join(errs) or "no key")
     return ""
 
 
-# Tried in this order after the configured provider fails (free tiers first).
-_FALLBACK_ORDER = ["groq", "gemini", "openai", "anthropic"]
+# Tried in this order after the configured provider fails (free tiers first, Gemini before Groq).
+_FALLBACK_ORDER = ["gemini", "groq", "openai", "anthropic"]
 
 
 def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = "") -> str:
