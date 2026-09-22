@@ -57,9 +57,11 @@ jobs:
       - if: steps.gate.outputs.skip != 'true'
         env:
           LONGFORM_GROQ_API_KEY: ${{ secrets.LONGFORM_GROQ_API_KEY }}
+          LONGFORM_AUTO_PUBLISH: ${{ secrets.LONGFORM_AUTO_PUBLISH }}
         run: |
-          publish="--publish"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "false" ]; then publish=""; fi
+          publish=""
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$LONGFORM_AUTO_PUBLISH" = "true" ]; then publish="--publish"; fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "true" ]; then publish="--publish"; fi
           python -m longform_system.daily $publish
       - if: always() && steps.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
