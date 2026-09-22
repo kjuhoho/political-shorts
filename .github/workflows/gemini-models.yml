@@ -1,0 +1,42 @@
+name: gemini models (diagnostic)
+
+# Manual only. For every model in llm._GEMINI_MODELS: one tiny request with PS_GEMINI_KEY, printing the HTTP
+# status and the error message (quota / not found / overloaded) — so the model order can be matched to what the
+# key can really use. Never prints the key (GitHub masks secrets) and never builds or publishes a video.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe each model
+        env:
+          PS_GEMINI_KEY: ${{ secrets.PS_GEMINI_KEY }}
+        run: |
+          if [ -z "$PS_GEMINI_KEY" ]; then echo "PS_GEMINI_KEY not set"; exit 1; fi
+          python3 - <<'PY'
+          import ast, json, os, urllib.error, urllib.request
+          src = open("src/political_shorts/llm.py", encoding="utf-8").read()
+          start = src.index("_GEMINI_MODELS = [")
+          models = ast.literal_eval(src[start + len("_GEMINI_MODELS = "): src.index("]", start) + 1])
+          models += ["gemini-2.5-flash", "gemini-2.5-pro"]
+          key = os.environ["PS_GEMINI_KEY"]
+          body = json.dumps({"contents": [{"parts": [{"text": "한 단어로 답: 안녕"}]}],
+                             "generationConfig": {"maxOutputTokens": 16}}).encode()
+          for m in dict.fromkeys(models):
+              url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key}"
+              req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      print(f"{m:28s} {r.status} OK")
+              except urllib.error.HTTPError as e:
+                  try:
+                      err = json.loads(e.read()).get("error", {})
+                      msg = f"{err.get('status', '')}: {err.get('message', '')}"
+                  except Exception:
+                      msg = ""
+                  print(f"{m:28s} {e.code} {msg[:220]}")
+          PY

@@ -277,6 +277,7 @@ def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
                 continue
             break
         if status in (404, 429, 500, 503):
+            log.info("gemini: model %s skipped (%s)", model, last_err[:160])
             continue          # not visible / overloaded on this model — try the next
         break                 # 403 / 400 -> key or request problem, stop
     raise RuntimeError(f"gemini call failed ({last_err})")
