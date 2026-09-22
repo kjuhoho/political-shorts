@@ -83,7 +83,9 @@ def write_script(stories: list[dict[str, str]], out: Path) -> tuple[str, str]:
 
 JSON만 출력하라:
 {{"theme":"한 줄 주제","script":"Markdown"}}
-script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라.
+script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공백으로 구분한 어절 수를 스스로
+확인한 뒤 출력하라. 본문 최소 분량(출처 줄·제목 제외)은 훅 50, 맥락 90, 핵심1 170,
+핵심2 170, 핵심3 150, 시사점 110, 요약·예고 80어절이다.
 ## 0:00–0:20 | 훅
 ## 0:20–0:50 | 맥락
 ## 0:50–3:30 | 핵심 1
@@ -112,25 +114,39 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라.
     data = json.loads(match.group(0))
     script, theme = str(data.get("script", "")).strip(), str(data.get("theme", "")).strip()
     words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", script)))
-    # A concise model response is not a five-minute video. Give it one
-    # constrained rewrite opportunity, but never fill the gap with new facts.
-    if not (700 <= words <= 900):
-        repair = f"""아래 대본은 {words}어절이라 5분 브리핑 기준에 부족합니다. 제공된 자료 밖의
-사실·수치·인용·주장을 절대 추가하지 말고, 이미 있는 사실의 배경과 시민이 확인할 절차를 더 쉽게 풀어
-750~850어절로 확장하라. 제목·구조·출처 줄·[SHORTS_HOOK]를 그대로 유지하라. JSON 하나만 출력하라.
+    # A concise response cannot make a five-minute briefing. Every retry is
+    # bound to the same evidence, so it cannot fill missing length with facts.
+    for attempt in range(3):
+        if 700 <= words <= 900:
+            break
+        repair = f"""검증에서 본문이 {words}어절이라 반려됐다. {attempt + 1}번째 재작성이다.
+제공된 기사 자료와 기존 대본 밖의 사실·수치·인용·주장을 절대 추가하지 말고, 이미 있는 사실의 배경,
+각 절차의 의미, 시민이 다음에 확인할 지점을 쉬운 말로 풀어 본문을 750~850어절로 다시 작성하라.
+마지막 출력 전 공백 기준 어절 수를 반드시 세어라.
+
+본문 최소 분량: 훅 50, 맥락 90, 핵심1 170, 핵심2 170, 핵심3 150, 시사점 110, 요약·예고 80어절.
+제목·구조·출처 줄·각 핵심의 [SHORTS_HOOK]는 유지한다. JSON 하나만 출력하라.
 
 {{"theme":"{theme}","script":"Markdown"}}
 
-대본:\n{script}"""
+기사 자료:\n{evidence}
+
+기존 대본:\n{script}"""
         repaired = client.chat.completions.create(
-            model=model, temperature=0.1, max_tokens=5000,
+            model=model, temperature=0.05, max_tokens=6000,
             messages=[{"role": "user", "content": repair}],
         ).choices[0].message.content or ""
         match = re.search(r"\{.*\}", repaired, re.S)
-        if match:
+        if not match:
+            continue
+        try:
             data = json.loads(match.group(0))
-            script, theme = str(data.get("script", "")).strip(), str(data.get("theme", theme)).strip()
-            words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", script)))
+        except json.JSONDecodeError:
+            continue
+        candidate = str(data.get("script", "")).strip()
+        candidate_words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", candidate)))
+        if candidate and abs(candidate_words - 800) < abs(words - 800):
+            script, theme, words = candidate, str(data.get("theme", theme)).strip(), candidate_words
     if not (700 <= words <= 900):
         raise RuntimeError(f"자동 승인 보류: 대본 분량 {words}어절")
     out.write_text(script, encoding="utf-8")
