@@ -311,3 +311,32 @@ def test_the_description_states_the_year(monkeypatch):
     script = {"headline": "예산안 국회 통과", "title": ["예산안 통과"], "segments": [], "sources": [], "source_text": ""}
     meta = metadata.build_metadata(script, {"passed": True, "warnings": []}, Path("x.mp4"))
     assert "2026년 09월 22일 정치 이슈를" in meta["description"]
+
+
+# ---------------------------------------- incident: "2024년 4월 21일 관저" in a story of 21 September 2026 (shipped)
+def test_incident_the_dinner_video_said_2024_4_21_and_now_says_the_real_date():
+    src = "미셸 스틸 주한미국대사가 21일 여야 지도부를 관저로 초청해 만찬을 함께했다"
+    said = "미셸 스틸 대사는 2024년 4월 21일 주한미국대사 관저에서 여야 지도부와 만찬을 가졌습니다."
+    stripped, _ = chrono.strip_years(said, src, NOW)
+    fixed, _ = chrono.normalize_dates(stripped, src, PUBS, {"first_done": False}, NOW)
+    assert fixed == "미셸 스틸 대사는 2026년 9월 21일 주한미국대사 관저에서 여야 지도부와 만찬을 가졌습니다."
+
+
+def test_the_short_spoken_years_are_years_too_but_durations_are_not():
+    src = "예산안 논의"
+    assert chrono.strip_years("24년도 예산안을 처리했다", src, NOW)[0] == "예산안을 처리했다"
+    assert chrono.strip_years("'24년 예산안을 처리했다", src, NOW)[0] == "예산안을 처리했다"
+    assert chrono.unsupported_years("24년도 예산", src, NOW) == [2024]
+    for duration in ("20년 만에 처음 열렸다", "10년간 이어진 갈등", "3년 전 일이다"):
+        assert chrono.strip_years(duration, src, NOW)[0] == duration
+
+
+def test_a_short_year_the_source_itself_uses_is_supported():
+    assert chrono.unsupported_years("24년도 예산", "정부는 24년도 예산 집행을 점검했다", NOW) == []
+    assert chrono.unsupported_years("2024년도 예산", "정부는 24년도 예산 집행을 점검했다", NOW) == []
+
+
+def test_a_short_year_before_a_full_date_is_absorbed_into_the_corrected_date():
+    out, _ = chrono.normalize_dates("24년 4월 21일 관저에서 만찬을 가졌습니다.", "21일 만찬", PUBS,
+                                    {"first_done": False}, NOW)
+    assert out == "2026년 9월 21일 관저에서 만찬을 가졌습니다."

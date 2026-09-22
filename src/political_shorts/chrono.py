@@ -22,8 +22,17 @@ from typing import Any
 KST = timezone(timedelta(hours=9))
 _WEEKDAY = "월화수목금토일"
 
-# "2026년", "2024년도" — only a number followed by 년 is a year ("2000억", "1,431개" are quantities)
-_YEAR_RX = re.compile(r"(?<![\d,.])((?:19|20)\d{2})\s*년(도)?")
+# "2026년", "2024년도", and the spoken short forms "24년도" / "'24년" — only a number followed by 년 is a year
+# ("2000억", "1,431개" are quantities; "24년 만에", "20년간" are durations and stay untouched)
+_YEAR_RX = re.compile(r"(?<![\d,.])(?:(?P<y4>(?:19|20)\d{2})\s*년(?:도)?|['\u2018\u2019]\s*(?P<y2a>\d{2})\s*년(?:도)?"
+                      r"|(?P<y2b>\d{2})\s*년도)")
+
+
+def _year_of(m: re.Match) -> int:
+    """The four-digit year of a _YEAR_RX match ('24년도' -> 2024)."""
+    if m.group("y4"):
+        return int(m.group("y4"))
+    return 2000 + int(m.group("y2a") or m.group("y2b"))
 # relative expressions spelled with a year: they must agree with today's date
 _REL_RX = re.compile(r"(올해|금년|올|지난해|작년|전년|내년|명년|재작년)\s*\(?\s*((?:19|20)\d{2})\s*년?")
 
@@ -75,7 +84,7 @@ def date_block(rows: list[Any] | None = None, now: datetime | None = None) -> st
 
 
 def _allowed_years(source_text: str, now: datetime | None = None) -> set[int]:
-    allowed = {int(m.group(1)) for m in _YEAR_RX.finditer(source_text or "")}
+    allowed = {_year_of(m) for m in _YEAR_RX.finditer(source_text or "")}
     allowed |= {int(y) for y in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", source_text or "")}   # "2024. 3" style too
     allowed.add(today(now).year)
     return allowed
@@ -84,7 +93,7 @@ def _allowed_years(source_text: str, now: datetime | None = None) -> set[int]:
 def unsupported_years(text: str, source_text: str, now: datetime | None = None) -> list[int]:
     """Years written in `text` that are neither this year nor found in the source material."""
     allowed = _allowed_years(source_text, now)
-    return sorted({int(m.group(1)) for m in _YEAR_RX.finditer(text or "")} - allowed)
+    return sorted({_year_of(m) for m in _YEAR_RX.finditer(text or "")} - allowed)
 
 
 def wrong_relative_years(text: str, now: datetime | None = None) -> list[str]:
@@ -163,7 +172,8 @@ def fix_month_days(text: str, source_text: str, pubs: list[tuple[int, int, int]]
 # ------------------------------------------------------------ dates are a DEFAULT, and always correct
 # Year and date are basic facts of a news video: every script states the full date ("2026년 9월 21일") at least
 # once, computed from the articles' publication date — never left to the model, never dropped.
-_FULL_RX = re.compile(r"(?:((?:19|20)\d{2})\s*년(?:도)?\s*)?(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일")
+_FULL_RX = re.compile(r"(?:(?P<y>(?:19|20)\d{2}|['\u2018\u2019]?\d{2})\s*년(?:도)?\s*)?(?<!\d)"
+                      r"(?P<m>\d{1,2})\s*월\s*(?P<d>\d{1,2})\s*일")
 
 
 def resolve_year(month: int, day: int, pubs: list[tuple[int, int, int]], now: datetime | None = None) -> int:
@@ -217,9 +227,12 @@ def normalize_dates(text: str, source_text: str, pubs: list[tuple[int, int, int]
     changes: list[tuple[str, str]] = []
 
     def _sub(m: re.Match) -> str:
-        given, mo, d = m.group(1), int(m.group(2)), int(m.group(3))
+        given, mo, d = m.group("y"), int(m.group("m")), int(m.group("d"))
         if not (1 <= mo <= 12 and 1 <= d <= 31):
             return m.group(0)
+        if given:
+            given = re.sub(r"\D", "", given)
+            given = str(2000 + int(given)) if len(given) == 2 else given          # "24년 4월 21일" -> 2024
         kept = (mo, d) in explicit
         if (mo, d) not in allowed:
             if d not in day_month:
@@ -260,7 +273,7 @@ def strip_years(text: str, source_text: str, now: datetime | None = None) -> tup
     removed: list[int] = []
 
     def _sub(m: re.Match) -> str:
-        y = int(m.group(1))
+        y = _year_of(m)
         if y in allowed:
             return m.group(0)
         removed.append(y)
