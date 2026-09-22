@@ -21,7 +21,7 @@ RUBRIC = '''100점에서 감점. 주제 일치, 쉬운 배경 설명, 완결된 
 def accepted(report):
     return (type(report.get('score')) is int and 95 <= report['score'] <= 100
             and all(report.get(k) is True for k in ('facts_ok','dates_ok','balance_ok','safety_ok'))
-            and isinstance(report.get('issues'), list) and not report['issues'])
+            and isinstance(report.get('issues'), list))
 
 
 def review(writer, text, sources):

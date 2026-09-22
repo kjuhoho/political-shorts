@@ -129,7 +129,7 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         source = ''
         if match:
             source = sources[int(match.group(1))-1]
-            source = '출처: ' + ' | '.join(source.split(' | ')[:2]) + ' · 원문은 설명란'
+            source = '출처: ' + ' | '.join(source.split(' | ')[:2]) + ' | 원문은 설명란'
         card(label, text, png, i, font_path, source)
         if label not in seen_labels:
             Image.open(png).save(qa / f'{i:02d}.png')

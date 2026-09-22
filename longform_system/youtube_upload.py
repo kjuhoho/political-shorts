@@ -45,10 +45,15 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
     while response is None:
         _, response = request.next_chunk(num_retries=0)
     video_id = response["id"]
-    result = {"status": "uploaded", "video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}"}
+    privacy = response.get('status',{}).get('privacyStatus','unknown')
+    result = {"status": "uploaded", "video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
+              'privacy': privacy, 'channel_id':response.get('snippet',{}).get('channelId'),
+              'channel_title':response.get('snippet',{}).get('channelTitle')}
     # Preserve the ID locally even if the durable completion write fails.
     video.with_suffix('.upload.json').write_text(json.dumps(result), encoding='utf-8')
     print(json.dumps(result), flush=True)
     ledger.put(key, {**row, **result}, sha)
     ledger.put(topic_key, {**topic_row, **result}, topic_sha)
+    if privacy != meta['privacy_status']:
+        raise RuntimeError(f'Upload saved but visibility is {privacy}; do not re-upload')
     return result
