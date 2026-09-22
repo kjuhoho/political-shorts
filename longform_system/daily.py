@@ -84,8 +84,8 @@ def _decode_draft(raw: str, fallback_theme: str = "") -> dict[str, Any] | None:
     # Some otherwise usable models return the requested Markdown directly.
     # Accept it only when every mandatory timing section is present; all the
     # normal fact, length, and render gates still run after this point.
-    mandatory = ("훅", "맥락", "핵심 1", "핵심 2", "핵심 3", "시사점", "요약")
-    if all(label in raw for label in mandatory):
+    mandatory = (r"훅", r"맥락", r"핵심\s*1", r"핵심\s*2", r"핵심\s*3", r"시사점", r"요약")
+    if all(re.search(label, raw) for label in mandatory):
         start = raw.find("##")
         script = raw[start:].strip() if start >= 0 else raw.strip()
         if script:
@@ -146,7 +146,7 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
 원래 요청:
 """ + prompt
         raw = client.chat.completions.create(
-            model=model, temperature=0, max_tokens=6000,
+            model=model, temperature=0, max_tokens=3000,
             messages=[{"role": "user", "content": format_repair}],
         ).choices[0].message.content or ""
         data = _decode_draft(raw, fallback_theme)
@@ -169,11 +169,9 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
 
 {{"theme":"{theme}","script":"Markdown"}}
 
-기사 자료:\n{evidence}
-
 기존 대본:\n{script}"""
         repaired = client.chat.completions.create(
-            model=model, temperature=0.05, max_tokens=6000,
+            model=model, temperature=0.05, max_tokens=3500,
             messages=[{"role": "user", "content": repair}],
         ).choices[0].message.content or ""
         data = _decode_draft(repaired, theme)
