@@ -86,7 +86,7 @@ def build_metadata(
 
     lines: list[str] = []
     lines.append(headline)
-    lines.append(f"{date_str} 정치 이슈를 통신·진보·보수 매체를 종합해, "
+    lines.append(f"{now.year}년 {date_str} 정치 이슈를 통신·진보·보수 매체를 종합해, "
                  "정치를 잘 모르는 분도 이해하도록 쉽게 풀어 설명합니다.")
     lines.append("")
     lines.append("▶ 한눈에 보기")

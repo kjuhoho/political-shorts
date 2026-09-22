@@ -6,13 +6,17 @@ videos shipped with wrong years. Two layers, both here:
 
   date_block()      the current date (KST), what "올해/지난해/내년" mean today, the publication date of the
                     articles, and the rule "never guess a year" — put in front of every writing prompt
-  strip_years()     after the script is written, any explicit year that neither the current year nor the
-                    articles / research mention is REMOVED. A missing year is harmless; a wrong one is not.
+  strip_years()     any explicit year that neither the current year nor the articles / research mention is
+                    dropped first (a wrong year is worse than none) ...
+  normalize_dates() ... and then EVERY 'M월 D일' is rewritten correct and complete: the month agrees with the
+                    articles, the first date of the script carries its year (computed from the publication date).
+  dateline()        a script that states no date at all gets '2026년 9월 21일 소식입니다.' — year and date are a
+                    default of every video, not something the model may forget.
 """
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 KST = timezone(timedelta(hours=9))
@@ -59,9 +63,10 @@ def date_block(rows: list[Any] | None = None, now: datetime | None = None) -> st
     lines = [
         f"[오늘 날짜] 오늘은 {y}년 {t.month}월 {t.day}일({_WEEKDAY[t.weekday()]}요일)입니다. "
         f"올해는 {y}년, 작년(지난해)은 {y - 1}년, 내년은 {y + 1}년입니다.",
-        "[연도 규칙] 연도는 기사·자료에 적힌 것만 쓰고, 적혀 있지 않은 연도는 절대 추측해서 붙이지 말 것. "
-        "기사에 '지난 15일', '지난해', '내년'처럼 상대적으로만 적혀 있으면 위 기준으로 정확히 계산하거나 "
-        "그 표현 그대로 쓸 것. 확신이 없으면 연도를 빼고 월·일만 쓸 것.",
+        "[연도 규칙] 연도와 날짜는 기본으로 정확하게 쓴다. 대본에 날짜를 쓸 때는 '2026년 9월 21일'처럼 연·월·일을 "
+        "모두 쓰고, 연도는 위 [오늘 날짜]·[기사 발행일]과 기사·자료에 적힌 것만 근거로 한다(기억에 의존해 짐작 금지). "
+        "기사에 '지난 15일', '지난해', '내년'처럼 상대적으로만 적혀 있으면 위 기준으로 정확히 계산해 연·월·일로 쓸 것. "
+        "날짜를 전혀 알 수 없는 사건만 '이날'로 쓴다.",
     ]
     dates = article_dates(rows or [])
     if dates:
@@ -153,6 +158,98 @@ def fix_month_days(text: str, source_text: str, pubs: list[tuple[int, int, int]]
         return new
 
     return _MD_RX.sub(_sub, text), changes
+
+
+# ------------------------------------------------------------ dates are a DEFAULT, and always correct
+# Year and date are basic facts of a news video: every script states the full date ("2026년 9월 21일") at least
+# once, computed from the articles' publication date — never left to the model, never dropped.
+_FULL_RX = re.compile(r"(?:((?:19|20)\d{2})\s*년(?:도)?\s*)?(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일")
+
+
+def resolve_year(month: int, day: int, pubs: list[tuple[int, int, int]], now: datetime | None = None) -> int:
+    """The year in which month/day is closest to the articles' publication date (a 30 Dec date in a 2 Jan
+    article is last year)."""
+    t = today(now)
+    base = date(*pubs[0]) if pubs else date(t.year, t.month, t.day)
+    best: tuple[int, int] | None = None
+    for y in (base.year - 1, base.year, base.year + 1):
+        try:
+            diff = abs((date(y, month, day) - base).days)
+        except ValueError:
+            continue
+        if best is None or diff < best[0]:
+            best = (diff, y)
+    return best[1] if best else base.year
+
+
+def date_facts(pubs: list[tuple[int, int, int]], now: datetime | None = None) -> str:
+    """'2026년 9월 21일 2026년 9월 22일' — the dates this video is allowed to state, for the source text the
+    quality checks compare against (a full date is not an 'added number')."""
+    t = today(now)
+    days = [(t.year, t.month, t.day), *pubs]
+    seen: list[str] = []
+    for y, m, d in days:
+        s = f"{y}년 {m}월 {d}일"
+        if s not in seen:
+            seen.append(s)
+    return " ".join(seen)
+
+
+def normalize_dates(text: str, source_text: str, pubs: list[tuple[int, int, int]],
+                    state: dict[str, bool], now: datetime | None = None) -> tuple[str, list[tuple[str, str]]]:
+    """Every 'M월 D일' in `text` becomes correct and complete:
+       - the month agrees with the sources (a day the article gives as '21일' gets its publication month; a date
+         nothing supports becomes '이날'),
+       - the FIRST date of the script (tracked in `state`) is written with its year, computed from the
+         publication date (or taken from the source when it states one); a year the writer attached is
+         replaced by that computed year, never trusted.
+    -> (text, [(before, after)])"""
+    if not text:
+        return text, []
+    allowed, day_month = _month_days(source_text, pubs, now)
+    t = today(now)
+    base_year = pubs[0][0] if pubs else t.year
+    src_years = {int(y) for y in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", source_text or "")}
+    # dates the sources spell out as 'M월 D일' — apart from the publication days themselves, which the writer
+    # gets from us, not from the article
+    explicit = {(int(x.group(1)), int(x.group(2))) for x in _MD_RX.finditer(source_text or "")}
+    explicit -= {(m, d) for _y, m, d in pubs} | {(t.month, t.day)}
+    changes: list[tuple[str, str]] = []
+
+    def _sub(m: re.Match) -> str:
+        given, mo, d = m.group(1), int(m.group(2)), int(m.group(3))
+        if not (1 <= mo <= 12 and 1 <= d <= 31):
+            return m.group(0)
+        kept = (mo, d) in explicit
+        if (mo, d) not in allowed:
+            if d not in day_month:
+                changes.append((m.group(0), "이날"))
+                return "이날"
+            mo = day_month[d]
+        stated = re.search(rf"((?:19|20)\d{{2}})\s*년\s*{mo}\s*월\s*{d}\s*일", source_text or "")
+        if stated:
+            year = int(stated.group(1))
+        elif given and kept and int(given) < base_year and int(given) in src_years:
+            year = int(given)                       # an older event: the source itself names that year
+        else:
+            year = resolve_year(mo, d, pubs, now)
+        if given or not state.get("first_done"):
+            out = f"{year}년 {mo}월 {d}일"
+        else:
+            out = f"{mo}월 {d}일"
+        state["first_done"] = True
+        if out != m.group(0):
+            changes.append((m.group(0), out))
+        return out
+
+    return _FULL_RX.sub(_sub, text), changes
+
+
+def dateline(pubs: list[tuple[int, int, int]], now: datetime | None = None) -> str:
+    """'2026년 9월 21일 소식입니다.' — the default date sentence for a script that states no date at all."""
+    t = today(now)
+    y, m, d = pubs[0] if pubs else (t.year, t.month, t.day)
+    return f"{y}년 {m}월 {d}일 소식입니다."
 
 
 def strip_years(text: str, source_text: str, now: datetime | None = None) -> tuple[str, list[int]]:

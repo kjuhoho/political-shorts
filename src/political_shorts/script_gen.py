@@ -247,6 +247,7 @@ def _strip_years_in(segments: list[dict[str, Any]], source_text: str,
     articles/research do not support is removed and, when publication dates are given, every 'M월 D일' is
     corrected to the article's month (or '이날' when nothing supports it). Returns the years removed."""
     removed: list[int] = []
+    streams = {"narration": {"first_done": False}, "caption": {"first_done": False}, "kicker": {"first_done": True}}
     for s in segments:
         for key in ("narration", "caption", "kicker"):
             if not s.get(key):
@@ -254,10 +255,29 @@ def _strip_years_in(segments: list[dict[str, Any]], source_text: str,
             s[key], gone = chrono.strip_years(str(s[key]), source_text)
             removed.extend(gone)
             if pub_dates is not None:
-                s[key], changed = chrono.fix_month_days(s[key], source_text, pub_dates)
+                s[key], changed = chrono.normalize_dates(s[key], source_text, pub_dates, streams[key])
                 for before, after in changed:
-                    log.info("date corrected: %r -> %r", before, after)
+                    log.info("date normalised: %r -> %r", before, after)
+    if pub_dates is not None:
+        _ensure_dateline(segments, pub_dates, streams)
     return removed
+
+
+def _ensure_dateline(segments: list[dict[str, Any]], pub_dates: list[tuple[int, int, int]],
+                     streams: dict[str, dict[str, bool]]) -> None:
+    """The full date is a default of every video: a script that states none gets 'YYYY년 M월 D일 소식입니다.' in
+    front of its first body card (spoken text and caption alike)."""
+    if streams["narration"]["first_done"]:
+        return
+    card = next((s for s in segments if s.get("role") != "hook" and s.get("narration")), None)
+    if card is None:
+        return
+    line = chrono.dateline(pub_dates)
+    card["narration"] = f"{line} {card['narration']}"
+    if card.get("caption"):
+        card["caption"] = f"{line} {card['caption']}"
+    streams["narration"]["first_done"] = True
+    log.info("dateline added: %s", line)
 
 
 def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> None:
@@ -978,8 +998,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     chosen_viol: list[dict[str, str]] = []
     absorbed: list[dict[str, Any]] = []
     research_text = ""
-    _year_src = clean_text(f"{titles} {summaries} {headline}")
     _pub_dates = chrono.pub_dates(rows)
+    _date_facts = chrono.date_facts(_pub_dates)
+    _year_src = clean_text(f"{_date_facts} {titles} {summaries} {headline}")
     if llm_on:
         from .hook import pick_actor as _pick_actor
         from .script_llm import rewrite_segments
@@ -1019,7 +1040,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             except Exception as exc:  # pragma: no cover - defensive
                 log.info("research skipped (%s)", str(exc)[:80])
         research_text = str(meta.get("research", "") or "")
-        _year_src = clean_text(f"{titles} {summaries} {headline} {research_text}")
+        _year_src = clean_text(f"{_date_facts} {titles} {summaries} {headline} {research_text}")
         rich = _research_rich(research_web)
         if rich:
             template_segments = _with_research_cards(template_segments, research_web)
@@ -1226,7 +1247,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     _title_out = []
     for _ln in (title or []):
         _clean_ln, _g = chrono.strip_years(str(_ln), _year_src)
-        _clean_ln, _ = chrono.fix_month_days(_clean_ln, _year_src, _pub_dates)
+        _clean_ln, _ = chrono.fix_month_days(_clean_ln, _year_src, _pub_dates)      # titles stay short: no forced year
         _title_out.append(_clean_ln)
         _gone.extend(_g)
     title = _title_out
@@ -1259,7 +1280,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         "est_seconds": est_seconds,
         # the research articles are source material too: quality.py's "number not in the article" check
         # flagged "166종 1,431개" (real, from a researched article) as invented and cut 10+ points
-        "source_text": clean_text(f"{titles} {summaries} {research_text}")[:8000],
+        # + the dates the video states (its full date is not an "added number")
+        "source_text": clean_text(f"{_date_facts} {titles} {summaries} {research_text}")[:8000],
         "length_class": lp.cls,
         "length_label": lp.label,
         "target_seconds": lp.target_s,

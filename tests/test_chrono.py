@@ -12,7 +12,7 @@ def test_date_block_states_today_and_what_relative_years_mean():
     b = chrono.date_block(now=NOW)
     assert "오늘은 2026년 9월 22일(화요일)" in b
     assert "올해는 2026년" in b and "지난해)은 2025년" in b and "내년은 2027년" in b
-    assert "절대 추측해서 붙이지 말 것" in b
+    assert "연·월·일을 모두 쓰고" in b and "짐작 금지" in b        # a date is written in full, never guessed
 
 
 def test_date_block_lists_the_articles_publication_dates_in_kst():
@@ -163,11 +163,10 @@ def test_month_day_fix_ignores_quantities_and_non_dates():
     assert chrono.pub_dates([{"published_ts": 0}, {"published_ts": None}, {}]) == []
 
 
-def test_build_script_corrects_a_wrong_month_and_year_end_to_end(tmp_path, monkeypatch):
+def _budget_cluster(tmp_path):
+    """Two articles about one budget vote, published today; -> (cfg, cluster id)."""
     import dataclasses
-    import json
 
-    from political_shorts import llm, quality_agent as QA
     from political_shorts.classify import classify_pending
     from political_shorts.config import load_settings
     from political_shorts.db import connect, init_db, now, upsert_article
@@ -189,7 +188,19 @@ def test_build_script_corrects_a_wrong_month_and_year_end_to_end(tmp_path, monke
                                   "source_weight": w, "title": title, "summary": summary, "published_ts": now(),
                                   "collected_ts": now(), "raw": {}})
     classify_pending(cfg)
-    cid = build_clusters(cfg)[0]
+    return cfg, build_clusters(cfg)[0]
+
+
+def _spoken(script):
+    return " ".join(s.get("narration", "") + " " + s.get("caption", "") for s in script["segments"])
+
+
+def test_build_script_corrects_a_wrong_month_and_year_end_to_end(tmp_path, monkeypatch):
+    import json
+
+    from political_shorts import llm, quality_agent as QA
+
+    cfg, cid = _budget_cluster(tmp_path)
     month = chrono.today().month
     wrong_month = 5 if month != 5 else 4
     monkeypatch.setattr(QA, "review", lambda script, cfg: QA.AgentReport(available=True, score=96, issues=[]))
@@ -198,7 +209,105 @@ def test_build_script_corrects_a_wrong_month_and_year_end_to_end(tmp_path, monke
         "what": f"2024년 {wrong_month}월 3일 국회는 내년도 예산안을 처리했습니다.",
         "outro": "예산안 처리를 둘러싼 공방은 이어집니다. 여러분은 어떻게 보시나요? 댓글로 남겨주세요."}, ensure_ascii=False))
     script = SG.build_script(cid, cfg)
-    spoken = " ".join(s.get("narration", "") + " " + s.get("caption", "") for s in script["segments"])
+    spoken = _spoken(script)
     assert "2023년" not in spoken and "2024년" not in spoken
     assert f"{wrong_month}월 3일" not in spoken                     # the wrong month is gone ...
     assert f"{month}월 3일" in spoken                               # ... replaced by the month the articles were published in
+    assert f"{chrono.today().year}년 {month}월 3일" in spoken       # ... and the date is complete: the year is the real one
+
+
+def test_every_script_states_a_full_date_by_default_and_it_is_not_an_added_number(tmp_path, monkeypatch):
+    """The writer gave no date at all: the video still opens with the real one, and the number check that flags
+    figures missing from the sources does not flag it."""
+    import json
+    import re
+
+    from political_shorts import llm, quality_agent as QA
+
+    cfg, cid = _budget_cluster(tmp_path)
+    monkeypatch.setattr(QA, "review", lambda script, cfg: QA.AgentReport(available=True, score=96, issues=[]))
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: json.dumps({
+        "summary": "국회는 본회의를 열어 예산안을 처리했습니다.",
+        "what": "국민의힘은 합의 처리를, 민주당은 독소조항 삭제를 주장했습니다.",
+        "outro": "예산안 처리를 둘러싼 공방은 이어집니다. 여러분은 어떻게 보시나요? 댓글로 남겨주세요."}, ensure_ascii=False))
+    script = SG.build_script(cid, cfg)
+    t = chrono.today()
+    full = f"{t.year}년 {t.month}월 {t.day}일"
+    narr = " ".join(s.get("narration", "") for s in script["segments"])
+    assert f"{full} 소식입니다" in narr
+    assert full in script["source_text"]
+    for n in re.findall(r"\d[\d,.]*", narr):                        # quality.py's added-number rule, applied here
+        assert len(n) < 2 or n in script["source_text"], n
+
+
+# ------------------------------------------------- year and date are a DEFAULT, and correct (not deleted)
+PUBS = [(2026, 9, 21)]
+
+
+def test_normalize_dates_turns_a_wrong_year_and_month_into_the_right_full_date():
+    """'2023년 5월 21일' for a story of 21 September 2026 is corrected, not merely stripped of its year."""
+    out, changes = chrono.normalize_dates("2023년 5월 21일 강훈식 실장이 사의를 밝혔습니다.", "21일 사의를 밝혔다", PUBS,
+                                          {"first_done": False}, NOW)
+    assert out.startswith("2026년 9월 21일 강훈식")
+    assert changes
+
+
+def test_the_first_date_carries_the_year_and_later_ones_do_not():
+    state = {"first_done": False}
+    first, _ = chrono.normalize_dates("9월 21일 사의를 밝혔습니다.", "", PUBS, state, NOW)
+    later, _ = chrono.normalize_dates("9월 21일 오후 브리핑이 열렸습니다.", "", PUBS, state, NOW)
+    assert first.startswith("2026년 9월 21일")
+    assert later.startswith("9월 21일")                  # the year is stated once, not on every date
+    bare, _ = chrono.normalize_dates("21일 사의를 밝혔습니다.", "", PUBS, {"first_done": False}, NOW)
+    assert bare == "21일 사의를 밝혔습니다."               # a bare day is not a date mention: left alone
+
+
+def test_a_year_january_dates_belong_to_the_year_closest_to_publication():
+    assert chrono.resolve_year(12, 30, [(2027, 1, 2)], NOW) == 2026
+    assert chrono.resolve_year(1, 3, [(2027, 1, 2)], NOW) == 2027
+    assert chrono.resolve_year(9, 21, [], NOW) == 2026          # no publication date: today decides
+
+
+def test_an_older_event_keeps_the_year_the_source_itself_names():
+    src = "2016년 10월 24일 JTBC 보도 이후 국정농단 사건이 불거졌다. 21일 사의를 밝혔다."
+    out, _ = chrono.normalize_dates("2016년 10월 24일 보도가 시작이었습니다.", src, PUBS, {"first_done": False}, NOW)
+    assert out.startswith("2016년 10월 24일")
+
+
+def test_a_year_the_sources_never_mention_is_replaced_by_the_computed_one():
+    src = "10월 24일 표결 예정. 21일 협상."
+    out, _ = chrono.normalize_dates("2025년 10월 24일 표결이 예정돼 있습니다.", src, PUBS, {"first_done": False}, NOW)
+    assert out.startswith("2026년 10월 24일")
+
+
+def test_dateline_and_date_facts_use_the_publication_date():
+    assert chrono.dateline(PUBS, NOW) == "2026년 9월 21일 소식입니다."
+    assert chrono.dateline([], NOW) == "2026년 9월 22일 소식입니다."
+    facts = chrono.date_facts(PUBS, NOW)
+    assert "2026년 9월 21일" in facts and "2026년 9월 22일" in facts
+
+
+def test_a_script_with_no_date_gets_a_dateline_and_one_with_a_date_does_not():
+    segs = [{"role": "hook", "narration": "무슨 일일까요", "caption": "무슨 일?"},
+            {"role": "summary", "narration": "대통령실 비서실장이 사의를 밝혔습니다.", "caption": "비서실장 사의"}]
+    SG._strip_years_in(segs, "21일 사의", PUBS)
+    assert segs[1]["narration"].startswith("2026년 9월 21일 소식입니다. 대통령실")
+    assert segs[1]["caption"].startswith("2026년 9월 21일 소식입니다.")
+    assert segs[0]["narration"] == "무슨 일일까요"                     # the hook stays a hook
+
+    dated = [{"role": "hook", "narration": "무슨 일일까요"},
+             {"role": "summary", "narration": "9월 21일 비서실장이 사의를 밝혔습니다."}]
+    SG._strip_years_in(dated, "21일 사의", PUBS)
+    assert dated[1]["narration"] == "2026년 9월 21일 비서실장이 사의를 밝혔습니다."
+    assert "소식입니다" not in " ".join(s["narration"] for s in dated)
+
+
+def test_the_description_states_the_year(monkeypatch):
+    from pathlib import Path
+
+    from political_shorts import metadata
+
+    monkeypatch.setattr(metadata, "_now_local", lambda cfg: datetime(2026, 9, 22, 10, 0))
+    script = {"headline": "예산안 국회 통과", "title": ["예산안 통과"], "segments": [], "sources": [], "source_text": ""}
+    meta = metadata.build_metadata(script, {"passed": True, "warnings": []}, Path("x.mp4"))
+    assert "2026년 09월 22일 정치 이슈를" in meta["description"]
