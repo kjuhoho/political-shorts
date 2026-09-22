@@ -1,0 +1,53 @@
+name: publish inspected longform
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Successful daily-longform run containing the inspected MP4'
+        required: true
+        type: string
+concurrency:
+  group: daily-longform
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check artifact origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '.path + " " + .conclusion' | grep -Fx '.github/workflows/daily-longform.yml success'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id }}
+          pattern: longform-*
+          merge-multiple: true
+          path: longform_output
+      - run: pip install requests feedparser PyYAML trafilatura google-api-python-client google-auth
+      - name: Publish reviewed package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}
+        run: |
+          mkdir -p secrets
+          printf '%s' "$PS_YT_TOKEN_B64" | base64 -d > secrets/longform_youtube_token.json
+          export LONGFORM_YOUTUBE_TOKEN_FILE="$PWD/secrets/longform_youtube_token.json"
+          python -m longform_system.publish_package longform_output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: longform-upload-receipt-${{ github.run_id }}
+          path: longform_output/*.upload.json
+          if-no-files-found: ignore

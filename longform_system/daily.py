@@ -8,6 +8,7 @@ from .llm import Writer
 from .guards import validate, review, accepted
 from .renderer import render
 from .title_system import build_title_package
+from .ledger import digest_file
 
 SECTIONS = [('0:00–0:20','훅',50), ('0:20–0:50','맥락',80),
             ('0:50–1:45','핵심 1',150), ('1:45–2:40','핵심 2',150),
@@ -39,7 +40,7 @@ def generate(writer, stories, out):
 요약 구간이면 세 가지 요약과 '내일은 후속 발표가 나왔는지 확인하겠습니다'처럼
 확인 계획을 예고하되, 확정되지 않은 사건을 내일 발생한다고 약속하지 마라.
 자료:\n{source}'''
-        text = writer.ask(prompt, 2200)
+        text = writer.ask(prompt, 3200)
         text = re.sub(r'^#+.*\n?', '', text, flags=re.M).strip().strip('`')
         drafts.append(text)
         out.with_suffix('.draft.md').write_text('\n\n'.join(drafts), encoding='utf-8')
@@ -97,7 +98,8 @@ def main():
         raise RuntimeError(f"Duration outside 4–6 minutes: {manifest['duration_s']}")
     meta = dict(title=package.title, description=f'기준일: {day} (한국시간)\n'+package.description,
                 tags=package.tags, privacy_status='public', category_id='25', date=day,
-                sources=stories, render=manifest, quality=reports,
+                sources=stories, render=manifest, quality=reports, title_review=title_review,
+                video_sha256=digest_file(video),
                 usage={'calls':writer.calls,'tokens':writer.tokens})
     save(video.with_suffix('.meta.json'), meta)
     if args.publish:

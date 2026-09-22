@@ -98,5 +98,5 @@ def select(articles):
 
 
 def evidence(story):
-    return '\n\n'.join(f"출처 {s['name']} | 발행 {s['published']} | {s['url']}\n{s['title']}\n{s['body'][:2400]}"
+    return '\n\n'.join(f"출처 {s['name']} | 발행 {s['published']} | {s['url']}\n{s['title']}\n{s['body'][:2000]}"
                        for s in story['sources'])
