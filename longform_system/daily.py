@@ -96,8 +96,14 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라.
     key = os.environ.get("LONGFORM_GROQ_API_KEY", "")
     if not key:
         raise RuntimeError("LONGFORM_GROQ_API_KEY secret is not available")
-    raw = Groq(api_key=key).chat.completions.create(
-        model="llama-3.3-70b-versatile", temperature=0.15,
+    client = Groq(api_key=key)
+    available = {model.id for model in client.models.list().data}
+    preferred = ("openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.1-8b-instant")
+    model = next((candidate for candidate in preferred if candidate in available), "")
+    if not model:
+        raise RuntimeError("Groq 계정에서 사용 가능한 롱폼 대본 모델을 찾지 못했습니다")
+    raw = client.chat.completions.create(
+        model=model, temperature=0.15,
         messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"},
     ).choices[0].message.content
     data = json.loads(raw)
