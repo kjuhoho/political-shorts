@@ -27,6 +27,8 @@ def main():
         raise RuntimeError('Video integrity mismatch')
     if not accepted(meta.get('title_review', {})):
         raise RuntimeError('Title review unavailable')
+    if meta.get('media_check',{}).get('passed') is not True:
+        raise RuntimeError('Encoded media check unavailable')
     result = upload(video, meta)
     print(json.dumps(result, ensure_ascii=False), flush=True)
 

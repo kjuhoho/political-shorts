@@ -82,7 +82,12 @@ def select(articles):
     stop = {'대통령', '정부', '국회', '오늘', '관련', '대한', '위해', '정치'}
     def tokens(row):
         return set(re.findall(r'[가-힣A-Za-z]{2,}', row['title'])) - stop
-    for lead in articles:
+    def importance(row):
+        coverage = len({a['name'] for a in articles if len(tokens(row) & tokens(a)) >= 2})
+        age = max(0, (now()-datetime.fromisoformat(row['published'])).total_seconds()/3600)
+        public_interest = sum(term in row['title'] for term in ('예산','법안','본회의','금리','물가','선거','국정','안보','외교','회담','정책'))
+        return coverage*5 + public_interest*2 + float(row['weight'])*3 - age/6
+    for lead in sorted(articles, key=importance, reverse=True):
         terms = tokens(lead)
         if lead['url'] in used or any(len(terms & tokens(s['sources'][0])) >= 2 for s in selected):
             continue
@@ -90,7 +95,7 @@ def select(articles):
                          key=lambda a: len(terms & tokens(a)), reverse=True)
         related = [a for a in related if len(terms & tokens(a)) >= 2][:1]
         sources = [lead, *related]
-        selected.append({'headline': lead['title'], 'sources': sources})
+        selected.append({'headline': lead['title'], 'sources': sources, 'selection_score': round(importance(lead),2)})
         used.update(a['url'] for a in sources)
         if len(selected) == 3:
             return selected

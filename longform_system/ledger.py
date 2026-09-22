@@ -10,6 +10,11 @@ def episode_key(day):
     return f'longform-{day}'
 
 
+def content_key(sources):
+    urls = sorted(story['sources'][0]['url'] for story in sources)
+    return 'content-' + hashlib.sha256('\n'.join(urls).encode()).hexdigest()[:24]
+
+
 class Ledger:
     def __init__(self):
         self.repo = os.environ['GITHUB_REPOSITORY']

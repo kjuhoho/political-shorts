@@ -9,6 +9,7 @@ from .guards import validate, review, accepted
 from .renderer import render
 from .title_system import build_title_package
 from .ledger import digest_file
+from .media_check import check as check_media
 
 SECTIONS = [('0:00–0:20','훅',50), ('0:20–0:50','맥락',80),
             ('0:50–1:45','핵심 1',150), ('1:45–2:40','핵심 2',150),
@@ -94,12 +95,14 @@ def main():
         raise RuntimeError('Title failed review')
     video = args.output_dir/f'{day}.mp4'
     manifest = render(script_path, video, ROOT/'assets/fonts/DoHyeon-Regular.ttf', 'ko-KR-SunHiNeural')
+    media_report = check_media(video)
+    save(video.with_suffix('.media.json'), media_report)
     if not 240 <= manifest['duration_s'] <= 360:
         raise RuntimeError(f"Duration outside 4–6 minutes: {manifest['duration_s']}")
     meta = dict(title=package.title, description=f'기준일: {day} (한국시간)\n'+package.description,
                 tags=package.tags, privacy_status='public', category_id='25', date=day,
                 sources=stories, render=manifest, quality=reports, title_review=title_review,
-                video_sha256=digest_file(video),
+                video_sha256=digest_file(video), media_check=media_report,
                 usage={'calls':writer.calls,'tokens':writer.tokens})
     save(video.with_suffix('.meta.json'), meta)
     if args.publish:

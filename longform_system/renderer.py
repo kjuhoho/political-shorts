@@ -110,6 +110,9 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
     manifest_scenes = []
     raw = script_path.read_text(encoding='utf-8')
     sources = re.findall(r'\[화면 출처 텍스트: (.*?)\]', raw)
+    seen_labels = set()
+    qa = output.parent / 'qa'
+    qa.mkdir(exist_ok=True)
     for i, (label, text) in enumerate(scenes):
         png, mp3, clip = work / f"{i:02d}.png", work / f"{i:02d}.mp3", work / f"{i:02d}.mp4"
         match = re.search(r'핵심\s*(\d)', label)
@@ -118,6 +121,9 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
             source = sources[int(match.group(1))-1]
             source = '출처: ' + ' | '.join(source.split(' | ')[:2]) + ' · 원문은 설명란'
         card(label, text, png, i, font_path, source)
+        if label not in seen_labels:
+            Image.open(png).save(qa / f'{i:02d}.png')
+            seen_labels.add(label)
         asyncio.run(make_audio(text, mp3, voice))
         seconds = duration(mp3)
         frames = max(1, round(seconds * FPS))

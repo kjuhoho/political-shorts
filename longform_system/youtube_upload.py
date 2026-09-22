@@ -20,13 +20,19 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
     if not creds.valid:
         raise RuntimeError("YouTube token is invalid or expired")
     youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
-    from .ledger import Ledger, episode_key, digest_file
+    from .ledger import Ledger, episode_key, content_key, digest_file
     from .guards import accepted
     if not meta.get('quality') or not all(accepted(r) for r in meta['quality']):
         raise RuntimeError('Missing or failed 95-point reports')
+    if not accepted(meta.get('title_review', {})) or meta.get('media_check', {}).get('passed') is not True:
+        raise RuntimeError('Title or encoded-media review failed')
     ledger = Ledger()
     key = episode_key(meta['date'])
+    topic_key = content_key(meta['sources'])
+    if ledger.get(topic_key):
+        raise RuntimeError('This set of source stories was already reserved/uploaded')
     row, sha = ledger.reserve(key, digest_file(video))
+    topic_row, topic_sha = ledger.reserve(topic_key, digest_file(video))
     request = youtube.videos().insert(
         part="snippet,status",
         body={"snippet": {"title": meta["title"][:100], "description": meta["description"][:4900],
@@ -44,4 +50,5 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
     video.with_suffix('.upload.json').write_text(json.dumps(result), encoding='utf-8')
     print(json.dumps(result), flush=True)
     ledger.put(key, {**row, **result}, sha)
+    ledger.put(topic_key, {**topic_row, **result}, topic_sha)
     return result
