@@ -11,11 +11,16 @@ writer and reviewer. Related coverage is retrieved where matching headlines exis
 missing responses must be disclosed, never invented. This is not a guarantee of
 exhaustive research. Saved source bodies permit editorial inspection.
 
-Publication requires 750–850 spoken words, ordered sections and source labels,
+Publication requires 460–560 spoken Korean eojeol, ordered sections and source labels,
 three extraction hooks, no blocked topic or harmful wording, semantic reviews
 at least 95/100 with every factual/date/balance/safety flag true, title review,
 and a decoded 1920x1080 MP4 lasting 240–360 seconds with audible, synced audio.
 Semantic grades are model judgments, not independent proof of truth.
+The earlier 750–850 eojeol request conflicts with five-minute narration:
+741 eojeol measured 452.88 seconds at the configured natural speaking rate.
+Five-minute delivery takes priority; measured audio remains the final gate.
+Review findings require literal quotes from both script and evidence before
+they can trigger repairs. This checks traceability, not truth of the judgment.
 
 The upload first reserves a date and source fingerprint through GitHub's atomic
 file-create API. Any existing reservation blocks a new upload, including when

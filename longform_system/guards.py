@@ -19,9 +19,35 @@ RUBRIC = '''100점에서 감점. 주제 일치, 쉬운 배경 설명, 완결된 
 특히 '유엔사'를 '유엔 사무국'으로 바꾸면 기관 오류다. 한국군 작전을 '한미 연합군 작전'으로
 바꾸면 주체 오류다. 예정된 연설을 완료된 연설로 바꾸면 날짜/시제 오류다.
 원문에 있는 불확실한 추정을 확정적 사건으로 바꾸면 사실 오류다. 보도일을 사건일로 쓰지 마라.
-각 오류에는 대본의 문제 문장과 해당 원문 근거를 적어라.
+평가는 원문 대비 충실성이다. 외부 진실 여부는 이 호출에서 확인할 수 없다.
+현직 인물이 학습 기억과 다르다는 이유로 원문을 부정하지 마라.
+문제가 있으면 findings에 script_quote(대본의 정확한 연속 인용),
+source_quote(관련 원문의 정확한 연속 인용), reason(차이)을 반드시 기록하라.
+인용은 복사하고 의역하지 마라. 오류가 없으면 findings는 빈 배열이다.
+날짜는 발행 시각보다 본문의 '(21일)', '(22일)' 등 명시적 사건일을 우선한다.
 반환: {"score":정수,"facts_ok":불리언,"dates_ok":불리언,"balance_ok":불리언,
-"safety_ok":불리언,"issues":["문장과 구체적 사유"]}'''
+"safety_ok":불리언,"issues":["문장과 구체적 사유"],
+"findings":[{"script_quote":"정확한 대본 인용","source_quote":"정확한 원문 인용","reason":"차이"}]}'''
+
+
+def grounded(report, text, sources):
+    """Unanchored criticism must never be used to rewrite a factual draft."""
+    findings = report.get('findings')
+    if not isinstance(findings, list):
+        return False
+    if not accepted(report) and not findings:
+        return False
+    normalize = lambda value: ' '.join(value.split())
+    for item in findings:
+        if not isinstance(item, dict):
+            return False
+        for key, original in (('script_quote', text), ('source_quote', sources)):
+            quote = item.get(key)
+            if not isinstance(quote, str) or len(quote.strip()) < 4 or normalize(quote) not in normalize(original):
+                return False
+        if not isinstance(item.get('reason'), str) or not item['reason'].strip():
+            return False
+    return True
 
 
 def accepted(report):
@@ -31,8 +57,14 @@ def accepted(report):
 
 
 def review(writer, text, sources):
-    return writer.json(f'기준일: {now():%Y년 %m월 %d일} (한국시간)\n{RUBRIC}\n'
-                       f'검증 자료:\n{sources}\n검수 대상:\n{text}', 950)
+    prompt = (f'기준일: {now():%Y년 %m월 %d일} (한국시간)\n{RUBRIC}\n'
+              f'검증 자료:\n{sources}\n검수 대상:\n{text}')
+    for attempt in range(2):
+        report = writer.json(prompt, 2000)
+        if grounded(report, text, sources):
+            return report
+        prompt += '\n이전 응답은 원문/대본에 실제 존재하는 인용 근거가 없어 무효였다. 정확한 인용을 포함해 새로 검수하라.'
+    raise RuntimeError('Reviewer did not ground its findings; refusing unsupported repair or publication')
 
 
 def validate(script, stories):
@@ -50,8 +82,8 @@ def validate(script, stories):
             raise RuntimeError('Missing source disclosure')
     body = re.sub(r'^##.*$|^\[화면 출처.*$', '', script, flags=re.M).replace('[SHORTS_HOOK]', '')
     words = len(body.split())
-    if not 750 <= words <= 850:
-        raise RuntimeError(f'Script has {words} words, needs 750–850')
+    if not 460 <= words <= 560:
+        raise RuntimeError(f'Script has {words} words, needs 460–560 for natural 5-minute narration')
     source_text = ' '.join(s['body'] for story in stories for s in story['sources']) + now().strftime('%Y년 %m월 %d일')
     for year in re.findall(r'\b(20\d{2})년', body):
         if year not in source_text:

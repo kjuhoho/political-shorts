@@ -2,13 +2,28 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-from longform_system.guards import accepted
+from longform_system.guards import accepted, grounded, review
 from longform_system.ledger import Ledger
 from longform_system.renderer import clean_script
 from longform_system.research import blocked
 
 
 class PublicationGuards(unittest.TestCase):
+    def test_unsupported_review_never_triggers_repair(self):
+        report = dict(score=30, facts_ok=False, dates_ok=True, balance_ok=True,
+                      safety_ok=True, issues=['pretrained claim'], findings=[])
+        writer = Mock()
+        writer.json.return_value = report
+        with self.assertRaises(RuntimeError):
+            review(writer, '이재명 대통령은 제안했습니다.', '이재명 대통령은 제안했습니다.')
+        self.assertEqual(writer.json.call_count, 2)
+
+    def test_review_quotes_must_exist_in_both_inputs(self):
+        report = dict(score=30, facts_ok=False, findings=[dict(
+            script_quote='유엔 사무국', source_quote='유엔사와 협의', reason='기관이 변경됨')])
+        self.assertTrue(grounded(report, '유엔 사무국과 조사', '유엔사와 협의 중입니다.'))
+        self.assertFalse(grounded(report, '유엔군사령부와 조사', '유엔사와 협의 중입니다.'))
+
     def test_missing_or_unsafe_review_never_passes(self):
         report = dict(score=100, facts_ok=True, dates_ok=True, balance_ok=True, safety_ok=True, issues=[])
         self.assertTrue(accepted(report))

@@ -11,10 +11,10 @@ from .title_system import build_title_package
 from .ledger import digest_file
 from .media_check import check as check_media
 
-SECTIONS = [('0:00–0:20','훅',50), ('0:20–0:50','맥락',80),
-            ('0:50–1:45','핵심 1',150), ('1:45–2:40','핵심 2',150),
-            ('2:40–3:30','핵심 3',140), ('3:30–4:20','시사점',120),
-            ('4:20–5:00','요약 + 예고',110)]
+SECTIONS = [('0:00–0:20','훅',34), ('0:20–0:50','맥락',51),
+            ('0:50–1:45','핵심 1',93), ('1:45–2:40','핵심 2',93),
+            ('2:40–3:30','핵심 3',85), ('3:30–4:20','시사점',85),
+            ('4:20–5:00','요약 + 예고',69)]
 
 
 def save(path, value):
@@ -37,6 +37,8 @@ def generate(writer, stories, out, existing=None):
             for j,s in enumerate(stories))
         prompt = f'''오늘의엔터 정치 브리핑. 기준일 {date}, 한국시간. 자료에 나온 사건 발생일과
 기사 발행일을 구분하고, 이전 날짜의 일을 오늘 발생한 것처럼 말하지 마라.
+본문에 '오늘(22일)'이라고 있으면 사건일은 22일이다. RSS 발행일 23일로 대체 금지.
+발생일이 불명확하면 '해당 보도에 따르면'이라고 표현하고 날짜를 추측하지 마라.
 전체 구조: 훅→맥락→이슈 세 가지→시사점→요약과 예고.
 지금은 '{label}' 본문만 공백 기준 {budget}어절(±5어절)로 작성.
 40~60대가 이해할 수 있는 완결된 존댓말 한국어 문장(~합니다/~했습니다).
@@ -60,19 +62,19 @@ def generate(writer, stories, out, existing=None):
     # retain original evidence and re-review the final assembled narration.
     for attempt in range(3):
         total = sum(len(d.split()) for d in drafts)
-        if 750 <= total <= 850:
+        if 460 <= total <= 560:
             break
         deltas = [len(d.split())-SECTIONS[i][2] for i,d in enumerate(drafts)]
-        i = (max if total > 850 else min)(range(7), key=lambda n: deltas[n])
-        target = max(35, len(drafts[i].split()) + 800-total)
+        i = (max if total > 560 else min)(range(7), key=lambda n: deltas[n])
+        target = max(25, len(drafts[i].split()) + 510-total)
         source = evidence(stories[i-2]) if 2 <= i <= 4 else '\n'.join(evidence(s)[:1600] for s in stories)
         revised = writer.ask(f'''기준일 {date}. 아래 '{SECTIONS[i][1]}' 대본의 분량만 조절하라.
-현재 전체 {total}어절. 이 구간을 공백 기준 약 {target}어절로 {'줄여라' if total > 850 else '풀어 설명하라'}.
+현재 전체 {total}어절. 이 구간을 공백 기준 약 {target}어절로 {'줄여라' if total > 560 else '풀어 설명하라'}.
 원문에 없는 사실/날짜/수치/전망을 추가하지 마라. 상대 입장과 주장 귀속 보존. 중복 반복 금지.
 완결된 한국어 내레이션만 반환. 훅의 기준일은 보존.
 근거:\n{source}\n기존 대본:\n{drafts[i]}''', 3200)
         candidate_total = total-len(drafts[i].split())+len(revised.split())
-        if abs(candidate_total-800) < abs(total-800):
+        if abs(candidate_total-510) < abs(total-510):
             drafts[i] = revised
     def assemble():
         parts = []
