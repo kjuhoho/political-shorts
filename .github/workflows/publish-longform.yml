@@ -36,6 +36,7 @@ jobs:
           merge-multiple: true
           path: longform_output
       - run: pip install requests feedparser PyYAML trafilatura google-api-python-client google-auth
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Publish reviewed package
         env:
           GH_TOKEN: ${{ github.token }}

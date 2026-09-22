@@ -6,6 +6,7 @@ from .guards import accepted, validate
 from .research import now
 from .ledger import digest_file
 from .youtube_upload import upload
+from .media_check import check as check_media
 
 
 def main():
@@ -27,8 +28,9 @@ def main():
         raise RuntimeError('Video integrity mismatch')
     if not accepted(meta.get('title_review', {})):
         raise RuntimeError('Title review unavailable')
-    if meta.get('media_check',{}).get('passed') is not True:
-        raise RuntimeError('Encoded media check unavailable')
+    # Recheck the downloaded MP4 immediately before insertion, including
+    # artifacts built before media-check manifests were added.
+    meta['media_check'] = check_media(video)
     result = upload(video, meta)
     print(json.dumps(result, ensure_ascii=False), flush=True)
 

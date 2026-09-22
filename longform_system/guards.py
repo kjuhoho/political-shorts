@@ -42,6 +42,7 @@ def validate(script, stories):
     for year in re.findall(r'\b(20\d{2})년', body):
         if year not in source_text:
             raise RuntimeError(f'Unsupported year: {year}')
-    if now().strftime('%Y년 %m월 %d일') not in body:
+    today = now()
+    if not re.search(fr'{today.year}년\s*0?{today.month}월\s*0?{today.day}일', body):
         raise RuntimeError('Missing explicit briefing date')
     return words
