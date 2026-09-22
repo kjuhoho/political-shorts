@@ -17,23 +17,138 @@ def test_the_workflow_picks_gemini_whenever_its_key_exists():
 
 def test_fallback_and_web_search_try_gemini_before_groq():
     assert llm._FALLBACK_ORDER.index("gemini") < llm._FALLBACK_ORDER.index("groq")
+    assert llm._tiers()[0][0] == "gemini"
     assert llm._WEB_SEARCH_ORDER == ["gemini", "groq"]
 
 
-def test_a_gemini_failure_falls_back_to_groq(monkeypatch):
+def test_the_tiers_are_gemini_flash_then_groq_120b_then_gemini_lite(monkeypatch):
+    """User, 2026-09-22: Gemini first; when the Flash models are spent, Groq's 120b before the weaker Flash-Lite."""
     calls = []
 
-    def fake(provider, prompt, cfg, max_tokens, system):
-        calls.append(provider)
-        if provider == "gemini":
-            raise RuntimeError("gemini call failed (429)")
-        return "ok"
+    def fake_gemini(prompt, cfg, max_tokens, system, models=None):
+        calls.append(("gemini", tuple(models)))
+        if any("lite" not in m for m in models):
+            raise RuntimeError("gemini call failed (429 per day)")
+        return "lite answer"
 
-    monkeypatch.setattr(llm, "_call", fake)
+    def fake_groq(prompt, cfg, max_tokens, system, models=None):
+        calls.append(("groq", tuple(models)))
+        raise RuntimeError("groq call failed (413 request too large)")
+
+    monkeypatch.setattr(llm, "_gemini", fake_gemini)
+    monkeypatch.setattr(llm, "_groq", fake_groq)
+    monkeypatch.setattr(llm, "_COOLDOWN", {})
     monkeypatch.setenv("GROQ_API_KEY", "q")
-    cfg = dataclasses.replace(settings, llm_provider="gemini", gemini_api_key="g")
+    cfg = dataclasses.replace(settings, llm_provider="gemini", llm_model="", gemini_api_key="g")
+    assert llm.complete("x", cfg) == "lite answer"
+    assert calls == [("gemini", tuple(llm._GEMINI_FLASH)), ("groq", ("openai/gpt-oss-120b",)),
+                     ("gemini", tuple(llm._GEMINI_LITE))]
+
+
+def test_the_shorts_never_use_the_groq_models_the_longform_uses():
+    """The Groq free quota is per organisation and per model; the longform uses 20b / llama / qwen."""
+    assert llm._GROQ_MODELS == ["openai/gpt-oss-120b"]
+    assert [ms for prov, ms in llm._tiers() if prov == "groq"] == [["openai/gpt-oss-120b"]]
+
+
+def test_a_tier_whose_models_are_all_cooling_down_costs_no_request(monkeypatch):
+    import time
+
+    sent = []
+    monkeypatch.setattr(llm, "_gemini", lambda p, c, m, s, models=None: sent.append(("gemini", tuple(models))) or "ok")
+    monkeypatch.setattr(llm, "_groq", lambda p, c, m, s, models=None: sent.append(("groq", tuple(models))) or "ok")
+    monkeypatch.setattr(llm, "_COOLDOWN", {f"gemini:{m}": time.time() + 999 for m in llm._GEMINI_FLASH})
+    monkeypatch.setenv("GROQ_API_KEY", "q")
+    cfg = dataclasses.replace(settings, llm_provider="gemini", llm_model="", gemini_api_key="g")
     assert llm.complete("x", cfg) == "ok"
-    assert calls == ["gemini", "groq"]
+    assert sent == [("groq", ("openai/gpt-oss-120b",))]
+
+
+class _Resp:
+    def __init__(self, status, payload, text=""):
+        self.status_code, self._payload, self.text = status, payload, text
+
+    def json(self):
+        return self._payload
+
+
+def _gemini_env(monkeypatch, responder):
+    posted = []
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        model = url.split("/models/")[1].split(":")[0]
+        posted.append((model, json))
+        return responder(model, json, len(posted))
+
+    monkeypatch.setattr(llm, "requests", type("m", (), {"post": staticmethod(fake_post)}))
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "_COOLDOWN", {})
+    return posted, dataclasses.replace(settings, llm_provider="gemini", llm_model="", gemini_api_key="g")
+
+
+_OK = {"candidates": [{"content": {"parts": [{"text": '{"ok":1}'}]}, "finishReason": "STOP"}]}
+_DAY = ('{"error": {"status": "RESOURCE_EXHAUSTED", "details": [{"violations": [{"quotaId": '
+        '"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}, {"retryDelay": "20s"}]}}')
+
+
+def test_incident_thinking_ate_the_answer_so_thinking_is_low_with_headroom(monkeypatch):
+    """Probe 2026-09-22: gemini-3.5-flash spent 673 of 700 tokens thinking and returned broken JSON."""
+    posted, cfg = _gemini_env(monkeypatch, lambda m, j, n: _Resp(200, _OK))
+    assert llm._gemini("x", cfg, 700, "", models=["gemini-3.5-flash"]) == '{"ok":1}'
+    gen = posted[0][1]["generationConfig"]
+    assert gen["thinkingConfig"] == {"thinkingLevel": "low"}
+    assert gen["maxOutputTokens"] == 700 + llm._THINKING_HEADROOM
+
+
+def test_a_spent_daily_quota_is_not_retried_and_not_asked_again_this_run(monkeypatch):
+    def responder(model, j, n):
+        if model == "gemini-3.6-flash":
+            return _Resp(429, {"error": {"status": "RESOURCE_EXHAUSTED", "message": "You exceeded your current quota"}},
+                         text=_DAY)
+        return _Resp(200, _OK)
+
+    posted, cfg = _gemini_env(monkeypatch, responder)
+    assert llm._gemini("x", cfg, 300, "", models=list(llm._GEMINI_FLASH)) == '{"ok":1}'
+    assert [m for m, _ in posted] == ["gemini-3.6-flash", "gemini-3.5-flash"]      # one request, no retry
+    posted.clear()
+    assert llm._gemini("x", cfg, 300, "", models=list(llm._GEMINI_FLASH)) == '{"ok":1}'
+    assert [m for m, _ in posted] == ["gemini-3.5-flash"]                          # the spent model is left alone
+
+
+def test_an_overloaded_model_gets_one_retry_then_a_rest(monkeypatch):
+    def responder(model, j, n):
+        if model == "gemini-3.6-flash":
+            return _Resp(503, {"error": {"status": "UNAVAILABLE", "message": "high demand"}})
+        return _Resp(200, _OK)
+
+    posted, cfg = _gemini_env(monkeypatch, responder)
+    llm._gemini("x", cfg, 300, "", models=list(llm._GEMINI_FLASH))
+    assert [m for m, _ in posted] == ["gemini-3.6-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+    posted.clear()
+    llm._gemini("x", cfg, 300, "", models=list(llm._GEMINI_FLASH))
+    assert [m for m, _ in posted] == ["gemini-3.5-flash"]
+
+
+def test_a_model_that_rejects_the_thinking_setting_is_asked_again_without_it(monkeypatch):
+    def responder(model, j, n):
+        if "thinkingConfig" in j["generationConfig"]:
+            return _Resp(400, {"error": {"status": "INVALID_ARGUMENT", "message": "Unknown name thinkingConfig"}})
+        return _Resp(200, _OK)
+
+    monkeypatch.setattr(llm, "_NO_THINKING_CFG", set())
+    posted, cfg = _gemini_env(monkeypatch, responder)
+    assert llm._gemini("x", cfg, 300, "", models=["gemini-3.5-flash"]) == '{"ok":1}'
+    assert len(posted) == 2 and "thinkingConfig" not in posted[1][1]["generationConfig"]
+
+
+def test_every_request_is_counted_for_the_run_summary(monkeypatch):
+    import collections
+
+    monkeypatch.setattr(llm, "USAGE", collections.Counter())
+    posted, cfg = _gemini_env(monkeypatch, lambda m, j, n: _Resp(200, _OK))
+    llm._gemini("x", cfg, 300, "", models=["gemini-3.5-flash"])
+    assert llm.USAGE["gemini:gemini-3.5-flash:200"] == 1
+    assert "gemini:gemini-3.5-flash:200=1" in llm.usage_summary()
 
 
 def test_web_search_asks_gemini_first_and_groq_only_when_gemini_has_nothing(monkeypatch):

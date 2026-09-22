@@ -5,6 +5,7 @@ heuristic output, never to be the sole author of a claim.
 """
 from __future__ import annotations
 
+import collections
 import dataclasses
 import os
 import re
@@ -47,6 +48,7 @@ def _web_search_groq(prompt: str, cfg: Settings, max_tokens: int, accept, errs: 
                                   json={"model": model, "max_tokens": max_tokens, "temperature": 0.2,
                                         "messages": [{"role": "user", "content": prompt}]},
                                   timeout=(10, 120))
+                USAGE[f"groq-search:{model}:{r.status_code}"] += 1
                 if r.status_code == 200:
                     txt = (r.json()["choices"][0]["message"]["content"] or "").strip()
                     if txt and (accept is None or accept(txt)):
@@ -64,19 +66,26 @@ def _web_search_gemini(prompt: str, cfg: Settings, max_tokens: int, accept, errs
     """Gemini with the Google Search tool; '' when unavailable."""
     mkey = (getattr(cfg, "gemini_api_key", "") or "").strip()
     if mkey:
-        for model in ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"):
+        for model in _GEMINI_FLASH:
+            if _cooling(f"gemini:{model}"):
+                errs.append(f"{model} -> cooling down")
+                continue
             try:
                 r = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                     params={"key": mkey},
                     json={"contents": [{"parts": [{"text": prompt}]}],
                           "tools": [{"google_search": {}}],
-                          "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}},
+                          "generationConfig": _gemini_generation(model, max_tokens, temperature=0.2)},
                     timeout=(10, 120))
+                USAGE[f"gemini-search:{model}:{r.status_code}"] += 1
+                if r.status_code != 200 and _gemini_rejected(model, r.status_code, getattr(r, "text", "") or "", ""):
+                    errs.append(f"{model} -> {r.status_code}")
+                    continue
                 if r.status_code == 200:
                     cand = (r.json().get("candidates") or [{}])[0]
                     parts = (cand.get("content") or {}).get("parts") or []
-                    txt = "".join(p.get("text", "") for p in parts).strip()
+                    txt = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
                     if txt and (accept is None or accept(txt)):
                         log.info("web_search: answered by %s (%d chars)", model, len(txt))
                         return txt
@@ -115,6 +124,8 @@ _FALLBACK_ORDER = ["gemini", "groq", "openai", "anthropic"]
 
 def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = "") -> str:
     provider = cfg.llm_provider
+    if provider == "gemini" and not cfg.llm_model:
+        return _tiered(prompt, cfg, max_tokens, system)
     try:
         return _call(provider, prompt, cfg, max_tokens, system)
     except Exception as exc:
@@ -135,11 +146,50 @@ def complete(prompt: str, cfg: Settings, max_tokens: int = 400, system: str = ""
     raise first
 
 
-# Groq — FREE, no credit card, and far steadier than the Gemini free tier.
-# OpenAI-compatible endpoint. Models tried in order when LLM_MODEL is unset.
-_GROQ_MODELS = [
-    "openai/gpt-oss-120b", "openai/gpt-oss-20b",
-]
+# Groq — FREE, OpenAI-compatible endpoint. Only the 120b model (user, 2026-09-22): the Groq free quota is per
+# organisation AND per model, the longform workflow uses the same organisation with other models (20b, llama,
+# qwen), so the shorts stay off those to leave the longform's quota alone.
+_GROQ_MODELS = ["openai/gpt-oss-120b"]
+
+
+# ------------------------------------------------------------------------------------------------ tiers
+# User rule (2026-09-22): Gemini first, and no wasted quota. The free Gemini Flash models allow only ~20 requests
+# a day each, so: every Flash model first, then Groq's 120b, and the Flash-Lite models only when both are spent.
+def _tiers() -> list[tuple[str, list[str]]]:
+    return [("gemini", list(_GEMINI_FLASH)), ("groq", list(_GROQ_MODELS)), ("gemini", list(_GEMINI_LITE))]
+
+
+def _tiered(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
+    errors: list[str] = []
+    for provider, models in _tiers():
+        if not _has_key(provider, cfg):
+            continue
+        live = [m for m in models if not _cooling(f"{provider}:{m}")]
+        if not live:                           # every model of this tier is spent for this run: no request at all
+            errors.append(f"{provider}:{'/'.join(models)} cooling down")
+            continue
+        try:
+            fn = _gemini if provider == "gemini" else _groq
+            return fn(prompt, cfg, max_tokens, system, models=live)
+        except Exception as exc:
+            errors.append(str(exc)[:160])
+            log.info("llm: tier %s:%s failed (%s) — next tier", provider, live[0], str(exc)[:120])
+    for alt in ("openai", "anthropic"):         # paid providers, only when a key exists
+        if _has_key(alt, cfg):
+            try:
+                return _call(alt, prompt, dataclasses.replace(cfg, llm_model=""), max_tokens, system)
+            except Exception as exc:
+                errors.append(str(exc)[:160])
+    raise RuntimeError("every LLM tier failed: " + " | ".join(errors))
+
+
+# ----------------------------------------------------------------------------------------------- usage
+# requests actually sent this run, per provider:model and outcome — logged at the end of a run so waste is visible
+USAGE: collections.Counter = collections.Counter()
+
+
+def usage_summary() -> str:
+    return ", ".join(f"{k}={v}" for k, v in sorted(USAGE.items())) or "none"
 
 
 # model/provider -> unix time until which it is skipped (set when a 429 says the wait is long)
@@ -162,11 +212,11 @@ def _retry_after(message: str) -> float:
     return total
 
 
-def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
+def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str, models: list[str] | None = None) -> str:
     key = (getattr(cfg, "groq_api_key", "") or os.environ.get("GROQ_API_KEY", "")).strip()
     if not key:
         raise RuntimeError("GROQ_API_KEY not set")
-    models = [cfg.llm_model] if cfg.llm_model else list(_GROQ_MODELS)
+    models = models or ([cfg.llm_model] if cfg.llm_model else list(_GROQ_MODELS))
     last = ""
     for model in models:
         if _cooling(f"groq:{model}"):     # daily/long limit already hit — don't burn retries on it
@@ -190,6 +240,7 @@ def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
                               headers={"Authorization": f"Bearer {key}"},
                               json=body, timeout=(10, 75))
             status = r.status_code
+            USAGE[f"groq:{model}:{status}"] += 1
             if status == 200:
                 if model != models[0]:
                     log.info("groq: using model %s", model)
@@ -217,70 +268,117 @@ def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
     raise RuntimeError(f"groq call failed ({last})")
 
 
-# tried in order when LLM_MODEL is unset. Probed with the channel's key on 2026-09-22 (gemini-models workflow):
-# the 2.0/2.5 models answer 404 ("no longer available to new users"), gemini-flash-latest had run out of quota,
-# and every call fell through to the weakest model, flash-lite. So: the current full Flash models first (each
-# has its own free quota), the alias after them, the lite models only as a last resort.
-_GEMINI_MODELS = [
-    "gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest",
-    "gemini-3.5-flash-lite", "gemini-flash-lite-latest",
-]
+# Probed with the channel's key on 2026-09-22 (gemini-models workflow): the 2.0/2.5 models answer 404 ("no longer
+# available to new users"); the free tier allows ~20 requests a day per Flash model
+# (GenerateRequestsPerDayPerProjectPerModel-FreeTier). The full Flash models write better; Flash-Lite is the last
+# resort (see _tiers).
+_GEMINI_FLASH = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"]
+_GEMINI_LITE = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest"]
+_GEMINI_MODELS = _GEMINI_FLASH + _GEMINI_LITE
+
+# Gemini 3 models "think" before answering, and the thinking tokens count against maxOutputTokens: with the
+# default level, gemini-3.5-flash spent 673 of a 700-token budget thinking and returned 11 tokens of broken JSON
+# (probe, 2026-09-22) — every story analysis and every AI review failed that way and was retried 3x for nothing.
+# So thinking is kept low, and the budget gets headroom for it.
+_GEMINI_THINKING = "low"
+_THINKING_HEADROOM = 1024
+_NO_THINKING_CFG: set[str] = set()       # models that rejected thinkingConfig (400) — sent without it afterwards
 
 
-def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
-    """Google Gemini via the REST API — free tier, no SDK (just requests).
-    Walks a model list on 404; retries once on a transient 429/5xx/UNAVAILABLE."""
+def _gemini_thinks(model: str) -> bool:
+    return model not in _NO_THINKING_CFG and (model.startswith("gemini-3") or model.endswith("-latest"))
+
+
+def _gemini_generation(model: str, max_tokens: int, **extra) -> dict:
+    gen = {"maxOutputTokens": max_tokens, **extra}
+    if _gemini_thinks(model):
+        gen["maxOutputTokens"] = max_tokens + _THINKING_HEADROOM
+        gen["thinkingConfig"] = {"thinkingLevel": _GEMINI_THINKING}
+    return gen
+
+
+def _seconds_to_quota_reset(now: float | None = None) -> float:
+    """Gemini's per-day quotas reset at midnight Pacific time (07:00/08:00 UTC); 07:00 UTC is the earlier bound."""
+    now = time.time() if now is None else now
+    day = 86400.0
+    return (7 * 3600.0 - now) % day or day
+
+
+def _gemini_rejected(model: str, status: int, raw: str, detail: str) -> bool:
+    """Book-keeping for a failed Gemini request. True when the model should not be asked again right now:
+       404        not visible to this key            -> skip it for 6 h
+       429/day    the model's daily quota is spent    -> skip it until the quota resets (no retry: it cannot work)
+       429/other  per-minute limit                    -> skip it for the delay Google names (at least 30 s)"""
+    if status == 404:
+        _COOLDOWN[f"gemini:{model}"] = time.time() + 6 * 3600.0
+        return True
+    if status == 429:
+        if "PerDay" in raw or "per day" in raw.lower():
+            _COOLDOWN[f"gemini:{model}"] = time.time() + _seconds_to_quota_reset()
+        else:
+            m = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', raw)
+            wait = float(m.group(1)) if m else _retry_after(detail)
+            _COOLDOWN[f"gemini:{model}"] = time.time() + min(max(wait, 30.0), 3600.0)
+        return True
+    return False
+
+
+def _gemini(prompt: str, cfg: Settings, max_tokens: int, system: str, models: list[str] | None = None) -> str:
+    """Google Gemini via the REST API — free tier, no SDK (just requests). Walks `models`; a model whose quota is
+    spent or that is overloaded is skipped (and remembered) instead of being retried."""
     key = (getattr(cfg, "gemini_api_key", "") or "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY not set")
-    body: dict = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": 0.45,
-            "responseMimeType": "application/json",
-        },
-    }
-    if system:
-        body["systemInstruction"] = {"parts": [{"text": system}]}
-
-    models = [cfg.llm_model] if cfg.llm_model else list(_GEMINI_MODELS)
+    models = models or ([cfg.llm_model] if cfg.llm_model else list(_GEMINI_MODELS))
     last_err = ""
     for model in models:
-        if _cooling(f"gemini:{model}"):    # not visible to this key / long rate limit: skip it
+        if _cooling(f"gemini:{model}"):    # not visible / quota spent / overloaded: no request at all
             continue
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         status = None
         for attempt in range(2):
+            body: dict = {"contents": [{"parts": [{"text": prompt}]}],
+                          "generationConfig": _gemini_generation(model, max_tokens, temperature=0.45,
+                                                                 responseMimeType="application/json")}
+            if system:
+                body["systemInstruction"] = {"parts": [{"text": system}]}
             r = requests.post(url, params={"key": key}, json=body, timeout=(10, 75))
             status = r.status_code
+            USAGE[f"gemini:{model}:{status}"] += 1
             if status == 200:
                 data = r.json()
                 cand = (data.get("candidates") or [{}])[0]
                 parts = (cand.get("content") or {}).get("parts") or [{}]
-                if len(models) > 1 and model != models[0]:
+                if cand.get("finishReason") == "MAX_TOKENS":
+                    u = data.get("usageMetadata") or {}
+                    log.warning("gemini: %s hit the token limit (thinking %s, answer %s) — the answer may be cut",
+                                model, u.get("thoughtsTokenCount", 0), u.get("candidatesTokenCount", 0))
+                if model != models[0]:
                     log.info("gemini: using model %s", model)
-                return "".join(p.get("text", "") for p in parts)
+                return "".join(p.get("text", "") for p in parts if not p.get("thought"))
+            raw = getattr(r, "text", "") or ""
             try:
                 err = r.json().get("error") or {}
                 detail = f"{err.get('status', status)}: {err.get('message', '')}".strip()
             except Exception:
                 detail = f"HTTP {status}"
             last_err = f"{model} -> {detail}"
-            if status == 404:                 # a model this key can't see never appears mid-run
-                _COOLDOWN[f"gemini:{model}"] = time.time() + 6 * 3600.0
-            elif status == 429 and _retry_after(detail) > 20:
-                _COOLDOWN[f"gemini:{model}"] = time.time() + min(_retry_after(detail), 3600.0)
+            if status == 400 and "thinking" in detail.lower() and model not in _NO_THINKING_CFG:
+                _NO_THINKING_CFG.add(model)   # this model does not take thinkingConfig: ask once more without it
+                continue
+            if _gemini_rejected(model, status, raw, detail):
                 break
-            if status in (429, 500, 503) and attempt == 0:
+            if status in (500, 503) and attempt == 0:
                 time.sleep(3.0)               # transient capacity blip — one retry
                 continue
+            if status == 503:                 # still overloaded: leave it alone for a couple of minutes
+                _COOLDOWN[f"gemini:{model}"] = time.time() + 120.0
             break
         if status in (404, 429, 500, 503):
             log.info("gemini: model %s skipped (%s)", model, last_err[:160])
             continue          # not visible / overloaded on this model — try the next
         break                 # 403 / 400 -> key or request problem, stop
-    raise RuntimeError(f"gemini call failed ({last_err})")
+    raise RuntimeError(f"gemini call failed ({last_err or 'every model cooling down'})")
 
 
 def _anthropic(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:

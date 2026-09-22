@@ -635,6 +635,8 @@ def run_pipeline(
             report.job_id, report.collected, report.clusters, report.built,
             report.skipped, report.published, len(report.errors),
         )
+        from .llm import usage_summary
+        log.info("LLM requests this run: %s", usage_summary())      # provider:model:status=count — quota waste shows here
         return report
 
     except Exception as exc:

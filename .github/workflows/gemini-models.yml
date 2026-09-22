@@ -32,8 +32,9 @@ jobs:
           models = [m.strip() for m in os.environ.get("MODELS", "").split(",") if m.strip()]
           if not models:
               src = open("src/political_shorts/llm.py", encoding="utf-8").read()
-              start = src.index("_GEMINI_MODELS = [")
-              models = ast.literal_eval(src[start + len("_GEMINI_MODELS = "): src.index("]", start) + 1])
+              for name in ("_GEMINI_FLASH = [", "_GEMINI_LITE = ["):
+                  start = src.index(name)
+                  models += ast.literal_eval(src[start + len(name) - 1: src.index("]", start) + 1])
           gen = {"maxOutputTokens": 700, "responseMimeType": "application/json"}
           if os.environ.get("THINKING"):
               gen["thinkingConfig"] = {"thinkingLevel": os.environ["THINKING"]}

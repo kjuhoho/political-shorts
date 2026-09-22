@@ -467,8 +467,9 @@ def test_groq_rate_limit_moves_to_next_model(monkeypatch):
     monkeypatch.setattr(L.time, "sleep", lambda s: None)
     cfg = dataclasses.replace(settings, llm_provider="groq", llm_model="")
     monkeypatch.setenv("GROQ_API_KEY", "k")
-    assert L._groq("hi", cfg, 300, "sys") == '{"ok":1}'
-    assert posted[-1] == "openai/gpt-oss-20b"
+    # the mechanism, with a two-model list (the shorts themselves only ever use 120b — see test_gemini_first)
+    assert L._groq("hi", cfg, 300, "sys", models=["openai/gpt-oss-120b", "some/other-model"]) == '{"ok":1}'
+    assert posted[-1] == "some/other-model"
 
 
 def test_complete_falls_back_to_next_provider(monkeypatch):
@@ -550,8 +551,9 @@ def test_groq_long_rate_limit_cools_the_model_down_instead_of_retrying(monkeypat
     monkeypatch.setattr(L, "_COOLDOWN", {})
     monkeypatch.setenv("GROQ_API_KEY", "k")
     cfg = dataclasses.replace(settings, llm_provider="groq", llm_model="")
-    assert L._groq("hi", cfg, 300, "sys") == '{"ok":1}'
-    assert posts == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]       # ONE try on the limited model, no 3x retry
+    two = ["openai/gpt-oss-120b", "some/other-model"]
+    assert L._groq("hi", cfg, 300, "sys", models=two) == '{"ok":1}'
+    assert posts == ["openai/gpt-oss-120b", "some/other-model"]         # ONE try on the limited model, no 3x retry
     posts.clear()
-    assert L._groq("hi", cfg, 300, "sys") == '{"ok":1}'
-    assert posts == ["openai/gpt-oss-20b"]                              # cooled model is not even tried again
+    assert L._groq("hi", cfg, 300, "sys", models=two) == '{"ok":1}'
+    assert posts == ["some/other-model"]                                # cooled model is not even tried again
