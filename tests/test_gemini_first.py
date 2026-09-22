@@ -42,3 +42,11 @@ def test_web_search_asks_gemini_first_and_groq_only_when_gemini_has_nothing(monk
     monkeypatch.setitem(llm._WEB_SEARCH, "groq", lambda *a: order.append("groq") or "답")
     assert llm.web_search("q", settings) == "답"
     assert order == ["gemini", "groq"]
+
+
+def test_the_full_flash_models_come_before_the_lite_ones_and_no_retired_model_is_listed():
+    """Incident 2026-09-22: every call used flash-lite because the 2.x models 404 and the alias was out of quota."""
+    models = llm._GEMINI_MODELS
+    first_lite = min(i for i, m in enumerate(models) if "lite" in m)
+    assert all("lite" not in m for m in models[:first_lite]) and first_lite >= 2
+    assert not any(m.startswith(("gemini-2.0", "gemini-2.5")) for m in models)

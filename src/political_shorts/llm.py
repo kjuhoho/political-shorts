@@ -64,7 +64,7 @@ def _web_search_gemini(prompt: str, cfg: Settings, max_tokens: int, accept, errs
     """Gemini with the Google Search tool; '' when unavailable."""
     mkey = (getattr(cfg, "gemini_api_key", "") or "").strip()
     if mkey:
-        for model in ("gemini-2.5-flash", "gemini-flash-latest"):
+        for model in ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"):
             try:
                 r = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -217,13 +217,13 @@ def _groq(prompt: str, cfg: Settings, max_tokens: int, system: str) -> str:
     raise RuntimeError(f"groq call failed ({last})")
 
 
-# tried in order when LLM_MODEL is unset. `gemini-flash-latest` is a portable
-# alias; the "lite" models carry far more free-tier capacity, so they come
-# before the in-demand full flash models — on a 404 (not visible to this key)
-# OR a sustained 503/"high demand" we just move to the next one.
+# tried in order when LLM_MODEL is unset. Probed with the channel's key on 2026-09-22 (gemini-models workflow):
+# the 2.0/2.5 models answer 404 ("no longer available to new users"), gemini-flash-latest had run out of quota,
+# and every call fell through to the weakest model, flash-lite. So: the current full Flash models first (each
+# has its own free quota), the alias after them, the lite models only as a last resort.
 _GEMINI_MODELS = [
-    "gemini-flash-latest", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite",
-    "gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-lite-latest",
+    "gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest",
+    "gemini-3.5-flash-lite", "gemini-flash-lite-latest",
 ]
 
 

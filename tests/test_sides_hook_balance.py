@@ -173,7 +173,7 @@ def test_gemini_model_that_404s_is_not_asked_again(monkeypatch):
 
     def fake_post(url, params=None, json=None, timeout=None):
         posted.append(url.split("/models/")[1].split(":")[0])
-        return _R(404 if "flash-latest" in url and "lite" not in url else 200)
+        return _R(404 if f"/models/{L._GEMINI_MODELS[0]}:" in url else 200)
 
     monkeypatch.setattr(L, "requests", type("m", (), {"post": staticmethod(fake_post)}))
     monkeypatch.setattr(L.time, "sleep", lambda s: None)
@@ -183,7 +183,7 @@ def test_gemini_model_that_404s_is_not_asked_again(monkeypatch):
     first = list(posted)
     posted.clear()
     assert L._gemini("hi", cfg, 100, "") == '{"ok":1}'
-    assert "gemini-flash-latest" in first and "gemini-flash-latest" not in posted
+    assert L._GEMINI_MODELS[0] in first and L._GEMINI_MODELS[0] not in posted
 
 
 # ---------------------------------------------- other side: relevance, title-only, honest "not found"
