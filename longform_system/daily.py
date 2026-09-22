@@ -124,10 +124,10 @@ Markdown 대본만 출력하라. JSON, 인사말, 설명문은 출력하지 마�
         raise RuntimeError("LONGFORM_GROQ_API_KEY secret is not available")
     client = Groq(api_key=key)
     available = {model.id for model in client.models.list().data}
-    # Qwen's free-tier output ceiling is too small for a Korean five-minute
-    # script. Prefer the already-available GPT-OSS endpoint; Qwen remains a
-    # last-resort fallback when account availability changes.
-    preferred = ("openai/gpt-oss-20b", "llama-3.1-8b-instant", "qwen/qwen3.8-27b")
+    # GPT-OSS can place its answer in an internal reasoning field on this
+    # free-tier endpoint. Llama returns the requested Markdown directly;
+    # Qwen remains a last-resort fallback because of its short output ceiling.
+    preferred = ("llama-3.1-8b-instant", "openai/gpt-oss-20b", "qwen/qwen3.8-27b")
     model = next((candidate for candidate in preferred if candidate in available), "")
     if not model:
         raise RuntimeError("Groq 계정에서 사용 가능한 롱폼 대본 모델을 찾지 못했습니다")
