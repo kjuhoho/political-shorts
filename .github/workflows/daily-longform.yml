@@ -43,7 +43,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-nanum
           python -m pip install --upgrade pip
-          pip install feedparser PyYAML Pillow edge-tts groq google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+          pip install feedparser PyYAML Pillow edge-tts groq requests trafilatura google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - if: steps.gate.outputs.skip != 'true'
         env:
           LONGFORM_GROQ_API_KEY: ${{ secrets.LONGFORM_GROQ_API_KEY }}
@@ -58,6 +58,7 @@ jobs:
         env:
           LONGFORM_GROQ_API_KEY: ${{ secrets.LONGFORM_GROQ_API_KEY }}
           LONGFORM_AUTO_PUBLISH: ${{ secrets.LONGFORM_AUTO_PUBLISH }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           publish=""
           if [ "${{ github.event_name }}" = "schedule" ] && [ "$LONGFORM_AUTO_PUBLISH" = "true" ]; then publish="--publish"; fi
@@ -72,6 +73,9 @@ jobs:
           retention-days: 14
       - if: success() && github.event_name == 'schedule' && steps.gate.outputs.skip != 'true'
         run: |
+          # The pre-upload reservation is authoritative for duplicate safety.
+          test -f longform_output/published.json || exit 0
+          git pull --ff-only
           TZ=Asia/Seoul date +%F > longform_system/state/last_success_date.txt
           git config user.name "today-enter-longform bot"
           git config user.email "actions@users.noreply.github.com"

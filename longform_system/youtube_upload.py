@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,13 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
     if not creds.valid:
         raise RuntimeError("YouTube token is invalid or expired")
     youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
+    from .ledger import Ledger, episode_key, digest_file
+    from .guards import accepted
+    if not meta.get('quality') or not all(accepted(r) for r in meta['quality']):
+        raise RuntimeError('Missing or failed 95-point reports')
+    ledger = Ledger()
+    key = episode_key(meta['date'])
+    row, sha = ledger.reserve(key, digest_file(video))
     request = youtube.videos().insert(
         part="snippet,status",
         body={"snippet": {"title": meta["title"][:100], "description": meta["description"][:4900],
@@ -29,6 +37,11 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
     )
     response = None
     while response is None:
-        _, response = request.next_chunk()
+        _, response = request.next_chunk(num_retries=0)
     video_id = response["id"]
-    return {"status": "ok", "video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}"}
+    result = {"status": "uploaded", "video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}"}
+    # Preserve the ID locally even if the durable completion write fails.
+    video.with_suffix('.upload.json').write_text(json.dumps(result), encoding='utf-8')
+    print(json.dumps(result), flush=True)
+    ledger.put(key, {**row, **result}, sha)
+    return result
