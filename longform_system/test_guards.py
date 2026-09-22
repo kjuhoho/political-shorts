@@ -2,13 +2,21 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-from longform_system.guards import accepted, grounded, review
+from longform_system.guards import accepted, grounded, review, publication_reviews_ok
 from longform_system.ledger import Ledger
 from longform_system.renderer import clean_script
 from longform_system.research import blocked
 
 
 class PublicationGuards(unittest.TestCase):
+    def test_partial_reviews_cannot_authorize_publication(self):
+        passing = dict(score=100, facts_ok=True, dates_ok=True, balance_ok=True,
+                       safety_ok=True, issues=[])
+        for count in (0, 1, 2, 3, 5):
+            self.assertFalse(publication_reviews_ok(dict(quality=[passing]*count, title_review=passing)))
+        self.assertTrue(publication_reviews_ok(dict(quality=[passing]*4, title_review=passing)))
+        self.assertFalse(publication_reviews_ok(dict(quality=[passing]*4)))
+
     def test_unsupported_review_never_triggers_repair(self):
         report = dict(score=30, facts_ok=False, dates_ok=True, balance_ok=True,
                       safety_ok=True, issues=['pretrained claim'], findings=[])

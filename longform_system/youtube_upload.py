@@ -8,6 +8,11 @@ from typing import Any
 
 
 def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
+    from .guards import publication_reviews_ok
+    if not publication_reviews_ok(meta):
+        raise RuntimeError('All three issues, framing and title require passing 95-point reviews')
+    if meta.get('media_check', {}).get('passed') is not True:
+        raise RuntimeError('Encoded-media review failed')
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
@@ -21,11 +26,6 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
         raise RuntimeError("YouTube token is invalid or expired")
     youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
     from .ledger import Ledger, episode_key, content_key, digest_file
-    from .guards import accepted
-    if not meta.get('quality') or not all(accepted(r) for r in meta['quality']):
-        raise RuntimeError('Missing or failed 95-point reports')
-    if not accepted(meta.get('title_review', {})) or meta.get('media_check', {}).get('passed') is not True:
-        raise RuntimeError('Title or encoded-media review failed')
     ledger = Ledger()
     key = episode_key(meta['date'])
     topic_key = content_key(meta['sources'])

@@ -56,6 +56,14 @@ def accepted(report):
             and isinstance(report.get('issues'), list))
 
 
+def publication_reviews_ok(meta):
+    reports = meta.get('quality')
+    return (isinstance(reports, list) and len(reports) == 4
+            and all(isinstance(r, dict) and accepted(r) for r in reports)
+            and isinstance(meta.get('title_review'), dict)
+            and accepted(meta['title_review']))
+
+
 def review(writer, text, sources):
     prompt = (f'기준일: {now():%Y년 %m월 %d일} (한국시간)\n{RUBRIC}\n'
               f'검증 자료:\n{sources}\n검수 대상:\n{text}')
