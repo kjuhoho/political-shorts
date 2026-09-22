@@ -112,6 +112,25 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라.
     data = json.loads(match.group(0))
     script, theme = str(data.get("script", "")).strip(), str(data.get("theme", "")).strip()
     words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", script)))
+    # A concise model response is not a five-minute video. Give it one
+    # constrained rewrite opportunity, but never fill the gap with new facts.
+    if not (700 <= words <= 900):
+        repair = f"""아래 대본은 {words}어절이라 5분 브리핑 기준에 부족합니다. 제공된 자료 밖의
+사실·수치·인용·주장을 절대 추가하지 말고, 이미 있는 사실의 배경과 시민이 확인할 절차를 더 쉽게 풀어
+750~850어절로 확장하라. 제목·구조·출처 줄·[SHORTS_HOOK]를 그대로 유지하라. JSON 하나만 출력하라.
+
+{{"theme":"{theme}","script":"Markdown"}}
+
+대본:\n{script}"""
+        repaired = client.chat.completions.create(
+            model=model, temperature=0.1, max_tokens=5000,
+            messages=[{"role": "user", "content": repair}],
+        ).choices[0].message.content or ""
+        match = re.search(r"\{.*\}", repaired, re.S)
+        if match:
+            data = json.loads(match.group(0))
+            script, theme = str(data.get("script", "")).strip(), str(data.get("theme", theme)).strip()
+            words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", script)))
     if not (700 <= words <= 900):
         raise RuntimeError(f"자동 승인 보류: 대본 분량 {words}어절")
     out.write_text(script, encoding="utf-8")
