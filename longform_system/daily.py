@@ -93,6 +93,16 @@ def _decode_draft(raw: str, fallback_theme: str = "") -> dict[str, Any] | None:
     return None
 
 
+def _completion_text(completion: Any) -> str:
+    """Groq models differ on whether visible text uses content or reasoning."""
+    message = completion.choices[0].message
+    for field in ("content", "reasoning", "reasoning_content"):
+        value = getattr(message, field, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def write_script(stories: list[dict[str, str]], out: Path) -> tuple[str, str]:
     if len(stories) < 3:
         raise RuntimeError("자동 승인 보류: 교차 확인 가능한 정치 이슈가 3개 미만입니다")
@@ -131,10 +141,11 @@ Markdown 대본만 출력하라. JSON, 인사말, 설명문은 출력하지 마�
     model = next((candidate for candidate in preferred if candidate in available), "")
     if not model:
         raise RuntimeError("Groq 계정에서 사용 가능한 롱폼 대본 모델을 찾지 못했습니다")
-    raw = client.chat.completions.create(
+    completion = client.chat.completions.create(
         model=model, temperature=0.15, max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
-    ).choices[0].message.content or ""
+    )
+    raw = _completion_text(completion)
     fallback_theme = "오늘의 정치 핵심 3가지"
     data = _decode_draft(raw, fallback_theme)
     if not data:
@@ -155,10 +166,11 @@ Markdown 대본만 출력하라. JSON, 인사말, 설명문은 출력하지 마�
 제목·구조·출처 줄·각 핵심의 [SHORTS_HOOK]는 유지한다. Markdown 대본만 출력하라.
 
 기존 대본:\n{script}"""
-        repaired = client.chat.completions.create(
+        completion = client.chat.completions.create(
             model=model, temperature=0.05, max_tokens=3500,
             messages=[{"role": "user", "content": repair}],
-        ).choices[0].message.content or ""
+        )
+        repaired = _completion_text(completion)
         data = _decode_draft(repaired, theme)
         if not data:
             continue
