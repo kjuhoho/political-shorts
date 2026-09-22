@@ -62,7 +62,7 @@ def test_personnel_question_never_fires_without_an_actual_departure():
 def test_personnel_question_still_fires_on_a_genuine_departure():
     h = "대통령실 정책실장 김승원 전격 사퇴…취임 두 달 만"
     facts = ["김승원 대통령실 정책실장이 3일 사퇴했다."]
-    hk = build_hook(_ctx(h, facts))
+    build_hook(_ctx(h, facts))
     # a genuine departure is free to use the question form (or another
     # grounded generator may fire first — the point is it's never banned)
     ctx = _ctx(h, facts)

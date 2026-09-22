@@ -5,7 +5,7 @@ into clean readable chunks). `beat_caption` / `topic_label` = the SHORT
 compressed phrase for the top bar only."""
 from political_shorts.subtitle import (
     beat_caption, emphasis_terms, readable_chunks, read_seconds,
-    topic_label, valid_llm_subtitle,
+    valid_llm_subtitle,
 )
 
 

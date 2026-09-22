@@ -9,7 +9,6 @@ only this file in git — not the whole multi-MB SQLite DB.
 """
 import json
 import sys
-from pathlib import Path
 
 import _bootstrap  # noqa: F401
 

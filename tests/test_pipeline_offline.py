@@ -1,6 +1,5 @@
 """Offline pipeline test: seed the DB with fake articles, run everything
 except collect + render, and assert a script + safety report come out."""
-import time
 from dataclasses import replace
 
 import json

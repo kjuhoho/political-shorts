@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..config import Settings
 from .base import Publisher, PublishResult
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]

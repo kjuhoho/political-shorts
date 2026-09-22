@@ -2,7 +2,7 @@
 
 Why: none of the prompts that write a script told the model what day it is, and the articles usually say
 "20일" or "지난해", never the year. The model then filled in a year from its training data (2023-2025) and
-videos shipped with wrong years. Two layers, both here:
+videos shipped with wrong years. The layers, all here:
 
   date_block()      the current date (KST), what "올해/지난해/내년" mean today, the publication date of the
                     articles, and the rule "never guess a year" — put in front of every writing prompt
@@ -33,6 +33,8 @@ def _year_of(m: re.Match) -> int:
     if m.group("y4"):
         return int(m.group("y4"))
     return 2000 + int(m.group("y2a") or m.group("y2b"))
+
+
 # relative expressions spelled with a year: they must agree with today's date
 _REL_RX = re.compile(r"(올해|금년|올|지난해|작년|전년|내년|명년|재작년)\s*\(?\s*((?:19|20)\d{2})\s*년?")
 

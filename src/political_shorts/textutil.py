@@ -207,13 +207,6 @@ def tokens(text: str) -> list[str]:
     return [tok for tok in _NON_WORD.sub(" ", (text or "").lower()).split() if len(tok) > 1]
 
 
-def char_shingles(text: str, n: int = 3) -> set[str]:
-    s = normalize_title(text).replace(" ", "")
-    if len(s) < n:
-        return {s} if s else set()
-    return {s[i : i + n] for i in range(len(s) - n + 1)}
-
-
 def jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0

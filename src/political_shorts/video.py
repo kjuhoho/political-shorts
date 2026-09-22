@@ -29,7 +29,7 @@ from PIL import (
 from .config import CONFIG_DIR, Settings, settings
 from .logging_setup import get_logger
 from .textutil import clean_text
-from .tts import Narration, estimate_caption_seconds, synthesize_segments
+from .tts import Narration, synthesize_segments
 
 log = get_logger("video")
 
@@ -50,10 +50,6 @@ def _style() -> dict:
 _ACCENT = (245, 202, 66)
 ROLE_ACCENT = {k: _ACCENT for k in
               ("hook", "summary", "what", "reaction", "factcheck", "outro")}
-ROLE_LABEL = {
-    "hook": "오늘의 이슈", "summary": "한 줄 요약", "what": "무슨 일이냐면",
-    "reaction": "양쪽 반응", "factcheck": "팩트체크", "outro": "",
-}
 FG = (245, 246, 248)
 SUBTLE = (200, 208, 220)
 BG_TOP = (17, 24, 39)
@@ -222,8 +218,6 @@ def _overlay_png(
     margin = int(w * 0.06)
     max_w = w - 2 * margin
 
-    f_title = _font(cfg.font_title or cfg.font_bold_path, 84)
-    f_num = _font(cfg.font_label or cfg.font_bold_path, 58)
     f_foot = _font(cfg.font_path, 30)
     f_rtag = _font(cfg.font_label or cfg.font_bold_path, 36)
     f_row = _font(cfg.font_body or cfg.font_path, 44)
@@ -696,7 +690,6 @@ def _assign_images(
                           if who and _topic and len(_topic) <= 4
                           and (who == _topic or who in _topic or _topic in who)), None)
 
-    out: list[str | None] = []
     used: set[str] = set()             # media already placed once
     fi = 0
 
@@ -869,10 +862,6 @@ def _segment_video_clip(
         str(out_mp4),
     ]
     _run(cmd)
-
-
-# default cross-fade if a boundary has no explicit transition kind (see _XF)
-XFADE_SECONDS = 0.14
 
 
 def _concat(ffmpeg: str, clips: list[Path], out_mp4: Path, fps: int) -> None:

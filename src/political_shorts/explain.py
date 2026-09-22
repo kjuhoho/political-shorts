@@ -13,7 +13,6 @@ lines are generic-but-true statements about that *kind* of event.
 """
 from __future__ import annotations
 
-import re
 
 from .hook import Entities, Frame, josa, to_polite
 from .textutil import clean_text, clip_sentence

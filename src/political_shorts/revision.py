@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from typing import Any
 
-MAX_PASSES = 1
-
 # issues `apply()` can actually do something about
 _FIXABLE = {"length-off-band", "static-span", "repeat-zoom", "repeat-transition",
             "repeat-media"}

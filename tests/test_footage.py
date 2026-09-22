@@ -2,7 +2,6 @@
 import dataclasses
 import json
 
-import pytest
 
 from political_shorts import footage
 from political_shorts.config import settings

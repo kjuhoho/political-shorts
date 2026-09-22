@@ -1,5 +1,4 @@
 """QUALITY CHECKER — 100-point score, band, publish gate."""
-from pathlib import Path
 
 from political_shorts.quality import check
 

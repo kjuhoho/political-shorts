@@ -39,7 +39,7 @@ def layout_id(scene_type: str) -> str:
 
 def render_caption(draw, seg: dict[str, Any], cfg, w: int, h: int, accent: tuple) -> None:
     """Draw the subtitle body. `draw` is a PIL ImageDraw on the RGBA overlay."""
-    from .video import (FG, SUBTLE, STROKE_DARK, _IMPACT_TOKEN, _draw_caption_line,
+    from .video import (SUBTLE, STROKE_DARK, _IMPACT_TOKEN, _draw_caption_line,
                         _font, _round_rect, _style, _text_stroke, _wrap)
 
     sst = _style().get("subtitle", {})

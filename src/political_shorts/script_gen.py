@@ -33,8 +33,6 @@ from .textutil import clean_text, clip_sentence, strip_byline, truncate
 log = get_logger("script_gen")
 
 CAPTION_LIMIT = 46
-BODY_LIMIT = 72
-MAX_WHAT = 1
 
 # Top-performing news shorts run tight — 20-38s. Aim ~30-36s: hook opens a
 # loop, the summary card is dropped, 4-5 fast cards.
@@ -42,9 +40,6 @@ MAX_WHAT = 1
 # (explain.py), not one-line clips, so it needs room like the LLM path — a
 # viewer who doesn't follow politics needs the explanation more than a 30s cut.
 MAX_VIDEO_SECONDS = 66.0
-# the LLM writes real background + explanation now, so a card can run longer
-# and the whole video too — a viewer who doesn't follow politics needs it.
-MAX_VIDEO_SECONDS_LLM = 110.0
 _KR_CHARS_PER_SEC = 7.0          # edge-tts at ~+13% rate (TTS_RATE 198)
 _CARD_PAD_SECONDS = 0.24         # brief breath between cards
 # hard per-segment narration caps (chars). 0 = caption-only card, no voice.
@@ -60,7 +55,6 @@ _NARR_CAP_LLM = {"hook": 66, "summary": 210, "what": 250, "reaction": 120,
                  "factcheck": 170, "sides": 340, "outro": 170}
 _SILENT_CARD_SECONDS = 1.5
 
-_SENT_END = ("다", "요", "죠", "까", "네", "군", ".", "!", "?", "…")
 # a chunk ending on a REAL sentence end: a formal "…니다" ending, a plain-style
 # verb ending, or .!? — NOT a bare "…다" ("찬성보다", "그에 따라" would falsely
 # match and drop the rest of the sentence).
@@ -356,18 +350,10 @@ def _mark_incomplete_factcheck_rows(segments: list[dict[str, Any]]) -> None:
                 r["text"] = f"{t}.."
 
 
-# connective / particle tails that must not be the last thing on a caption card
-_CAP_TAIL = re.compile(
-    r"\s*[가-힣]{0,6}?(따르면|밝히며|말하며|라며|이라며|하며|면서|는데|지만|라고|"
-    r"이라고|대해|위해|통해|관련|둘러싸고|며|면|고|은|는|이|가|을|를|에|의|와|과|도|만|께|"
-    r"에서|으로|에게)$"
-)
-
-
 # "5·18" is one name (the Gwangju uprising), not the numbers "5" and "18": with the middle dot swapped for
 # ", " it was voiced "5, 18" and quality.py flagged a number the article never had. Say the name.
 _KNOWN_DATES = {"5·18": "오일팔", "4·19": "사일구", "6·25": "육이오", "3·1": "삼일", "8·15": "팔일오",
-                "5·16": "오일육", "12·12": "십이십이", "4·3": "사삼", "6·10": "육일공", "5·18": "오일팔"}
+                "5·16": "오일육", "12·12": "십이십이", "4·3": "사삼", "6·10": "육일공"}
 _KNOWN_DATES_RX = re.compile(r"(?<![\d.])(\d{1,2})[·ㆍ](\d{1,2})(?![\d])")
 
 
@@ -378,21 +364,6 @@ def _glyph_safe(s: str) -> str:
     return (s.replace("·", ", ").replace("ㆍ", ", ").replace("…", " ")
              .replace("—", "-").replace("–", "-").replace("~", "-")
              .replace("→", "->").replace("←", "<-"))
-
-
-def _tidy_caption(narration: str, limit: int) -> str:
-    """A short on-screen caption from the (possibly long) spoken line that
-    ALWAYS ends cleanly — on a sentence end or a noun, never on '…따르면'."""
-    cap = _glyph_safe(clip_sentence(narration, limit, ell="")).rstrip(" ,·.")
-    cap = re.sub(r"\s+", " ", cap)
-    for _ in range(4):
-        if not cap or cap[-1] in "다요죠까네군!?.":
-            break
-        t = _CAP_TAIL.sub("", cap).rstrip(" ,·")
-        if t == cap or len(t) < max(6, limit * 0.35):
-            break
-        cap = t
-    return cap or clip_sentence(narration, limit, ell="")
 
 
 # split ONLY at a real sentence end — a formal ending (…습니다/…합니다/…죠/…나요)
@@ -665,13 +636,6 @@ def _tokens(t: str) -> set[str]:
     return {w for w in re.split(r"[^0-9A-Za-z가-힣]+", clean_text(t)) if len(w) > 1}
 
 
-def _too_similar(a: str, b: str) -> bool:
-    ta, tb = _tokens(a), _tokens(b)
-    if not ta or not tb:
-        return False
-    return len(ta & tb) / len(ta | tb) >= 0.72
-
-
 def _context_score(t: str) -> int:
     s = sum(1 for h in _CONTEXT_HINTS if h in t)
     if re.search(r"\d", t):
@@ -681,8 +645,6 @@ def _context_score(t: str) -> int:
     return s
 
 
-_PARTY_WORDS = ("민주당", "국민의힘", "국힘", "조국혁신당", "개혁신당", "진보당", "정의당",
-                "여당", "야당", "여권", "야권", "대통령실", "청와대", "정부")
 _SPEAKER_RE = re.compile(r"([가-힣]{2,4})\s*(?:수석|대변인|의원|원내대표|대표|장관|위원장|실장)")
 
 
@@ -693,13 +655,6 @@ def _speaker(text: str) -> str:
 
 _LEFT = ("민주당", "더불어민주당", "조국혁신당", "진보당", "정의당", "야당", "야권")
 _RIGHT = ("국민의힘", "국힘", "개혁신당", "여당", "여권")
-
-
-def _side_key(text: str) -> str:
-    for p in _PARTY_WORDS:
-        if p in text:
-            return p
-    return _speaker(text)
 
 
 def _lean_label(text: str) -> str:
@@ -1347,7 +1302,3 @@ def _llm_polish(script: dict[str, Any], cfg: Settings) -> dict[str, Any]:
                 seg["narration"] = truncate(out, 200)
     script["llm_polished"] = True
     return script
-
-
-def script_word_estimate(script: dict[str, Any]) -> int:
-    return sum(len(s.get("narration", "")) for s in script["segments"])

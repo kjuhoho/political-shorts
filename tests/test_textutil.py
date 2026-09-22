@@ -3,7 +3,6 @@ from political_shorts.textutil import (
     clean_text,
     clip_sentence,
     gloss_jargon,
-    normalize_title,
     split_sentences,
     strip_byline,
     url_hash,

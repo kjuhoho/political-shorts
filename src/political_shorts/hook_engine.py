@@ -117,10 +117,6 @@ _ACT: dict[str, tuple[str, str]] = {
 }
 
 
-def _action(ctx: HookContext) -> str:
-    return _ACT.get(ctx.frame.kind, ("", ""))[1]
-
-
 def _clip(s: str, n: int = 34) -> str:
     return clip_sentence(clean_text(s), n).rstrip(" .,·…\"'").strip()
 

@@ -6,7 +6,6 @@ hat. An optional LLM check can override borderline cases when a key is set.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from .config import Settings, settings
@@ -156,26 +155,3 @@ def classify_pending(cfg: Settings | None = None) -> tuple[int, int]:
             general += int(is_gen)
     log.info("classify done evaluated=%d politics=%d general=%d", evaluated, marked, general)
     return evaluated, marked
-
-
-# --------------------------------------------------------------------------- #
-# Optional LLM override (borderline scores only). Best-effort, never fatal.
-# --------------------------------------------------------------------------- #
-def llm_is_domestic_politics(title: str, summary: str, cfg: Settings) -> bool | None:
-    if not cfg.llm_available:
-        return None
-    prompt = (
-        "다음 뉴스가 '대한민국 국내 정치'에 해당하면 YES, 아니면 NO만 답하세요.\n"
-        f"제목: {title}\n요약: {summary}\n답:"
-    )
-    try:
-        from .llm import complete
-
-        out = complete(prompt, cfg, max_tokens=4).strip().upper()
-        if out.startswith("YES"):
-            return True
-        if out.startswith("NO"):
-            return False
-    except Exception as exc:  # pragma: no cover
-        log.debug("llm classify skipped: %s", exc)
-    return None

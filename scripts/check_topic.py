@@ -8,7 +8,6 @@ publish_one.py) and reports whether the given headline/keywords would be treated
 as a duplicate of something posted in the last TOPIC_DEDUP_DAYS.
 """
 import sys
-import time
 from datetime import datetime
 
 import _bootstrap  # noqa: F401

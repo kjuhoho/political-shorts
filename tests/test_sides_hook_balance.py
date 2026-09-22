@@ -150,7 +150,7 @@ def test_stage_one_analysis_is_computed_once_per_story_not_once_per_attempt(monk
     meta = {"source_text": "기사 본문", "facts": ["사실1"], "claims": [], "interps": [], "entities": {}}
     a = script_llm.analyze_story(meta, cfg)
     b = script_llm.analyze_story(meta, cfg)
-    c = script_llm.analyze_story(dict(meta, facts=["다른 사실"]), cfg)      # a different story is NOT served from cache
+    script_llm.analyze_story(dict(meta, facts=["다른 사실"]), cfg)      # a different story is NOT served from cache
     assert a == b and a["what_happened"] == "사퇴했다"
     assert len(calls) == 2
 

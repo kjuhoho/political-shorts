@@ -22,8 +22,6 @@ from .textutil import clean_text, gloss_jargon
 
 SCENE_MIN_S = 1.35
 SCENE_MAX_S = 3.5
-SCENE_TARGET_S = 2.6
-_SEC_PER_CHAR = 1.0 / 7.0          # matches script_gen._KR_CHARS_PER_SEC
 _PAD = 0.24
 _MAX_SCENES = 44                   # hard safety cap on the render cost
 
@@ -137,41 +135,6 @@ def _split_long(text: str, max_s: float = SCENE_MAX_S) -> list[str]:
             continue
         return _split_long(before, max_s) + _split_long(after, max_s)
     return [text]
-
-
-def _merge_short(pieces: list[str], min_s: float = SCENE_MIN_S,
-                 ceil: float = SCENE_MAX_S + 0.7) -> list[str]:
-    """Fold a sub-`min_s` piece into the neighbour that keeps the result
-    smallest and under `ceil` (prefer merging forward). A piece that can't
-    merge without blowing the ceiling is left short — a brief scene still beats
-    a long static one."""
-    ps = [p.strip(" ,·") for p in pieces if p.strip(" ,·")]
-    i = 0
-    while i < len(ps) and len(ps) > 1:
-        if est_seconds(ps[i]) >= min_s:
-            i += 1
-            continue
-        opts: list[tuple[float, int, int]] = []
-        if i + 1 < len(ps) and est_seconds(ps[i] + " " + ps[i + 1]) <= ceil:
-            opts.append((est_seconds(ps[i] + " " + ps[i + 1]), i, i + 1))
-        if i - 1 >= 0 and est_seconds(ps[i - 1] + " " + ps[i]) <= ceil:
-            opts.append((est_seconds(ps[i - 1] + " " + ps[i]), i - 1, i))
-        if not opts:
-            i += 1
-            continue
-        _, a, b = min(opts)
-        ps[a] = (ps[a].rstrip(" .·,") + " " + ps[b]).strip()
-        del ps[b]
-        i = max(0, a)
-    return ps
-
-
-def _tidy(piece: str) -> str:
-    p = re.sub(r"\s+", " ", piece).strip(" ,·")
-    # a scene ending on a bare noun-conjunction reads better with a soft stop
-    if p and p[-1] not in ".?!" and not p.endswith(("다", "요", "죠", "까")):
-        p = p  # keep connective endings (…했지만 / …밝히며) — natural mid-sentence pause
-    return p
 
 
 # --------------------------------------------------------------------------- #
