@@ -1,10 +1,18 @@
 name: gemini models (diagnostic)
 
-# Manual only. For every model in llm._GEMINI_MODELS: one tiny request with PS_GEMINI_KEY, printing the HTTP
-# status and the error message (quota / not found / overloaded) — so the model order can be matched to what the
-# key can really use. Never prints the key (GitHub masks secrets) and never builds or publishes a video.
+# Manual only. One tiny JSON-mode request per model with PS_GEMINI_KEY, printing the HTTP status, the error (quota /
+# not found / overloaded), why generation stopped and how many tokens went to "thinking" — so the model order and
+# the thinking setting in llm.py can be matched to what the key really does. Never prints the key (GitHub masks
+# secrets) and never builds or publishes a video. Keep `models` short: every model probed is one request of quota.
 on:
   workflow_dispatch:
+    inputs:
+      models:
+        description: "comma-separated model ids (blank = llm._GEMINI_MODELS)"
+        default: ""
+      thinking:
+        description: "thinkingLevel to send (blank = none)"
+        default: ""
 
 jobs:
   probe:
@@ -15,30 +23,44 @@ jobs:
       - name: probe each model
         env:
           PS_GEMINI_KEY: ${{ secrets.PS_GEMINI_KEY }}
+          MODELS: ${{ inputs.models }}
+          THINKING: ${{ inputs.thinking }}
         run: |
           if [ -z "$PS_GEMINI_KEY" ]; then echo "PS_GEMINI_KEY not set"; exit 1; fi
           python3 - <<'PY'
           import ast, json, os, urllib.error, urllib.request
-          src = open("src/political_shorts/llm.py", encoding="utf-8").read()
-          start = src.index("_GEMINI_MODELS = [")
-          models = ast.literal_eval(src[start + len("_GEMINI_MODELS = "): src.index("]", start) + 1])
-          models += ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview",
-                     "gemini-2.5-flash", "gemini-2.5-pro"]
+          models = [m.strip() for m in os.environ.get("MODELS", "").split(",") if m.strip()]
+          if not models:
+              src = open("src/political_shorts/llm.py", encoding="utf-8").read()
+              start = src.index("_GEMINI_MODELS = [")
+              models = ast.literal_eval(src[start + len("_GEMINI_MODELS = "): src.index("]", start) + 1])
+          gen = {"maxOutputTokens": 700, "responseMimeType": "application/json"}
+          if os.environ.get("THINKING"):
+              gen["thinkingConfig"] = {"thinkingLevel": os.environ["THINKING"]}
+          body = json.dumps({"contents": [{"parts": [{"text":
+              '다음 JSON만 출력: {"score": 0~100 정수, "issues": ["한국 정치 뉴스 대본의 약점 3개, 각 60자 내외"]}'}]}],
+              "generationConfig": gen}).encode()
           key = os.environ["PS_GEMINI_KEY"]
-          body = json.dumps({"contents": [{"parts": [{"text": "한 단어로 답: 안녕"}]}],
-                             "generationConfig": {"maxOutputTokens": 16}}).encode()
-          for m in dict.fromkeys(models):
+          for m in models:
               url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key}"
               req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
               try:
-                  with urllib.request.urlopen(req, timeout=30) as r:
-                      ver = json.loads(r.read()).get("modelVersion", "")
-                      print(f"{m:28s} {r.status} OK (serves {ver})")
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      d = json.loads(r.read())
+                      c = (d.get("candidates") or [{}])[0]
+                      text = "".join(p.get("text", "") for p in (c.get("content") or {}).get("parts") or [])
+                      try:
+                          json.loads(text); parsed = "json ok"
+                      except Exception:
+                          parsed = "JSON BROKEN"
+                      u = d.get("usageMetadata", {})
+                      print(f"{m:26s} 200 finish={c.get('finishReason')} thoughts={u.get('thoughtsTokenCount', 0)} "
+                            f"answer={u.get('candidatesTokenCount', 0)} {parsed} (serves {d.get('modelVersion', '')})")
               except urllib.error.HTTPError as e:
                   try:
                       err = json.loads(e.read()).get("error", {})
                       msg = f"{err.get('status', '')}: {err.get('message', '')}"
                   except Exception:
                       msg = ""
-                  print(f"{m:28s} {e.code} {msg[:220]}")
+                  print(f"{m:26s} {e.code} {msg[:300]}")
           PY
