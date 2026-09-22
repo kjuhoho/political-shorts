@@ -116,6 +116,14 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
     scenes = clean_script(script_path)
     if len(scenes) < 5:
         raise ValueError("A longform script needs at least five narration chunks")
+    # Measure natural narration before spending time encoding every scene.
+    # Keep this diagnostic audio so a length hold is concrete and reviewable.
+    timing_audio = output.with_suffix('.timing.mp3')
+    asyncio.run(make_audio(' '.join(text for _,text in scenes), timing_audio, voice))
+    spoken_seconds = duration(timing_audio)
+    output.with_suffix('.timing.json').write_text(json.dumps({'natural_duration_s':spoken_seconds}), encoding='utf-8')
+    if not 240 <= spoken_seconds <= 360:
+        raise ValueError(f'Natural narration lasts {spoken_seconds:.1f}s; 5-minute length policy not met')
     clips: list[Path] = []
     manifest_scenes = []
     raw = script_path.read_text(encoding='utf-8')
