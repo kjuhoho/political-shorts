@@ -22,7 +22,8 @@ jobs:
           src = open("src/political_shorts/llm.py", encoding="utf-8").read()
           start = src.index("_GEMINI_MODELS = [")
           models = ast.literal_eval(src[start + len("_GEMINI_MODELS = "): src.index("]", start) + 1])
-          models += ["gemini-2.5-flash", "gemini-2.5-pro"]
+          models += ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview",
+                     "gemini-2.5-flash", "gemini-2.5-pro"]
           key = os.environ["PS_GEMINI_KEY"]
           body = json.dumps({"contents": [{"parts": [{"text": "한 단어로 답: 안녕"}]}],
                              "generationConfig": {"maxOutputTokens": 16}}).encode()
@@ -31,7 +32,8 @@ jobs:
               req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
               try:
                   with urllib.request.urlopen(req, timeout=30) as r:
-                      print(f"{m:28s} {r.status} OK")
+                      ver = json.loads(r.read()).get("modelVersion", "")
+                      print(f"{m:28s} {r.status} OK (serves {ver})")
               except urllib.error.HTTPError as e:
                   try:
                       err = json.loads(e.read()).get("error", {})
