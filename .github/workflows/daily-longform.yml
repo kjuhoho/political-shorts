@@ -1,0 +1,78 @@
+name: daily political longform
+
+on:
+  # 15:20, 15:50, 16:20 KST. The gate permits only one successful run/day.
+  schedule:
+    - cron: "20 6 * * *"
+    - cron: "50 6 * * *"
+    - cron: "20 7 * * *"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to 오늘의 엔터 (false builds an artifact only)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: daily-longform
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        run: |
+          today=$(TZ=Asia/Seoul date +%F)
+          last=$(cat longform_system/state/last_success_date.txt 2>/dev/null || true)
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$today" = "$last" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: steps.gate.outputs.skip != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-nanum
+          python -m pip install --upgrade pip
+          pip install feedparser PyYAML Pillow edge-tts groq google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+      - if: steps.gate.outputs.skip != 'true'
+        env:
+          LONGFORM_GROQ_API_KEY: ${{ secrets.LONGFORM_GROQ_API_KEY }}
+          PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}
+        run: |
+          test -n "$LONGFORM_GROQ_API_KEY"
+          test -n "$PS_YT_TOKEN_B64"
+          mkdir -p secrets longform_output
+          echo "$PS_YT_TOKEN_B64" | base64 -d > secrets/longform_youtube_token.json
+          echo "LONGFORM_YOUTUBE_TOKEN_FILE=$PWD/secrets/longform_youtube_token.json" >> "$GITHUB_ENV"
+      - if: steps.gate.outputs.skip != 'true'
+        env:
+          LONGFORM_GROQ_API_KEY: ${{ secrets.LONGFORM_GROQ_API_KEY }}
+        run: |
+          publish="--publish"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "false" ]; then publish=""; fi
+          python -m longform_system.daily $publish
+      - if: always() && steps.gate.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: longform-${{ github.run_number }}
+          path: longform_output/
+          if-no-files-found: ignore
+          retention-days: 14
+      - if: success() && github.event_name == 'schedule' && steps.gate.outputs.skip != 'true'
+        run: |
+          TZ=Asia/Seoul date +%F > longform_system/state/last_success_date.txt
+          git config user.name "today-enter-longform bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add longform_system/state/last_success_date.txt
+          git commit -m "longform: record daily run [skip ci]"
+          git push
