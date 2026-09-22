@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import feedparser
 import requests
 
+from .chrono import date_block
 from .config import Settings
 from .logging_setup import get_logger
 from .textutil import clean_text
@@ -355,7 +356,7 @@ def plan_research(headline: str, topic: str, context: str, cfg: Settings) -> dic
                 "queries": [base_q, f"{base_q[:40]} 비판 반박"]}
     from .llm import complete
 
-    prompt = (f"[헤드라인] {clean_text(headline)}\n[핵심 인물] {topic or '(없음)'}\n"
+    prompt = (f"{date_block()}[헤드라인] {clean_text(headline)}\n[핵심 인물] {topic or '(없음)'}\n"
               f"[기사에서 확인된 내용]\n{(context or '')[:1800]}\n\n위 사건의 조사 계획 JSON을 작성하세요.")
     try:
         raw = complete(prompt, cfg, max_tokens=500, system=_PLAN_SYSTEM)
@@ -485,7 +486,7 @@ def _extract_notes(headline: str, bodies: list[dict[str, str]], cfg: Settings,
         head += f"[핵심 사건] {plan['event']}\n"
     if plan.get("question"):
         head += f"[핵심 질문] {plan['question']}\n"
-    prompt = f"{head}\n{docs[:7500]}\n\n위 기사들만 근거로 조사 노트 JSON을 작성하세요."
+    prompt = f"{date_block()}{head}\n{docs[:7500]}\n\n위 기사들만 근거로 조사 노트 JSON을 작성하세요."
     for max_tokens in (3800, 6000):
         try:
             raw = complete(prompt, cfg, max_tokens=max_tokens, system=_EXTRACT_SYSTEM)

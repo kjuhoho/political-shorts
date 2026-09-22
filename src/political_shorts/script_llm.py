@@ -258,7 +258,7 @@ def _analysis_payload(meta: dict[str, Any]) -> str:
         + (ent.get("parties") or [])[:4]
     ) or "(특정 인물 없음)"
     return (
-        f"[원문 기사]\n{meta.get('source_text', '').strip()[:3200]}\n\n"
+        f"{meta.get('date_block', '')}[원문 기사]\n{meta.get('source_text', '').strip()[:3200]}\n\n"
         f"[사실로 분류된 문장]\n{_bullets(meta.get('facts', []), 10)}\n\n"
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []), 8)}\n\n"
         f"[해석·전망 — 사실 아님, 참고만]\n{_bullets(meta.get('interps', []), 6)}\n\n"
@@ -476,7 +476,7 @@ def _payload(meta: dict[str, Any], cards: list[dict[str, Any]],
                   "각 카드의 draft는 참고용 초안일 뿐입니다 — 그대로 다듬지 말고, 규칙대로 "
                   "(배경→무슨 일→왜 중요) 완전히 새 문장으로 풀어 쓸 것.\n")
     return (
-        f"{ub}"
+        f"{meta.get('date_block', '')}{ub}"
         f"[원문 기사{'  — 확인용, 문장을 그대로 옮기지 말 것' if ub else ''}]\n{src_excerpt}\n\n"
         f"[사실로 분류된 문장]\n{_bullets(meta.get('facts', []))}\n\n"
         f"[주장 — 누가 말한 것]\n{_bullets(meta.get('claims', []))}\n\n"

@@ -25,7 +25,7 @@ from .hook import (
     _NOT_TARGET, detect_entities, detect_frame, josa, make_factcheck, make_hook,
     make_title, pick_actor, simplify, strip_wire_marks, to_polite,
 )
-from . import invariants
+from . import chrono, invariants
 from .logging_setup import get_logger
 from .subtitle import _complete as _sentence_complete
 from .textutil import clean_text, clip_sentence, strip_byline, truncate
@@ -239,6 +239,25 @@ def _balance_patch(segments: list[dict[str, Any]], web: dict[str, Any] | None) -
                          "narration": extra, "attributed": True, "cues": []})
     log.info("balance patch: added the voice of %s", ", ".join(v["who"] for v in add))
     return out
+
+
+def _strip_years_in(segments: list[dict[str, Any]], source_text: str,
+                    pub_dates: list[tuple[int, int, int]] | None = None) -> list[int]:
+    """Make the spoken text, captions and kickers agree with the sources, in place: every explicit year the
+    articles/research do not support is removed and, when publication dates are given, every 'M월 D일' is
+    corrected to the article's month (or '이날' when nothing supports it). Returns the years removed."""
+    removed: list[int] = []
+    for s in segments:
+        for key in ("narration", "caption", "kicker"):
+            if not s.get(key):
+                continue
+            s[key], gone = chrono.strip_years(str(s[key]), source_text)
+            removed.extend(gone)
+            if pub_dates is not None:
+                s[key], changed = chrono.fix_month_days(s[key], source_text, pub_dates)
+                for before, after in changed:
+                    log.info("date corrected: %r -> %r", before, after)
+    return removed
 
 
 def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> None:
@@ -959,6 +978,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     chosen_viol: list[dict[str, str]] = []
     absorbed: list[dict[str, Any]] = []
     research_text = ""
+    _year_src = clean_text(f"{titles} {summaries} {headline}")
+    _pub_dates = chrono.pub_dates(rows)
     if llm_on:
         from .hook import pick_actor as _pick_actor
         from .script_llm import rewrite_segments
@@ -966,6 +987,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         _LEAN_KO = {"left": "진보 성향", "right": "보수 성향", "wire": "통신·방송", "center": "중도"}
         meta = {
             "headline": headline,
+            "date_block": chrono.date_block(rows),
             "related": _related_reports(cluster_id, rows, cfg),
             "source_text": f"{titles}\n{summaries}",
             # classified + cross-source-verified view (FACT CHECK ENGINE)
@@ -997,6 +1019,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             except Exception as exc:  # pragma: no cover - defensive
                 log.info("research skipped (%s)", str(exc)[:80])
         research_text = str(meta.get("research", "") or "")
+        _year_src = clean_text(f"{titles} {summaries} {headline} {research_text}")
         rich = _research_rich(research_web)
         if rich:
             template_segments = _with_research_cards(template_segments, research_web)
@@ -1041,6 +1064,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             cand = _fit_duration(cand, budget=_budget, caps=_NARR_CAP_LLM)
             # after trimming, so a length cut can never remove the other side's voice again
             cand = _balance_patch(cand, research_web)
+            _strip_years_in(cand, _year_src, _pub_dates)
             _ensure_comment_prompt(cand, explain.engage_question(frame, pick_actor(headline, entities, frame)))
 
             agent_report = quality_agent.review({"headline": headline, "segments": cand}, cfg)
@@ -1197,6 +1221,17 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
                       collect_footage(entities, frame, headline, cfg, body_text=_body_text)]
         except Exception as exc:  # pragma: no cover - network dependent
             log.warning("b-roll collection failed: %s", exc)
+
+    _gone = _strip_years_in(segments, _year_src, _pub_dates)
+    _title_out = []
+    for _ln in (title or []):
+        _clean_ln, _g = chrono.strip_years(str(_ln), _year_src)
+        _clean_ln, _ = chrono.fix_month_days(_clean_ln, _year_src, _pub_dates)
+        _title_out.append(_clean_ln)
+        _gone.extend(_g)
+    title = _title_out
+    if _gone:
+        log.info("removed %d unsupported year(s) from the script: %s", len(_gone), sorted(set(_gone)))
 
     # A portrait comes from people named anywhere in the cluster BODY, but the script is written about
     # the headline's actor — a published video showed one politician's face over a story that never

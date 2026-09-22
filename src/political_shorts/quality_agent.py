@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .chrono import date_block
 from .config import Settings
 from .logging_setup import get_logger
 from .textutil import clean_text
@@ -63,6 +64,8 @@ _SYSTEM = (
     "구체적인 인물·사건을 이름으로 짚은 질문형 훅('경기도는 왜 영화제를 축소했을까요?')은 좋은 훅이므로 "
     "감점하지 말 것. 무엇에 관한 이야기인지 알 수 없는 모호한 문장('정면으로 부딪히고 있습니다', "
     "'논란이 일고 있습니다')만 감점.\n"
+    "11) [날짜] 대본의 연도·날짜가 맨 위 [오늘 날짜]·[기사 발행일]과 맞는가 — 근거 없이 적힌 연도, '올해'·"
+    "'지난해'와 어긋난 연도는 큰 감점 (10점)\n"
     "감점 사유는 짧고 구체적으로 — 어느 카드(역할)의 어떤 문장이 문제인지 "
     "지적할 것. 원문에 없는 새로운 사실·수치를 요구하지 말고, 표현·구조 "
     "문제만 지적할 것. 완벽하지 않아도 위 기준들에서 실제로 심각한 문제가 "
@@ -131,6 +134,7 @@ def review(script: dict[str, Any], cfg: Settings) -> AgentReport:
 
     from .llm import complete
 
+    payload = date_block() + payload            # the judge must know what day it is to judge a year
     last_exc = ""
     for attempt in range(2):
         try:
