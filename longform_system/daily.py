@@ -106,9 +106,8 @@ def write_script(stories: list[dict[str, str]], out: Path) -> tuple[str, str]:
 
 자료:\n{evidence}
 
-JSON만 출력하라:
-{{"theme":"한 줄 주제","script":"Markdown"}}
-script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공백으로 구분한 어절 수를 스스로
+Markdown 대본만 출력하라. JSON, 인사말, 설명문은 출력하지 마라.
+대본은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공백으로 구분한 어절 수를 스스로
 확인한 뒤 출력하라. 본문 최소 분량(출처 줄·제목 제외)은 훅 50, 맥락 90, 핵심1 170,
 핵심2 170, 핵심3 150, 시사점 110, 요약·예고 80어절이다.
 ## 0:00–0:20 | 훅
@@ -139,19 +138,7 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
     fallback_theme = "오늘의 정치 핵심 3가지"
     data = _decode_draft(raw, fallback_theme)
     if not data:
-        format_repair = """방금 응답은 사용할 수 있는 JSON이 아니었습니다. 같은 기사 자료만 근거로,
-아래 형식의 JSON 객체 하나만 출력하라. Markdown 대본은 script 값 안에 넣어라.
-{"theme":"한 줄 주제","script":"Markdown 대본"}
-
-원래 요청:
-""" + prompt
-        raw = client.chat.completions.create(
-            model=model, temperature=0, max_tokens=3000,
-            messages=[{"role": "user", "content": format_repair}],
-        ).choices[0].message.content or ""
-        data = _decode_draft(raw, fallback_theme)
-    if not data:
-        raise RuntimeError("자동 승인 보류: 대본 생성 결과가 JSON 형식이 아닙니다")
+        raise RuntimeError("자동 승인 보류: 대본 필수 구조가 없습니다")
     script, theme = str(data.get("script", "")).strip(), str(data.get("theme", "")).strip()
     words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", script)))
     # A concise response cannot make a five-minute briefing. Every retry is
@@ -165,9 +152,7 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
 마지막 출력 전 공백 기준 어절 수를 반드시 세어라.
 
 본문 최소 분량: 훅 50, 맥락 90, 핵심1 170, 핵심2 170, 핵심3 150, 시사점 110, 요약·예고 80어절.
-제목·구조·출처 줄·각 핵심의 [SHORTS_HOOK]는 유지한다. JSON 하나만 출력하라.
-
-{{"theme":"{theme}","script":"Markdown"}}
+제목·구조·출처 줄·각 핵심의 [SHORTS_HOOK]는 유지한다. Markdown 대본만 출력하라.
 
 기존 대본:\n{script}"""
         repaired = client.chat.completions.create(
