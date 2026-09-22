@@ -64,8 +64,11 @@ def publication_reviews_ok(meta):
             and accepted(meta['title_review']))
 
 
-def review(writer, text, sources):
+def review(writer, text, sources, kind='script'):
     prompt = (f'기준일: {now():%Y년 %m월 %d일} (한국시간)\n{RUBRIC}\n'
+              + ('제목 검수다. 명사형 제목과 브리핑 브랜드 문구를 허용한다. 원문 제목을 그대로 복사할 필요는 없다. '
+                 '본문용 배경 설명·완결 문장·후속 전망 기준은 적용하지 않는다. 원문 대비 의미 왜곡, 과장, '
+                 '명칭 잘림, 혐오, 근거 없는 단정만 평가하라.\n' if kind == 'title' else '') +
               f'검증 자료:\n{sources}\n검수 대상:\n{text}')
     for attempt in range(2):
         report = writer.json(prompt, 2000)
@@ -93,6 +96,11 @@ def validate(script, stories):
     if not 460 <= words <= 560:
         raise RuntimeError(f'Script has {words} words, needs 460–560 for natural 5-minute narration')
     source_text = ' '.join(s['body'] for story in stories for s in story['sources']) + now().strftime('%Y년 %m월 %d일')
+    for claim in ('최초', '유일'):
+        if claim in body and claim not in source_text:
+            raise RuntimeError(f'Unsupported superlative: {claim}')
+    if re.search(r'\d+(?:현대|현재|오늘|이번)', body):
+        raise RuntimeError('Malformed numeric fragment in narration')
     for year in re.findall(r'\b(20\d{2})년', body):
         if year not in source_text:
             raise RuntimeError(f'Unsupported year: {year}')

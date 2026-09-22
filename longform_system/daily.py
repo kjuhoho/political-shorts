@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from .research import ROOT, now, collect, select, evidence
 from .llm import Writer
@@ -48,6 +49,8 @@ def generate(writer, stories, out, existing=None):
 동일한 주장을 반론이라고 부르거나, 원문에 없는 가상의 반론을 덧붙이지 마라.
 기관명은 원문 그대로. 유엔사는 유엔군사령부이며 유엔 사무국으로 바꾸지 마라.
 미래 결과를 단정하지 말 것. 분량을 위해 반복하거나 사실을 보태지 말 것.
+원문에 '최초'라고 확인되지 않으면 최초/처음이라고 확대 해석하지 마라.
+정책의 세 가지 방향 등 항목을 요약할 때 원문의 항목과 정확히 대응시켜라.
 훅이면 '{date}'를 반드시 포함하고 가장 중요한 이슈로 시작.
 핵심 구간이면 첫 문장을 쇼츠로 추출해도 이해되도록 작성.
 요약 구간이면 세 이슈를 하나씩 빠짐없이 요약하고 '내일은 후속 발표가 나왔는지 확인하겠습니다'처럼
@@ -155,6 +158,19 @@ def main():
             raise RuntimeError('Resume draft not from today')
         stories = json.loads(source_path.read_text(encoding='utf-8'))
         existing = draft_path.read_text(encoding='utf-8')
+        # Explicit editorial errata apply only to this exact draft. They never
+        # bypass regeneration of all quality reports or affect future scripts.
+        errata_path = ROOT/'longform_system/editorial_corrections'/f'{day}.json'
+        if errata_path.exists():
+            errata = json.loads(errata_path.read_text(encoding='utf-8'))
+            if errata['draft_sha256'] == digest_file(draft_path):
+                existing = existing.replace('\u202f', ' ')
+                for old, new in errata['replacements']:
+                    if existing.count(old) != 1:
+                        raise RuntimeError('Editorial correction target is not unique')
+                    existing = existing.replace(old, new)
+                save(args.output_dir/'editorial-corrections-applied.json', errata)
+                print('Applied source-checked editorial corrections; full re-review still required', flush=True)
     else:
         stories = select(collect())
     save(args.output_dir/'sources.json', stories)
@@ -162,7 +178,15 @@ def main():
     script_path = args.output_dir/f'{day}.script.md'
     script, reports = generate(writer, stories, script_path, existing)
     package = build_title_package({'theme':stories[0]['headline'], 'chapters':stories})
-    title_review = review(writer, '제목만 검수 (본문 배경설명 요구 금지): '+package.title, evidence(stories[0]))
+    title = writer.ask('아래 기사 근거로 오늘의엔터 정치 브리핑 제목 하나만 작성. '
+                       '55자 이하, 쉬운 한글, 선정적 표현 금지. 핵심 기관·정책 명칭을 중간에서 자르지 마라. '
+                       '5분 브리핑이라는 형식을 자연스럽게 표시해도 된다. 제목 이외 출력 금지.\n'
+                       + evidence(stories[0]), 1200).strip().strip('"')
+    if not 10 <= len(title) <= 55 or '\n' in title:
+        raise RuntimeError('Generated title length/format invalid')
+    package = replace(package, title=title)
+    save(args.output_dir/'title-package.json', package.to_dict())
+    title_review = review(writer, package.title, evidence(stories[0]), kind='title')
     save(args.output_dir/'title-review.json', title_review)
     if not accepted(title_review):
         raise RuntimeError('Title failed review')
