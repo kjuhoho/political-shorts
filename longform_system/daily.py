@@ -116,7 +116,10 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
         raise RuntimeError("LONGFORM_GROQ_API_KEY secret is not available")
     client = Groq(api_key=key)
     available = {model.id for model in client.models.list().data}
-    preferred = ("qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.1-8b-instant")
+    # Qwen's free-tier output ceiling is too small for a Korean five-minute
+    # script. Prefer the already-available GPT-OSS endpoint; Qwen remains a
+    # last-resort fallback when account availability changes.
+    preferred = ("openai/gpt-oss-20b", "llama-3.1-8b-instant", "qwen/qwen3.8-27b")
     model = next((candidate for candidate in preferred if candidate in available), "")
     if not model:
         raise RuntimeError("Groq 계정에서 사용 가능한 롱폼 대본 모델을 찾지 못했습니다")
