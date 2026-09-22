@@ -68,7 +68,7 @@ def select_stories(rows: list[dict[str, str]], count: int = 3) -> list[dict[str,
     return selected
 
 
-def _decode_draft(raw: str) -> dict[str, Any] | None:
+def _decode_draft(raw: str, fallback_theme: str = "") -> dict[str, Any] | None:
     """Return the object when a model adds a fence or a short preamble."""
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S | re.I)
     plain = re.search(r"\{.*\}", raw, re.S)
@@ -81,6 +81,15 @@ def _decode_draft(raw: str) -> dict[str, Any] | None:
             continue
         if isinstance(value, dict) and value.get("script"):
             return value
+    # Some otherwise usable models return the requested Markdown directly.
+    # Accept it only when every mandatory timing section is present; all the
+    # normal fact, length, and render gates still run after this point.
+    mandatory = ("훅", "맥락", "핵심 1", "핵심 2", "핵심 3", "시사점", "요약")
+    if all(label in raw for label in mandatory):
+        start = raw.find("##")
+        script = raw[start:].strip() if start >= 0 else raw.strip()
+        if script:
+            return {"theme": fallback_theme, "script": script}
     return None
 
 
@@ -127,7 +136,8 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
         model=model, temperature=0.15, max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     ).choices[0].message.content or ""
-    data = _decode_draft(raw)
+    fallback_theme = "오늘의 정치 핵심 3가지"
+    data = _decode_draft(raw, fallback_theme)
     if not data:
         format_repair = """방금 응답은 사용할 수 있는 JSON이 아니었습니다. 같은 기사 자료만 근거로,
 아래 형식의 JSON 객체 하나만 출력하라. Markdown 대본은 script 값 안에 넣어라.
@@ -139,7 +149,7 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
             model=model, temperature=0, max_tokens=6000,
             messages=[{"role": "user", "content": format_repair}],
         ).choices[0].message.content or ""
-        data = _decode_draft(raw)
+        data = _decode_draft(raw, fallback_theme)
     if not data:
         raise RuntimeError("자동 승인 보류: 대본 생성 결과가 JSON 형식이 아닙니다")
     script, theme = str(data.get("script", "")).strip(), str(data.get("theme", "")).strip()
@@ -166,7 +176,7 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
             model=model, temperature=0.05, max_tokens=6000,
             messages=[{"role": "user", "content": repair}],
         ).choices[0].message.content or ""
-        data = _decode_draft(repaired)
+        data = _decode_draft(repaired, theme)
         if not data:
             continue
         candidate = str(data.get("script", "")).strip()
