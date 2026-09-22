@@ -9,11 +9,12 @@ class Writer:
     def __init__(self):
         self.client = Groq(api_key=os.environ['LONGFORM_GROQ_API_KEY'], max_retries=0, timeout=90)
         available = {m.id for m in self.client.models.list().data}
-        self.model = next((m for m in ('llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-20b') if m in available), None)
+        self.model = next((m for m in ('openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b', 'llama-3.1-8b-instant') if m in available), None)
         if not self.model:
             raise RuntimeError('No supported model available')
         self.calls, self.tokens, self.last = 0, 0, 0.0
         print(f'Longform model: {self.model}', flush=True)
+        print('Available model IDs: ' + ', '.join(sorted(available)), flush=True)
 
     def ask(self, prompt, limit=1600):
         if self.calls >= 24 or self.tokens >= 55000:
