@@ -68,6 +68,22 @@ def select_stories(rows: list[dict[str, str]], count: int = 3) -> list[dict[str,
     return selected
 
 
+def _decode_draft(raw: str) -> dict[str, Any] | None:
+    """Return the object when a model adds a fence or a short preamble."""
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S | re.I)
+    plain = re.search(r"\{.*\}", raw, re.S)
+    for match in (fenced, plain):
+        if not match:
+            continue
+        try:
+            value = json.loads(match.group(1) if fenced is match else match.group(0))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("script"):
+            return value
+    return None
+
+
 def write_script(stories: list[dict[str, str]], out: Path) -> tuple[str, str]:
     if len(stories) < 3:
         raise RuntimeError("자동 승인 보류: 교차 확인 가능한 정치 이슈가 3개 미만입니다")
@@ -100,7 +116,7 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
         raise RuntimeError("LONGFORM_GROQ_API_KEY secret is not available")
     client = Groq(api_key=key)
     available = {model.id for model in client.models.list().data}
-    preferred = ("openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.1-8b-instant")
+    preferred = ("qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.1-8b-instant")
     model = next((candidate for candidate in preferred if candidate in available), "")
     if not model:
         raise RuntimeError("Groq 계정에서 사용 가능한 롱폼 대본 모델을 찾지 못했습니다")
@@ -108,10 +124,21 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
         model=model, temperature=0.15, max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     ).choices[0].message.content or ""
-    match = re.search(r"\{.*\}", raw, re.S)
-    if not match:
+    data = _decode_draft(raw)
+    if not data:
+        format_repair = """방금 응답은 사용할 수 있는 JSON이 아니었습니다. 같은 기사 자료만 근거로,
+아래 형식의 JSON 객체 하나만 출력하라. Markdown 대본은 script 값 안에 넣어라.
+{"theme":"한 줄 주제","script":"Markdown 대본"}
+
+원래 요청:
+""" + prompt
+        raw = client.chat.completions.create(
+            model=model, temperature=0, max_tokens=6000,
+            messages=[{"role": "user", "content": format_repair}],
+        ).choices[0].message.content or ""
+        data = _decode_draft(raw)
+    if not data:
         raise RuntimeError("자동 승인 보류: 대본 생성 결과가 JSON 형식이 아닙니다")
-    data = json.loads(match.group(0))
     script, theme = str(data.get("script", "")).strip(), str(data.get("theme", "")).strip()
     words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", script)))
     # A concise response cannot make a five-minute briefing. Every retry is
@@ -136,12 +163,8 @@ script은 한국어 750~850 어절로 다음 순서를 정확히 지켜라. 공�
             model=model, temperature=0.05, max_tokens=6000,
             messages=[{"role": "user", "content": repair}],
         ).choices[0].message.content or ""
-        match = re.search(r"\{.*\}", repaired, re.S)
-        if not match:
-            continue
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError:
+        data = _decode_draft(repaired)
+        if not data:
             continue
         candidate = str(data.get("script", "")).strip()
         candidate_words = len(re.findall(r"\S+", re.sub(r"(?m)^\[.*$|^#.*$", "", candidate)))
