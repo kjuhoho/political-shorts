@@ -1,7 +1,7 @@
 name: daily political longform
 
 on:
-  # 15:20, 15:50, 16:20 KST. The gate permits only one successful run/day.
+  # Later slots retry only setup/collection failures before any LLM attempt.
   schedule:
     - cron: "20 6 * * *"
     - cron: "50 6 * * *"
@@ -34,7 +34,9 @@ jobs:
         run: |
           today=$(TZ=Asia/Seoul date +%F)
           last=$(cat longform_system/state/last_success_date.txt 2>/dev/null || true)
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$today" = "$last" ]; then
+          receipt="longform_system/state/uploads/longform-$today.json"
+          attempt="longform_system/state/uploads/generation-$today.json"
+          if [ -f "$receipt" ] || { [ "${{ github.event_name }}" = "schedule" ] && { [ "$today" = "$last" ] || [ -f "$attempt" ]; }; }; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -43,7 +45,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - if: github.event_name == 'workflow_dispatch' && inputs.resume_run != ''
+      - if: steps.gate.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.resume_run != ''
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}

@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from .research import ROOT, now, collect, select, evidence
@@ -174,7 +175,17 @@ def main():
     else:
         stories = select(collect())
     save(args.output_dir/'sources.json', stories)
-    writer = Writer()
+    if args.resume_dir:
+        cached = args.resume_dir/'llm-cache.json'
+        if cached.exists() and cached.resolve() != (args.output_dir/'llm-cache.json').resolve():
+            shutil.copyfile(cached, args.output_dir/'llm-cache.json')
+    # One costly automatic attempt per day. Quality/quota failures require
+    # diagnosis and an explicit manual resume, never another blind full rebuild.
+    import os
+    if os.environ.get('GITHUB_EVENT_NAME') == 'schedule':
+        from .ledger import Ledger
+        Ledger().reserve('generation-'+day, digest_file(args.output_dir/'sources.json'))
+    writer = Writer(args.output_dir)
     script_path = args.output_dir/f'{day}.script.md'
     script, reports = generate(writer, stories, script_path, existing)
     package = build_title_package({'theme':stories[0]['headline'], 'chapters':stories})
