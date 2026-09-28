@@ -9,6 +9,16 @@ from longform_system.research import blocked
 
 
 class PublicationGuards(unittest.TestCase):
+    def test_bad_quote_feedback_is_specific_and_still_blocks(self):
+        writer = Mock()
+        writer.json.return_value = dict(score=30, facts_ok=False, findings=[dict(
+            script_quote='없는 대본 문장', source_quote='없는 원문 문장', reason='주장')])
+        with self.assertRaises(RuntimeError):
+            review(writer, '실제 대본입니다.', '실제 원문입니다.')
+        correction_prompt = writer.json.call_args_list[1].args[0]
+        self.assertIn('findings[0].script_quote', correction_prompt)
+        self.assertIn('findings[0].source_quote', correction_prompt)
+
     def test_partial_reviews_cannot_authorize_publication(self):
         passing = dict(score=100, facts_ok=True, dates_ok=True, balance_ok=True,
                        safety_ok=True, issues=[])

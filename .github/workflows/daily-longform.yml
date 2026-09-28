@@ -38,6 +38,7 @@ jobs:
           attempt="longform_system/state/uploads/generation-$today.json"
           if [ -f "$receipt" ] || { [ "${{ github.event_name }}" = "schedule" ] && { [ "$today" = "$last" ] || [ -f "$attempt" ]; }; }; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No new video built: existing upload/reservation or daily generation attempt ($today)." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -82,6 +83,24 @@ jobs:
           resume=""
           if [ -n "$RESUME_RUN" ]; then resume="--resume-dir longform_resume"; fi
           python -m longform_system.daily $publish $resume
+      - if: always() && steps.gate.outputs.skip != 'true'
+        name: Record outcome and usage
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          out = Path('longform_output')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              receipt = out/'published.json'
+              if receipt.exists():
+                  row = json.loads(receipt.read_text())
+                  summary.write(f"Published: {row['url']} ({row.get('privacy', 'unknown')})\n")
+              else:
+                  summary.write('No upload confirmed in this run. Inspect quality/error artifacts; do not assume workflow success means publication.\n')
+              usage = out/'usage.json'
+              if usage.exists():
+                  summary.write('\nUsage (not a billing statement): ' + usage.read_text() + '\n')
+          PY
       - if: always() && steps.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:

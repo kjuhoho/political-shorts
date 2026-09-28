@@ -1,5 +1,8 @@
 """Independent adaptation of the shorts editor's 95-point rubric."""
 import re
+import json
+import hashlib
+from pathlib import Path
 from .research import blocked, now
 
 # Same exclusions as the existing channel safety policy, kept independent of
@@ -30,24 +33,32 @@ source_quote(관련 원문의 정확한 연속 인용), reason(차이)을 반드
 "findings":[{"script_quote":"정확한 대본 인용","source_quote":"정확한 원문 인용","reason":"차이"}]}'''
 
 
-def grounded(report, text, sources):
-    """Unanchored criticism must never be used to rewrite a factual draft."""
+def grounding_errors(report, text, sources):
+    """Return precise repair feedback without weakening evidence requirements."""
+    if not isinstance(report, dict):
+        return ['검수 결과가 JSON 객체가 아닙니다.']
     findings = report.get('findings')
     if not isinstance(findings, list):
-        return False
+        return ['findings 배열이 없습니다. 오류 없으면 빈 배열을 반환하세요.']
     if not accepted(report) and not findings:
-        return False
+        return ['불합격 판단에 대응하는 findings의 정확한 대본·원문 인용이 없습니다.']
+    errors = []
     normalize = lambda value: ' '.join(value.split())
-    for item in findings:
+    for index, item in enumerate(findings):
         if not isinstance(item, dict):
-            return False
+            errors.append(f'findings[{index}]는 객체여야 합니다.')
+            continue
         for key, original in (('script_quote', text), ('source_quote', sources)):
             quote = item.get(key)
             if not isinstance(quote, str) or len(quote.strip()) < 4 or normalize(quote) not in normalize(original):
-                return False
+                errors.append(f'findings[{index}].{key}: 제공 텍스트의 정확한 연속 인용이 아닙니다: {str(quote)[:100]}')
         if not isinstance(item.get('reason'), str) or not item['reason'].strip():
-            return False
-    return True
+            errors.append(f'findings[{index}].reason 설명이 없습니다.')
+    return errors
+
+
+def grounded(report, text, sources):
+    return not grounding_errors(report, text, sources)
 
 
 def accepted(report):
@@ -72,9 +83,17 @@ def review(writer, text, sources, kind='script'):
               f'검증 자료:\n{sources}\n검수 대상:\n{text}')
     for attempt in range(2):
         report = writer.json(prompt, 2000)
-        if grounded(report, text, sources):
+        errors = grounding_errors(report, text, sources)
+        if not errors:
             return report
-        prompt += '\n이전 응답은 원문/대본에 실제 존재하는 인용 근거가 없어 무효였다. 정확한 인용을 포함해 새로 검수하라.'
+        directory = getattr(writer, 'state_dir', None)
+        if isinstance(directory, Path):
+            key = hashlib.sha256((text+sources+kind).encode()).hexdigest()[:16]
+            (directory/f'review-rejected-{key}-{attempt}.json').write_text(
+                json.dumps(dict(report=report, errors=errors), ensure_ascii=False, indent=2), encoding='utf-8')
+        prompt += ('\n이전 응답의 검증 실패 항목:\n' + '\n'.join(errors)
+                   + '\n관련 인용은 위 대본과 자료에서 그대로 복사하세요. 의역·말줄임표·기억에 의한 인용 금지. '
+                   '실제 오류가 없으면 통과 여부를 정직하게 재평가하되 점수를 억지로 높이지 마세요.')
     raise RuntimeError('Reviewer did not ground its findings; refusing unsupported repair or publication')
 
 

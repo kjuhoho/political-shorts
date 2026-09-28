@@ -4,7 +4,7 @@ import os
 import time
 import hashlib
 from pathlib import Path
-from groq import Groq, RateLimitError
+from groq import Groq, RateLimitError, APIConnectionError
 
 
 class Writer:
@@ -16,6 +16,7 @@ class Writer:
             raise RuntimeError('No supported model available')
         self.calls, self.tokens, self.last = 0, 0, 0.0
         self.cache_hits, self.uncertain_tokens = 0, 0
+        self.connection_retries = 0
         self.state_dir = Path(state_dir) if state_dir else None
         self.cache = {}
         if self.state_dir:
@@ -31,7 +32,8 @@ class Writer:
             for name, data in (
                 ('llm-cache.json', self.cache),
                 ('usage.json', dict(calls=self.calls, tokens=self.tokens,
-                                   cache_hits=self.cache_hits, uncertain_token_reserve=self.uncertain_tokens))):
+                                   cache_hits=self.cache_hits, uncertain_token_reserve=self.uncertain_tokens,
+                                   connection_retries=getattr(self, 'connection_retries', 0)))):
                 path = self.state_dir/name
                 temp = path.with_suffix('.tmp')
                 temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -62,6 +64,16 @@ class Writer:
                           {'role': 'user', 'content': prompt}])
         except RateLimitError:
             raise RuntimeError('Groq quota reached; stop without using shorts credentials') from None
+        except APIConnectionError:
+            # Includes SDK timeout errors. The first request may have consumed
+            # tokens, so retain its reservation. Retry only this request once
+            # per execution, under the same call/token budget and pacing.
+            if getattr(self, 'connection_retries', 0) >= 1:
+                raise
+            self.connection_retries = 1
+            self.checkpoint()
+            print('Transient LLM connection failure: one budgeted request retry', flush=True)
+            return self.ask(prompt, limit)
         if result.usage:
             self.tokens += result.usage.total_tokens
             self.uncertain_tokens -= reserve

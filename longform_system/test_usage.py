@@ -4,9 +4,36 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from .llm import Writer
+from groq import APIConnectionError
+import httpx
 
 
 class UsageGuards(unittest.TestCase):
+    @patch('longform_system.llm.time.sleep')
+    def test_connection_retry_is_bounded_and_keeps_unknown_usage(self, _):
+        with tempfile.TemporaryDirectory() as folder:
+            w = self.writer(folder)
+            w.client.chat.completions.create.side_effect = APIConnectionError(
+                request=httpx.Request('POST', 'https://example.invalid'))
+            with self.assertRaises(APIConnectionError):
+                w.ask('prompt')
+            self.assertEqual(w.calls, 2)
+            self.assertEqual(w.connection_retries, 1)
+            self.assertEqual(w.uncertain_tokens, 2*(len('prompt')+1024+1600))
+
+    @patch('longform_system.llm.time.sleep')
+    def test_successful_retry_does_not_repeat_completed_requests(self, _):
+        with tempfile.TemporaryDirectory() as folder:
+            w = self.writer(folder)
+            success = w.client.chat.completions.create.return_value
+            w.client.chat.completions.create.side_effect = [APIConnectionError(
+                request=httpx.Request('POST', 'https://example.invalid')), success]
+            self.assertEqual(w.ask('prompt'), 'answer')
+            self.assertEqual(w.ask('prompt'), 'answer')
+            self.assertEqual(w.calls, 2)
+            self.assertEqual(w.tokens, 100)
+            self.assertGreater(w.uncertain_tokens, 0)
+
     def writer(self, folder):
         w = object.__new__(Writer)
         w.model = 'test-model'
