@@ -76,6 +76,10 @@ jobs:
           LONGFORM_AUTO_PUBLISH: ${{ secrets.LONGFORM_AUTO_PUBLISH }}
           GH_TOKEN: ${{ github.token }}
           RESUME_RUN: ${{ inputs.resume_run }}
+          LONGFORM_TTS_PROVIDER: ${{ vars.LONGFORM_TTS_PROVIDER }}
+          LONGFORM_FISH_API_KEY: ${{ secrets.LONGFORM_FISH_API_KEY }}
+          LONGFORM_FISH_VOICE_ID: ${{ secrets.LONGFORM_FISH_VOICE_ID }}
+          LONGFORM_FISH_USE_ACK: ${{ vars.LONGFORM_FISH_USE_ACK }}
         run: |
           publish=""
           if [ "${{ github.event_name }}" = "schedule" ] && [ "$LONGFORM_AUTO_PUBLISH" = "true" ]; then publish="--publish"; fi

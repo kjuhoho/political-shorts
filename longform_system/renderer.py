@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 import edge_tts
+from .fish_audio import provider, validate_config, synthesize
 
 W, H, FPS = 1920, 1080, 30
 PALETTES = [(12, 28, 48), (20, 48, 71), (43, 37, 70), (23, 59, 58), (62, 42, 32)]
@@ -52,6 +53,9 @@ def clean_script(path: Path) -> list[tuple[str, str]]:
 
 
 async def make_audio(text: str, output: Path, voice: str) -> None:
+    if provider() == 'fish':
+        await asyncio.to_thread(synthesize, text, output)
+        return
     await edge_tts.Communicate(text, voice=voice, rate="-5%").save(str(output))
 
 
@@ -111,6 +115,7 @@ def run(cmd: list[str]) -> None:
 
 
 def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict:
+    validate_config()
     work = output.parent / f".{output.stem}_work"
     work.mkdir(parents=True, exist_ok=True)
     scenes = clean_script(script_path)
@@ -118,9 +123,19 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         raise ValueError("A longform script needs at least five narration chunks")
     # Measure natural narration before spending time encoding every scene.
     # Keep this diagnostic audio so a length hold is concrete and reviewable.
-    timing_audio = output.with_suffix('.timing.mp3')
-    asyncio.run(make_audio(' '.join(text for _,text in scenes), timing_audio, voice))
-    spoken_seconds = duration(timing_audio)
+    prepared_audio = provider() == 'fish'
+    if prepared_audio:
+        if len(scenes) > 60 or sum(len(t.encode()) for _,t in scenes) > 12000:
+            raise ValueError('Fish per-video request/text budget exceeded')
+        spoken_seconds = 0
+        for i, (_, text) in enumerate(scenes):
+            mp3 = work / f'{i:02d}.mp3'
+            asyncio.run(make_audio(text, mp3, voice))
+            spoken_seconds += duration(mp3)
+    else:
+        timing_audio = output.with_suffix('.timing.mp3')
+        asyncio.run(make_audio(' '.join(text for _,text in scenes), timing_audio, voice))
+        spoken_seconds = duration(timing_audio)
     output.with_suffix('.timing.json').write_text(json.dumps({'natural_duration_s':spoken_seconds}), encoding='utf-8')
     if not 240 <= spoken_seconds <= 360:
         raise ValueError(f'Natural narration lasts {spoken_seconds:.1f}s; 5-minute length policy not met')
@@ -142,7 +157,8 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         if label not in seen_labels:
             Image.open(png).save(qa / f'{i:02d}.png')
             seen_labels.add(label)
-        asyncio.run(make_audio(text, mp3, voice))
+        if not prepared_audio:
+            asyncio.run(make_audio(text, mp3, voice))
         seconds = duration(mp3)
         frames = max(1, round(seconds * FPS))
         run(["ffmpeg", "-y", "-loop", "1", "-i", str(png), "-i", str(mp3),
@@ -157,7 +173,7 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
     run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c", "copy", str(output)])
     actual = duration(output)
     manifest = {"video": str(output), "duration_s": actual,
-                "scenes": manifest_scenes, "source_script": str(script_path)}
+                "scenes": manifest_scenes, "source_script": str(script_path), "tts_provider":provider()}
     output.with_suffix(".render.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 

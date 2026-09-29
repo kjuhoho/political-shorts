@@ -144,6 +144,8 @@ def main():
     ap.add_argument('--output-dir', type=Path, default=ROOT/'longform_output')
     ap.add_argument('--resume-dir', type=Path)
     args = ap.parse_args()
+    from .fish_audio import validate_config
+    validate_config()  # Stop before news/LLM spending if voice settings are incomplete.
     args.output_dir.mkdir(parents=True, exist_ok=True)
     day = now().date().isoformat()
     if args.publish:

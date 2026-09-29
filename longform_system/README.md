@@ -1,5 +1,31 @@
 # 오늘의엔터 롱폼 시스템
 
+## Fish Audio opt-in
+
+Connection code is installed but the default remains Edge TTS. No Fish API
+requests are made until explicitly configured. Create your own voice model in
+Fish Audio first; never put the API key or voice recordings in this repository.
+
+GitHub Actions secrets:
+- `LONGFORM_FISH_API_KEY`: Fish API key (not a Groq/OpenAI key)
+- `LONGFORM_FISH_VOICE_ID`: your own saved voice model/reference ID
+
+GitHub Actions variables, set only after reviewing Fish's current usage terms:
+- `LONGFORM_TTS_PROVIDER=fish`
+- `LONGFORM_FISH_USE_ACK=true`: acknowledgement of voice rights, provider data
+  retention/model-improvement use and applicable commercial usage conditions
+
+Only `s2.1-pro-free` is allowed. No paid fallback, automatic retry, or voice
+substitution. Free availability and commercial rights must be rechecked before
+activation: https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits
+
+Fish audio is synthesized once per scene, then reused for timing and encoding.
+Matching completed local files are hash-checked and reused in the same working
+directory. Cache is not yet restored between separate GitHub runs. Ambiguous
+requests stop rather than silently spending again. Per video: at most 60 scenes
+and 12,000 UTF-8 text bytes. Unit tests use mocked HTTP; real voice quality and
+account access remain unverified until credentials and user consent are ready.
+
 ## Publication contract
 
 Only `longform_system/` and its dedicated workflows are owned by this pipeline.
