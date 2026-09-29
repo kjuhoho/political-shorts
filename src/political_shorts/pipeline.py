@@ -310,7 +310,9 @@ def _process_story(
                 out.safety_warnings = [*out.safety_warnings,
                                        "구조 검사 미충족(보장 발행이라 게시는 진행): " + "; ".join(v["code"] for v in _viol)]
         else:
-            hold_publish = (not qr.publishable) or bool(_viol)
+            # A render/sync defect that survived the re-render above means the FILE is broken (the 2026-09-23
+            # incident shipped as a 33.5s file of a 59.9s story). A broken file never ships, whatever it scored.
+            hold_publish = (not qr.publishable) or bool(_viol) or _render_defect(qr)
         if _viol:
             out.safety_warnings = [*out.safety_warnings,
                                    "구조 검사 미충족 — 자동 게시 보류: " + "; ".join(v["code"] for v in _viol)]
@@ -318,6 +320,7 @@ def _process_story(
         if do_publish and hold_publish:
             out.reason = (f"보류: {qr.band} (quality {qr.score}/100)"
                           + (f", 구조 검사 미충족({', '.join(v['code'] for v in _viol)})" if _viol else "")
+                          + (", 렌더 길이/싱크 결함" if _render_defect(qr) else "")
                           + " — 빌드 완료, 게시 안 함")
             log.warning("cluster %d built but held from publish (quality=%d/%s)",
                         cluster_id, qr.score, qr.band)

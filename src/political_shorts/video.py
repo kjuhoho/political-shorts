@@ -923,7 +923,9 @@ def _assemble(ffmpeg: str, clips: list[Path], durs: list[float],
     ]
     try:
         _run(cmd)
-        got = probe_duration(out_mp4, cfg)
+        # the SHORTER stream, not the container: an xfade whose video ran out early still reports the full
+        # length at container level (see playable_duration)
+        got = playable_duration(out_mp4, cfg)
         expected = acc
         if got > 0 and abs(got - expected) > max(1.5, 0.08 * expected):
             # The join must be as long as the clips it joins (minus the overlaps). If not, scenes were
@@ -1079,7 +1081,7 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
 
         # reconcile with the ASSEMBLED file — if xfade/ffmpeg landed elsewhere,
         # scale the timeline to it so meta["timeline"] never lies about sync.
-        asm = probe_duration(narration_mp4, cfg)
+        asm = playable_duration(narration_mp4, cfg)
         if asm > 1.0 and tl.total_s > 1.0 and abs(asm - tl.total_s) > 0.8:
             log.warning("assembled %.1fs != timeline %.1fs — rescaling timeline", asm, tl.total_s)
             k = asm / tl.total_s
@@ -1099,6 +1101,19 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
             shutil.move(str(narration_mp4), str(out_path))
             log.info("video rendered %s (%.1fs, %d segs, %s)",
                      out_path.name, total_dur, total, media_desc)
+
+        # Last word on the length belongs to the FILE, both streams of it: whatever happened upstream, the
+        # timeline and the reported duration must describe what a viewer will actually see.
+        real = playable_duration(out_path, cfg)
+        if real > 1.0 and abs(real - total_dur) > 0.8:
+            log.warning("rendered file plays %.1fs but the timeline says %.1fs (%s) — trusting the file",
+                        real, total_dur, _stream_durations(out_path, cfg))
+            k = real / total_dur if total_dur > 0 else 1.0
+            for s in tl.scenes:
+                s.start = round(s.start * k, 3); s.end = round(s.end * k, 3)
+                s.clip_s = round(s.clip_s * k, 3)
+            tl.total_s = round(real, 3)
+            total_dur = real
 
         return RenderResult(out_path, round(total_dur, 2), total, tl)
     finally:
@@ -1126,13 +1141,20 @@ def _mix_bgm(ffmpeg: str, video_in: Path, bgm: Path, duration: float, out_path: 
                 f"[0:a][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]")
     else:
         filt = f"{bed};[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]"
-    _run([
-        ffmpeg, "-y", "-loglevel", "error",
-        "-i", str(video_in), "-stream_loop", "-1", "-i", str(bgm),
-        "-filter_complex", filt, "-map", "0:v", "-map", "[a]",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
-        "-movflags", "+faststart", "-shortest", str(out_path),
-    ])
+    base = [ffmpeg, "-y", "-loglevel", "error",
+            "-i", str(video_in), "-stream_loop", "-1", "-i", str(bgm),
+            "-filter_complex", filt, "-map", "0:v", "-map", "[a]",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"]
+    _run([*base, "-shortest", str(out_path)])
+
+    # `-shortest` ends the file with its shortest stream, so a narration file whose video is short (the 2026-09-23
+    # incident: video 33.5s, audio 59.9s) came out cut to a third of the story. Mixing music must never shorten
+    # the video: if it did, mix again without `-shortest` and keep every frame that went in.
+    before, after = playable_duration(video_in, cfg), playable_duration(out_path, cfg)
+    if before > 1.0 and after > 0 and before - after > 0.5:
+        log.warning("bgm mix shortened the video %.1fs -> %.1fs (%s) — mixing again without -shortest",
+                    before, after, _stream_durations(video_in, cfg))
+        _run([*base, str(out_path)])
 
 
 def _ffprobe_bin(cfg: Settings) -> str | None:
@@ -1157,6 +1179,36 @@ def _stream_durations(path: Path, cfg: Settings | None = None) -> str:
                         for s in json.loads(out.stdout).get("streams", []))
     except Exception:
         return "n/a"
+
+
+def stream_seconds(path: Path, cfg: Settings | None = None) -> dict[str, float]:
+    """{'video': 33.5, 'audio': 59.9} — the length of each stream; a stream that cannot be read is missing."""
+    exe = _ffprobe_bin(cfg or settings)
+    out: dict[str, float] = {}
+    if not exe:
+        return out
+    try:
+        r = subprocess.run([exe, "-v", "error", "-show_entries", "stream=codec_type,duration",
+                            "-of", "json", str(path)], capture_output=True, text=True, timeout=25)
+        for s in json.loads(r.stdout).get("streams", []):
+            try:
+                out[str(s.get("codec_type"))] = float(s.get("duration"))
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        return {}
+    return out
+
+
+def playable_duration(path: Path, cfg: Settings | None = None) -> float:
+    """How long the file actually PLAYS: the SHORTER of its two streams.
+
+    Not the container's duration. A join whose video ran out early (reproduced locally, 2026-09-23) reads
+    video=33.5s audio=59.9s, and the container reports 59.9s — so every length guard passed, the music mix's
+    `-shortest` then cut the file to 33.5s, and half the video was gone with nothing flagged."""
+    st = stream_seconds(path, cfg)
+    have = [v for v in (st.get("video", 0.0), st.get("audio", 0.0)) if v > 0]
+    return min(have) if have else probe_duration(path, cfg)
 
 
 def probe_duration(path: Path, cfg: Settings | None = None) -> float:

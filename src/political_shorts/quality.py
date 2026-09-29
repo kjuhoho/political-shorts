@@ -62,14 +62,24 @@ def _toks(s: str) -> set[str]:
 
 
 def _probe_duration(video_path: Path, cfg) -> float:
+    """How long the file PLAYS — the shorter of video and audio, not the container's duration, which reports the
+    longer stream and hid a video cut to a third of its length (2026-09-23)."""
     exe = (getattr(cfg, "ffmpeg_path", "") or "ffmpeg").replace("ffmpeg", "ffprobe")
     if not (shutil.which(exe) or Path(exe).exists()):
         return 0.0
     try:
-        out = subprocess.run([exe, "-v", "error", "-show_entries", "format=duration",
-                              "-of", "json", str(video_path)],
+        out = subprocess.run([exe, "-v", "error", "-show_entries", "stream=codec_type,duration",
+                              "-show_entries", "format=duration", "-of", "json", str(video_path)],
                              capture_output=True, text=True, timeout=20)
-        return float(json.loads(out.stdout)["format"]["duration"])
+        data = json.loads(out.stdout)
+        streams = {}
+        for s in data.get("streams", []):
+            try:
+                streams[str(s.get("codec_type"))] = float(s.get("duration"))
+            except (TypeError, ValueError):
+                continue
+        have = [v for v in (streams.get("video", 0.0), streams.get("audio", 0.0)) if v > 0]
+        return min(have) if have else float(data["format"]["duration"])
     except Exception:
         return 0.0
 
