@@ -56,10 +56,38 @@ _CURIOUS = re.compile(r"\?|왜|일까|할까|인가|진짜|뭘까|무엇")
 
 
 def _curiosity_first(lines: list[str]) -> str:
-    """Lead with the line that raises the question ("진짜 이유는? 김승원 전격 사퇴")."""
-    if len(lines) >= 2 and _CURIOUS.search(lines[-1]) and not _CURIOUS.search(lines[0]):
-        return f"{lines[-1]} {' '.join(lines[:-1])}"
-    return " ".join(lines)
+    """Curiosity leads — UNLESS the subject line names a real person or party,
+    in which case the name leads and the question follows it.
+
+    Measured 2026-09-30 on 144 Korean-politics Shorts that passed 100k views in
+    the previous 30 days (YouTube Data API, ordered by viewCount): 98 of them
+    (68%) carry a politician's name or their verbatim words inside the first 12
+    characters, and only 35 (24%) contain a "?" at all — of the top 30, just 4
+    end on one. Our titles were the exact inverse: 32 of 48 opened on a
+    contentless stub ("무슨 일일까요?", "진짜 이유는?", "왜 논란일까?") and
+    pushed the only word a scroller recognises — the name — behind it.
+
+    So: "진짜 의도는? 이재명 '노무현 평전' 선물"  ->  "이재명 '노무현 평전'
+    선물, 진짜 의도는?".  A faceless story ("실거주 유예 내년까지" /
+    "연장할까?") has no name to lead with and keeps curiosity in front.
+    """
+    if len(lines) < 2 or not _CURIOUS.search(lines[-1]) or _CURIOUS.search(lines[0]):
+        return " ".join(lines)
+    subject = " ".join(lines[:-1])
+    if _names_someone(subject):
+        return f"{subject.rstrip(' ,')}, {lines[-1]}"
+    return f"{lines[-1]} {subject}"
+
+
+def _names_someone(text: str) -> bool:
+    """True when the line leads with a politician / party / the president —
+    the thing a scrolling viewer actually recognises."""
+    from .hook import detect_entities
+
+    t = clean_text(text)
+    ent = detect_entities(t)
+    return bool(ent.politicians or ent.parties or ent.president
+                or any(w in t for w in ("대통령", "청와대", "대통령실")))
 
 
 def _cut_words(text: str, limit: int) -> str:

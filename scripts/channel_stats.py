@@ -14,6 +14,7 @@ carries its n, and `weak` marks the ones too small to draw anything from.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import statistics
 import sys
@@ -31,6 +32,7 @@ from political_shorts.config import settings
 KST = timezone(timedelta(hours=9))
 API = "https://www.googleapis.com/youtube/v3/videos"
 MIN_BUCKET = 4          # fewer videos than this in a bucket: report it, never conclude from it
+NO_DISTRIBUTION = 100   # below this a Short never entered the feed: a separate event, not a weak video
 
 
 def fetch_videos(ids: list[str], key: str) -> dict[str, dict[str, Any]]:
@@ -101,6 +103,36 @@ def _bucket(rows: list[dict[str, Any]], key) -> list[dict[str, Any]]:
     return sorted(out, key=lambda b: b["median_views"], reverse=True)
 
 
+def _distribution(live: list[dict[str, Any]]) -> dict[str, Any]:
+    """Is the view count telling us anything at all?
+
+    A Short that the feed actually promotes is heavy-tailed — the best one runs
+    many times the median. Measured 2026-09-30 over this channel's whole life
+    (102 uploads, 14 months, two completely different content categories) the
+    best video was 1.3x the median in the political era and every bucket —
+    length, frame, weekday, slot — landed within a few percent of 1,100 views.
+    That is a fixed test allocation, not an audience: while `pinned` is true,
+    NO comparison of view counts between our own videos means anything, and the
+    only in-house signal worth reading is `like_rate` / comments.
+    """
+    if len(live) < 8:
+        return {"n": len(live), "pinned": False, "note": "too few videos to say"}
+    vv = sorted(r["views"] for r in live)
+    med = statistics.median(vv)
+    band = [v for v in vv if 0.85 * med <= v <= 1.2 * med]
+    likes = [r["likes"] / r["views"] for r in live if r.get("views")]
+    return {
+        "n": len(vv),
+        "median_views": round(med, 1),
+        "max_over_median": round(vv[-1] / med, 2),
+        "share_in_band": round(len(band) / len(vv), 2),     # ±15/20% of the median
+        # a promoted Short runs >=3x its channel's median; nothing here ever has
+        "pinned": vv[-1] / med < 2.0 and len(band) / len(vv) >= 0.6,
+        "median_like_rate": round(statistics.median(likes), 4) if likes else 0.0,
+        "zero_comment_share": round(sum(1 for r in live if not r.get("comments")) / len(live), 2),
+    }
+
+
 def title_shape(title: str) -> str:
     t = title.replace("#shorts", "").strip()
     if "?" in t:
@@ -121,14 +153,27 @@ def report(days: int) -> dict[str, Any]:
         r.update(stats.get(r["video_id"], {}))
         r["title_shape"] = title_shape(r.get("title", ""))
         r["engagement"] = round((r.get("likes", 0) + r.get("comments", 0)) / max(1, r.get("views", 0)), 4)
-    live = [r for r in rows if r.get("views") is not None and r.get("title")]
+    published = [r for r in rows if r.get("views") is not None and r.get("title")]
+    dead = [r for r in published if r["views"] < NO_DISTRIBUTION]
+    live = [r for r in published if r["views"] >= NO_DISTRIBUTION]
+    for r in dead:
+        r["no_distribution"] = True
     return {
         "generated_at": datetime.now(KST).isoformat(timespec="seconds"),
         "days": days,
         "videos": rows,
         "missing_from_api": [r["video_id"] for r in rows if not r.get("title")],   # private / deleted
+        # Videos that never entered the Shorts feed at all. They are NOT weak videos and
+        # must not be averaged with them: on 2026-09-30 four of them (4/5/6/10 views) sat
+        # 26x below the next-worst video, and because three happened to land on Wednesdays
+        # they alone produced a fake "수요일 median 698" that vanishes (1,058) once they are
+        # taken out. Their cause is a distribution event (upload held back, or limited
+        # distribution), visible only in YouTube Studio — never the title or the clock.
+        "no_distribution": [{"video_id": r["video_id"], "kst": r["kst"], "views": r["views"],
+                             "title": r["title"]} for r in dead],
         "totals": {"videos": len(live), "views": sum(r.get("views", 0) for r in live),
                    "median_views": round(statistics.median([r["views"] for r in live]), 1) if live else 0},
+        "distribution": _distribution(live),
         "by_frame": _bucket(live, lambda r: r.get("frame") or "(none)"),
         "by_slot": _bucket(live, lambda r: r["slot"]),
         "by_weekday": _bucket(live, lambda r: r["weekday"]),
@@ -141,6 +186,10 @@ def report(days: int) -> dict[str, Any]:
 
 
 def main() -> int:
+    # a Korean console is cp949 by default and dies on an em dash / "≤" halfway
+    # through the table, losing the whole run's output
+    with contextlib.suppress(Exception):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--json", type=Path, default=None)
@@ -164,6 +213,17 @@ def main() -> int:
         parts = [f"{b['bucket']} n={b['n']} med={b['median_views']}{' (weak)' if b['weak'] else ''}"
                  for b in rep[name]]
         print(f"\n{name}: " + " | ".join(parts))
+    d = rep["distribution"]
+    if d.get("pinned"):
+        print(f"\n!! VIEWS ARE PINNED: best video is only {d['max_over_median']}x the median and "
+              f"{int(d['share_in_band'] * 100)}% sit within a fifth of it. Nothing above is a finding: "
+              f"no bucket difference in these view counts means anything until one video breaks out. "
+              f"Read like_rate ({d['median_like_rate']}) and comments "
+              f"({int(d['zero_comment_share'] * 100)}% have none) instead.")
+    if rep["no_distribution"]:
+        print("\nnever reached the feed (a distribution event, NOT a weak video — "
+              "check YouTube Studio, not the title): "
+              + ", ".join(f"{r['kst']} {r['views']}v" for r in rep["no_distribution"]))
     if rep["missing_from_api"]:
         print("\nnot public / not found: " + ", ".join(rep["missing_from_api"]))
     return 0

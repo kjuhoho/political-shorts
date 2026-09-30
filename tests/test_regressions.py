@@ -424,3 +424,19 @@ def test_incident_the_research_plan_always_asks_for_the_other_side(monkeypatch):
     monkeypatch.setattr(L, "complete", boom)
     plan = research.plan_research("정부 대북 의료장비 지원 추진", "통일부", "", settings)
     assert len(plan["queries"]) == 2 and "비판 반박" in plan["queries"][1]
+
+
+def test_compatibility_hanja_surname_survives_the_title_card():
+    """Korean wires write the president's surname as U+F9E1, the CJK
+    *compatibility* ideograph for 李, not U+674E. The tofu map only knew U+674E,
+    so the "not Hangul" filter right after it silently DELETED the character and
+    the on-screen title for a story headlined "李, 농지조사에 담긴 충격적 의미"
+    (the same story ran to 1.8M views on another channel) would have opened on
+    ", 농지조사에 담긴…" with its subject gone. Normalise, then map."""
+    from political_shorts.script_gen import _chip_safe, _title_safe
+
+    assert _title_safe("李, 농지조사에 담긴 충격적 의미") == "이 농지조사에 담긴 충격적 의미"
+    assert _chip_safe("李 대통령") == "이 대통령"
+    # the plain unified ideograph still works, and so does the kept punctuation
+    assert _title_safe("李 대통령 유출 경위 조사할까?") == "이 대통령 유출 경위 조사할까?"
+    assert _chip_safe("韓총리") == "한총리"

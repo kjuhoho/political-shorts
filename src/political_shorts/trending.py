@@ -89,6 +89,35 @@ def google_trending_kr(cfg: Settings | None = None, ttl_min: int = 60) -> list[d
 
 _TREND_MIN = 1.5   # below this a cluster is treated as "not trending" (no reorder)
 
+# A politics Short is about a PERSON, not about a procedure. Measured on this
+# channel's own last 30 days (2026-09, 48 public Shorts, YouTube Data API):
+# of the 15 whose lead headline named no politician, 5 (33%) fell below the
+# channel's normal 950-view floor; of the 33 that named one, 1 (3%) did
+# (Fisher exact p = 0.009). Everything that landed at the very bottom was a
+# faceless procedure — "패스트트랙 심사기간 330일→90일", "'사법통제부' 명칭
+# 변경", "토허구역 실거주 의무 유예", "명절 연휴 절도 기승" (262 views, the
+# worst live video of the month). The market says the same: of 144 Korean
+# politics Shorts above 100k views in those same 30 days, 98 (68%) put a
+# politician's name or their verbatim words inside the first 12 characters.
+# So a named human is now a tie-breaker in the build order. Deliberately a
+# TIE-BREAKER and not a gate: a faceless story still gets made, it just goes
+# after the ones with a face, and a real trend match still outranks both.
+_ACTOR_PRESIDENT = ("대통령", "청와대", "대통령실")
+
+
+def actor_score(headline: str) -> float:
+    """1.0 if the lead headline names a politician or the president, 0.4 for a
+    party only, 0.0 for a faceless procedure/policy line."""
+    from .hook import detect_entities
+
+    text = clean_text(headline or "")
+    if not text:
+        return 0.0
+    ent = detect_entities(text)
+    if ent.politicians or ent.president or any(p in text for p in _ACTOR_PRESIDENT):
+        return 1.0
+    return 0.4 if ent.parties else 0.0
+
 
 def cluster_trend_score(texts: list[str], trending: list[dict]) -> tuple[float, str]:
     """(score, matched-term). Deliberately STRICT — Korea's trending-now list is
@@ -134,7 +163,7 @@ def rerank_by_trend(cluster_ids: list[int], cfg: Settings | None = None) -> list
     try:
         from .db import cluster_articles, connect
 
-        scored: list[tuple[float, int, int]] = []
+        scored: list[tuple[float, float, int, int]] = []
         any_hot = False
         with connect(cfg.db_path) as conn:
             for i, cid in enumerate(cluster_ids):
@@ -147,12 +176,16 @@ def rerank_by_trend(cluster_ids: list[int], cfg: Settings | None = None) -> list
                     any_hot = True
                     log.info("cluster %d rides trend '%s' (score %.1f): %s",
                              cid, term, s, (rows[0]["title"][:50] if rows else ""))
-                scored.append((s, i, cid))
-        if not any_hot:
+                # the video's title/hook are built from the LEAD headline, so that
+                # is the only text that decides whether this story has a face
+                a = actor_score(rows[0]["title"] if rows else "")
+                scored.append((s, a, i, cid))
+        if not any_hot and not any(a for _, a, _, _ in scored):
             log.info("no cluster matches a current KR trend — keeping newsworthiness order")
             return cluster_ids
-        scored.sort(key=lambda t: (-t[0], t[1]))     # hot first, ties keep order
-        ordered = [cid for _, _, cid in scored]
+        # hot first, then a named human, then the original newsworthiness order
+        scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
+        ordered = [cid for _, _, _, cid in scored]
         if ordered != cluster_ids:
             log.info("build order re-ranked by trend: %s -> %s",
                      cluster_ids[:5], ordered[:5])

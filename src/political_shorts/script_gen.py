@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import unicodedata
 from typing import Any
 
 from .analyze import analyze
@@ -598,6 +599,36 @@ def _fit_duration(segments: list[dict[str, Any]], budget: float = MAX_VIDEO_SECO
     return segments
 
 
+# the bundled fonts have no CJK-Han glyph — 李/尹/文 render as tofu on the chip /
+# title. Map the common ones back to Hangul, then drop anything else that isn't
+# Hangul/digit/space.
+_HANJA = {"李": "이", "尹": "윤", "文": "문", "朴": "박", "安": "안", "韓": "한",
+          "洪": "홍", "秋": "추", "與": "여", "野": "야", "北": "북", "美": "미",
+          "中": "중", "日": "일", "檢": "검"}
+
+
+def _dehanja(s: str) -> str:
+    """NFKC first, THEN the map. Korean wires write the president's surname as
+    U+F9E1 (the CJK *compatibility* ideograph for 李), not U+674E — e.g. the
+    1.8M-view "李, 농지조사에 담긴 충격적 의미". Without normalising, the map misses
+    it and the non-Hangul filter below then DELETES it, so the title card for
+    that story would have opened on ", 농지조사에 담긴..." with the subject gone.
+    """
+    return "".join(_HANJA.get(c, c) for c in unicodedata.normalize("NFKC", s))
+
+
+def _chip_safe(s: str) -> str:
+    s = re.sub(r"[^가-힣0-9%·\s]", " ", _dehanja(s))
+    return re.sub(r"\s+", " ", s).strip(" ·")
+
+
+def _title_safe(s: str) -> str:
+    """like _chip_safe but keeps the punctuation the user's own titles use
+    ("유출 경위 조사할까?", "'전격' 사퇴")."""
+    s = re.sub(r"[^가-힣0-9%\s?!'\"·]", " ", _dehanja(s)).replace('"', "'")
+    return re.sub(r"\s+", " ", s).strip(" ·")
+
+
 def _sources_from_rows(rows: list[sqlite3.Row]) -> list[dict[str, str]]:
     seen: set[str] = set()
     out: list[dict[str, str]] = []
@@ -1137,25 +1168,6 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
                 sc["min_read_s"] = round(sc["min_read_s"] * read_scale, 2)
 
     est_seconds = round(sum(_seg_seconds(s) for s in segments), 1)
-
-    # the bundled fonts have no CJK-Han glyph — 李/尹/文 render as tofu on the
-    # chip / title. Map the common ones back to Hangul, then drop anything else
-    # that isn't Hangul/digit/space.
-    _HANJA = {"李": "이", "尹": "윤", "文": "문", "朴": "박", "安": "안", "韓": "한",
-              "洪": "홍", "秋": "추", "與": "여", "野": "야", "北": "북", "美": "미",
-              "中": "중", "日": "일", "檢": "검"}
-
-    def _chip_safe(s: str) -> str:
-        s = "".join(_HANJA.get(c, c) for c in s)
-        s = re.sub(r"[^가-힣0-9%·\s]", " ", s)
-        return re.sub(r"\s+", " ", s).strip(" ·")
-
-    def _title_safe(s: str) -> str:
-        # like _chip_safe but keeps the punctuation the user's own titles use
-        # ("유출 경위 조사할까?", "'전격' 사퇴")
-        s = "".join(_HANJA.get(c, c) for c in s)
-        s = re.sub(r"[^가-힣0-9%\s?!'\"·]", " ", s).replace('"', "'")
-        return re.sub(r"\s+", " ", s).strip(" ·")
 
     def _title_line(s: str, limit: int = 16) -> str:
         s = _title_safe(_glyph_safe(s)).strip()

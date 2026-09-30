@@ -80,3 +80,40 @@ def test_no_api_key_says_so_instead_of_pretending(monkeypatch, tmp_path):
     monkeypatch.setattr(CS, "settings", type("S", (), {"youtube_api_key": "", "data_dir": tmp_path})())
     rep = CS.report(days=30)
     assert "YOUTUBE_API_KEY" in rep["error"] and rep["videos"]
+
+
+def test_a_video_that_never_reached_the_feed_is_separated_not_averaged_in():
+    """2026-09-30 incident: four Shorts sat at 4/5/6/10 views, 26x below the
+    next-worst video. Three of them happened to land on a Wednesday, and that
+    alone dragged the Wednesday bucket to a median of 698 while every other
+    weekday sat near 1,100 — a "Wednesday is bad" finding that does not exist
+    (Wednesday is 1,058 without them). Zero-distribution videos are a separate
+    event and never get averaged with videos the feed actually carried."""
+    rows = [{"views": 5, "weekday": "수"}, {"views": 6, "weekday": "수"},
+            {"views": 1100, "weekday": "수"}, {"views": 1016, "weekday": "수"},
+            {"views": 1200, "weekday": "목"}]
+    live = [r for r in rows if r["views"] >= CS.NO_DISTRIBUTION]
+    out = CS._bucket(live, lambda r: r["weekday"])
+    wed = next(b for b in out if b["bucket"] == "수")
+    assert wed["n"] == 2 and wed["median_views"] == 1058.0     # not 553, not 698
+
+
+def test_pinned_views_are_flagged_so_no_bucket_gets_read_as_a_finding():
+    """Every 2026-09 bucket — length, frame, weekday, slot — landed within a few
+    percent of 1,100 views, and the best video of the month was 1.31x the median.
+    A feed that is actually promoting is heavy-tailed, so that flatness means the
+    view column carries no signal at all and must say so out loud."""
+    pinned = [{"views": v, "likes": 20, "comments": 0} for v in
+              (989, 1003, 1019, 1035, 1048, 1058, 1065, 1085, 1093, 1103, 1112, 1140, 1527)]
+    d = CS._distribution(pinned)
+    assert d["pinned"] and d["max_over_median"] < 2.0 and d["share_in_band"] >= 0.6
+    assert d["zero_comment_share"] == 1.0
+    # a channel with real reach: one video runs away from the pack -> not pinned
+    spread = [{"views": v, "likes": 20, "comments": 3} for v in
+              (400, 700, 900, 1100, 1200, 1400, 9000, 42000, 310000)]
+    assert not CS._distribution(spread)["pinned"]
+
+
+def test_too_few_videos_says_so_instead_of_guessing():
+    assert CS._distribution([{"views": 1, "likes": 0, "comments": 0}] * 3)["pinned"] is False
+    assert "too few" in CS._distribution([{"views": 1, "likes": 0, "comments": 0}] * 3)["note"]
