@@ -293,6 +293,13 @@ def _process_story(
             )
             set_cluster_status(conn, cluster_id, "built")
 
+        # remember the pictures and clips this video used, so tomorrow's reaches for different ones
+        try:
+            from . import asset_memory
+            asset_memory.remember(cfg, asset_memory.keys_of(script.get("images") or []))
+        except Exception as exc:                        # never let book-keeping break a run
+            log.debug("asset memory not updated: %s", exc)
+
         out.status = "built"
         out.video_path = str(video_path)
         report.built += 1

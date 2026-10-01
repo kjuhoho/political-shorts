@@ -146,7 +146,7 @@ jobs:
           if [ -n "$FOCUS" ]; then FOCUS_ARG=(--focus "$FOCUS"); fi
           python -m political_shorts run $PUB --max 1 "${FOCUS_ARG[@]}"
 
-      - name: persist dedup history (commit topic_history.json back)
+      - name: persist dedup + asset history (commit them back)
         if: always()
         continue-on-error: true          # housekeeping — must never fail the run
         run: |
@@ -154,6 +154,8 @@ jobs:
           git config user.name  "political-shorts bot"
           git config user.email "actions@users.noreply.github.com"
           git add -f data/topic_history.json || true
+          # which photos/clips the last videos used, so tomorrow's picks different ones (asset_memory)
+          git add -f data/asset_history.json || true
           if ! git diff --cached --quiet; then
             git commit -m "run: update topic history [skip ci]"
             # other bots push to main too (the longform workflow records its day); a rejected push would lose

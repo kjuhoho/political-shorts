@@ -30,6 +30,7 @@ import requests
 from .config import Settings, settings
 from .images import ImageAsset
 from .hook import Entities, Frame, detect_topic
+from . import asset_memory
 from .logging_setup import get_logger
 from .textutil import clean_text
 
@@ -281,6 +282,7 @@ def collect_footage(
     rest = list(dict.fromkeys(_PEXELS_TERMS.get(frame.kind, []) + _PEXELS_GENERIC))
     rnd.shuffle(rest)
     pexels_terms = list(dict.fromkeys(_TOPIC_PEXELS_TERMS.get(topic, []) + rest))
+    pexels_terms = asset_memory.freshest_first(pexels_terms, cfg)   # a term used this week waits its turn
 
     assets: list[ImageAsset] = []
     seen: set[str] = set()

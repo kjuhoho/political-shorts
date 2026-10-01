@@ -29,6 +29,7 @@ import requests
 
 from .config import Settings, settings
 from .hook import Entities, Frame, detect_topic, pick_actor
+from . import asset_memory
 from .logging_setup import get_logger
 from .textutil import clean_text
 
@@ -52,20 +53,43 @@ MAX_PORTRAITS = 5                  # people faces per video (user wants portrait
 # Judicial Yuan* lead image on ko.wikipedia (generic concept articles), so they
 # are deliberately NOT here. Only titles whose ko-wiki lead image is a real
 # Korean raster photo belong in this pool.
+# Every title here resolves to a real raster lead image on ko.wikipedia — checked live, title by title
+# (2026-09 for the first block, 2026-10-01 for the rest). A title that stops resolving simply falls through to
+# the next one, so a broken entry costs nothing but a slot.
 LOCATION_POOL = [
     "대한민국 국회의사당", "국회의사당역", "여의도", "여의도공원",
-    "광화문광장", "서울광장", "청계천",
-    "서울특별시청", "경복궁", "숭례문", "국립중앙박물관", "북악산",
-    "한강", "서울역",
+    "광화문광장", "서울광장", "청계천", "청계광장",
+    "서울특별시청", "경복궁", "경복궁 광화문", "숭례문", "흥인지문", "덕수궁", "창덕궁",
+    "국립중앙박물관", "국립중앙도서관", "국립서울현충원", "북악산",
+    "한강", "서울역", "남산서울타워", "63빌딩", "코엑스", "용산구", "여의도동",
+    "세종특별자치시", "인천국제공항", "김포국제공항", "서울월드컵경기장",
 ]
-# frame-relevant establishing shots, tried before the shuffled general pool
+# frame-relevant establishing shots, tried before the shuffled general pool. Several per frame on purpose:
+# with one or two, the same building opened four videos out of five (live audit 2026-09-30), and
+# asset_memory can only rotate what the list actually offers.
 _FRAME_LOCATION = {
-    "scandal": ["광화문광장", "대한민국 국회의사당", "서울광장"],
-    "vote": ["대한민국 국회의사당", "국회의사당역", "서울광장"],
-    "clash": ["대한민국 국회의사당", "광화문광장", "서울특별시청"],
-    "personnel": ["대한민국 국회의사당", "서울특별시청"],
-    "poll": ["서울광장", "광화문광장"],
-    "remark": ["대한민국 국회의사당", "광화문광장"],
+    "scandal": ["대법원", "헌법재판소", "법무부 (대한민국)", "대한민국 경찰청",
+                "광화문광장", "대한민국 국회의사당", "서울광장"],
+    "vote": ["대한민국 국회의사당", "국회의사당역", "여의도동", "서울광장"],
+    "clash": ["대한민국 국회의사당", "광화문광장", "서울특별시청", "여의도", "청계광장"],
+    "personnel": ["대한민국 국회의사당", "서울특별시청", "세종특별자치시", "용산구"],
+    "poll": ["서울광장", "광화문광장", "청계광장", "서울역"],
+    "remark": ["대한민국 국회의사당", "광화문광장", "용산구", "여의도"],
+    "appoint": ["대한민국 국회의사당", "세종특별자치시", "용산구"],
+    "economy": ["한국은행", "기획재정부", "국세청 (대한민국)", "코엑스"],
+    "security": ["판문점", "임진각", "도라산역", "오두산 통일전망대"],
+}
+# ministry / agency shots for stories that name one — tried before the frame pool when the headline matches
+MINISTRY_LOCATION = {
+    "기획재정부": "기획재정부", "기재부": "기획재정부", "외교부": "외교부 (대한민국)",
+    "행정안전부": "행정안전부", "행안부": "행정안전부", "복지부": "보건복지부 (대한민국)",
+    "보건복지부": "보건복지부 (대한민국)", "고용노동부": "고용노동부", "노동부": "고용노동부",
+    "국토교통부": "국토교통부", "국토부": "국토교통부", "교육부": "교육부 (대한민국)",
+    "법무부": "법무부 (대한민국)", "경찰": "대한민국 경찰청", "경찰청": "대한민국 경찰청",
+    "한국은행": "한국은행", "국세청": "국세청 (대한민국)", "대법원": "대법원", "법원": "대법원",
+    "헌법재판소": "헌법재판소", "헌재": "헌법재판소",
+    "부산": "부산광역시청", "대구": "대구광역시청", "광주": "광주광역시청",
+    "제주": "제주특별자치도청", "경기도": "경기도청",
 }
 # topic-relevant establishing shots (hook.detect_topic), tried BEFORE the
 # frame pool above — a story about 북한/평양 gets DMZ/Panmunjom imagery
@@ -292,10 +316,15 @@ def collect_images(
     import random as _rnd
     pool = list(LOCATION_POOL)
     _rnd.Random(clean_text(headline)).shuffle(pool)
+    # an institution named in the headline gets its own building before anything generic
+    named = [title for word, title in MINISTRY_LOCATION.items() if word in h]
     locs: list[str] = []
-    for t in _TOPIC_LOCATION.get(topic, []) + _FRAME_LOCATION.get(frame.kind, []) + pool:
+    for t in named + _TOPIC_LOCATION.get(topic, []) + _FRAME_LOCATION.get(frame.kind, []) + pool:
         if t not in locs:
             locs.append(t)
+    # the frame list always leads with the same building, so the same photo opened video after video (four
+    # out of five were the National Assembly). What recent videos used goes to the back of the queue.
+    locs = asset_memory.freshest_first(locs, cfg)
 
     assets: list[ImageAsset] = []
     used: set[str] = set()
