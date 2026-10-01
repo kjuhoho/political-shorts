@@ -102,6 +102,11 @@ def select(articles):
     raise RuntimeError('Three distinct current issues unavailable')
 
 
-def evidence(story):
-    return '\n\n'.join(f"출처 {s['name']} | 발행 {s['published']} | {s['url']}\n{s['title']}\n{s['body'][:2000]}"
-                       for s in story['sources'])
+def evidence(story, budget=4000):
+    """Bound total size; give every source room instead of clipping overseas text."""
+    sources = story['sources'][:4]
+    headers = [f"출처 {s['name']} | {s.get('kind','국내 보도')} | 발행 {s['published']} | {s['url']}\n{s['title']}\n"
+               for s in sources]
+    room = max(0,budget-sum(map(len,headers))-2*len(sources))
+    allowance = room//max(1,len(sources))
+    return '\n\n'.join(h+s['body'][:allowance] for h,s in zip(headers,sources))[:budget]

@@ -22,6 +22,10 @@ RUBRIC = '''100점에서 감점. 주제 일치, 쉬운 배경 설명, 완결된 
 특히 '유엔사'를 '유엔 사무국'으로 바꾸면 기관 오류다. 한국군 작전을 '한미 연합군 작전'으로
 바꾸면 주체 오류다. 예정된 연설을 완료된 연설로 바꾸면 날짜/시제 오류다.
 원문에 있는 불확실한 추정을 확정적 사건으로 바꾸면 사실 오류다. 보도일을 사건일로 쓰지 마라.
+해외 보도는 주제 검색으로 찾은 교차 확인 후보다. 동일 인물·행위·사건일인지 확인하라.
+다른 사건의 내용을 섞거나 공식 발표를 독립적 확인으로 표현하면 차단한다.
+영문 may/could/alleged/planned 및 부정문 번역에서 추정·혐의·예정을 사실로 바꾸면 차단한다.
+국내외 보도가 충돌하면 차이를 귀속하여 설명해야 한다. 없는 해외 검증을 했다고 말하면 차단한다.
 평가는 원문 대비 충실성이다. 외부 진실 여부는 이 호출에서 확인할 수 없다.
 현직 인물이 학습 기억과 다르다는 이유로 원문을 부정하지 마라.
 문제가 있으면 findings에 script_quote(대본의 정확한 연속 인용),
@@ -75,12 +79,19 @@ def publication_reviews_ok(meta):
             and accepted(meta['title_review']))
 
 
-def review(writer, text, sources, kind='script'):
+def review(writer, text, sources, kind='script', source_bundle=None):
     prompt = (f'기준일: {now():%Y년 %m월 %d일} (한국시간)\n{RUBRIC}\n'
               + ('제목 검수다. 명사형 제목과 브리핑 브랜드 문구를 허용한다. 원문 제목을 그대로 복사할 필요는 없다. '
                  '본문용 배경 설명·완결 문장·후속 전망 기준은 적용하지 않는다. 원문 대비 의미 왜곡, 과장, '
                  '명칭 잘림, 혐오, 근거 없는 단정만 평가하라.\n' if kind == 'title' else '') +
               f'검증 자료:\n{sources}\n검수 대상:\n{text}')
+    if source_bundle and any(s.get('language')=='en' for s in source_bundle['sources']):
+        prompt += ('\n추가 JSON 필드 source_checks 배열: 해외 원문 URL마다 '
+                   '{"url":"해외 원문 URL","same_event":true 또는 false,'
+                   '"source_quote":"해외 원문의 정확한 20자 이상 연속 인용",'
+                   '"primary_quote":"첫 국내 원문의 정확한 20자 이상 연속 인용"}. '
+                   '주제 유사성만으로 same_event=true 금지. 인물·행동·사건일이 같은 사건인지 '
+                   '양쪽 인용으로 확인한 경우만 true. 확인 불가면 false. 새 사실을 만들지 마라.')
     for attempt in range(2):
         report = writer.json(prompt, 2000)
         errors = grounding_errors(report, text, sources)

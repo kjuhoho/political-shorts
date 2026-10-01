@@ -73,6 +73,48 @@ Fish Audio remains opt-in and is not activated by this visual upgrade.
 
 ## Publication contract
 
+### Overseas evidence and media
+
+`international.py` now supplements the selected Korean stories with dated full
+text from BBC World, UN News, UK FCDO and the UK Parliament Lords Library feeds.
+Only seven-day material within two days of the primary article, matching at
+least three bilingual concepts (including an entity and a concrete topic), is
+eligible for cross-checking. At most one foreign press item and one official
+item per issue enter the source package. Government/institutional positions are
+labelled, not treated as independent verification. Keyword matching is only
+candidate selection; the existing 95-point reviewer compares event identity,
+attribution, contradictions and translation of uncertainty/negation. No extra
+LLM or translation call is added. Evidence input is capped at 4,000 characters
+per issue, with balanced slots for up to four sources; framing uses smaller
+balanced budgets. Shared shorts source configuration is unchanged.
+
+Google News RSS English queries also collect a small discovery list. Those
+aggregator links/snippets are **not** evidence and never grant image reuse rights;
+unresolved originals are not quoted or used to generate claims. This is a
+best-effort public RSS path, not Google Custom Search API or a guaranteed search
+service. No API key, paid search or browser scraping is used.
+
+The media collector now inspects the domestic primary and one English source
+(official preferred), keeping its existing 18-request/50-MB budget. English
+captions may match Korean narration through the explicit bilingual dictionary.
+All prior per-file licence, exact original URL, date and integrity gates remain.
+For cross-check candidate sources, automatic visual use additionally requires
+the existing reviewer to return `source_checks` identifying the same event with
+literal quotes from both originals. Missing/invalid checks hold overseas media;
+they do not trigger another API call. This remains metadata plus text review,
+not face recognition or independent proof that a photo shows the event.
+
+The overseas text stage has its own bounded Fetcher (18 requests / 50 MB /
+120-second cooperative deadline) and same-day input cache. At most two redirects
+are permitted only within each configured publisher's explicit host list; media
+downloads still do not follow redirects. `international-research.json` records
+feed failures, Google discovery, candidate inclusion and network usage.
+
+Live smoke check: BBC (32 entries), UN News (30), UK FCDO (20), and Google
+discovery were accessible. After implementing allowlisted redirects, a targeted
+Lords feed recheck returned 10 entries in three requests. No overseas sources were appended
+to the historical September 23 sample; this was not reported as corroboration.
+
 ### Automatic event media (2026-10-01)
 
 After script/title review and before TTS, `media_collect.py` inspects the three

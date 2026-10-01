@@ -56,6 +56,11 @@ def load_media(registry, stories):
                            if s['url'] == row.get('source_url')),None)
             proof = row.get('proof',{})
             verdict, _ = approve(proof,source,[row.get('anchor','')]) if source else (None,None)
+            if source and source.get('cross_check_status') == 'candidate_not_confirmation':
+                from .international import event_review_valid
+                primary = next(story['sources'][0] for story in stories if source in story['sources'])
+                if not event_review_valid(source,primary):
+                    verdict = None
             approved = bool(verdict and verdict['license'] == row.get('license')
                             and proof.get('source_url') == row.get('source_url')
                             and proof.get('credit') == row.get('credit')
@@ -133,9 +138,12 @@ def plan(scenes, stories, registry=None):
             if counts[label] == 1 and len(excerpt) <= 160:
                 row.update(kind='source', excerpt=excerpt,
                            disclosure='보도 원문 일부 · 출처를 바탕으로 재구성한 화면')
-            candidates = [m for m in media if m['source_url'] == source['url'] and m['anchor'] in narration]
+            issue_urls = {s['url'] for s in stories[issue]['sources']}
+            candidates = [m for m in media if m['source_url'] in issue_urls and m['anchor'] in narration]
             if candidates and counts[label] > 1:
                 row.update(kind='media', media=candidates[0], disclosure=candidates[0]['caption'])
+                media_source = next(s for s in stories[issue]['sources'] if s['url']==candidates[0]['source_url'])
+                row['source'] = {k:media_source[k] for k in ('name','url','published','title')}
         result.append(row)
     return dict(version=2, generated_without_llm=True, scenes=result,
                 media_scenes=sum(r['kind']=='media' for r in result),

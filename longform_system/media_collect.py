@@ -175,7 +175,9 @@ def approve(candidate, source, narrations):
     if len(title_terms & terms(c.get('description',''))) < 2:
         return None,'caption_does_not_identify_this_story'
     for narration in narrations:
-        if len(terms(narration) & title_terms & terms(c['description'])) >= 2:
+        from .international import cross_match
+        if (len(terms(narration) & title_terms & terms(c['description'])) >= 2
+                or cross_match(narration,source['title'],c['description'])):
             return dict(license=LICENCES[canonical(c['license_url'])],
                         anchor=narration, captured=captured.isoformat()),None
     return None,'no_matching_narration'
@@ -188,7 +190,7 @@ class Fetcher:
         self.requests, self.bytes = 0,0
         self.deadline = time.monotonic()+120
 
-    def get(self,url,limit):
+    def get(self,url,limit,redirect_hosts=(),redirects=2):
         if self.requests >= 18 or self.bytes >= 50_000_000 or time.monotonic() > self.deadline:
             raise ValueError('collection_budget_exhausted')
         p = urlsplit(url)
@@ -200,6 +202,10 @@ class Fetcher:
         self.requests += 1
         with self.session.get(url,timeout=(4,12),stream=True,allow_redirects=False,
              headers={'User-Agent':'TodayEnterLongform/1.0 (https://github.com/kjuhoho/political-shorts)'}) as response:
+            if response.status_code in (301,302,303,307,308) and redirects > 0:
+                target = urljoin(url,response.headers.get('Location',''))
+                if urlsplit(target).hostname in redirect_hosts:
+                    return self.get(target,limit,redirect_hosts,redirects-1)
             if response.status_code != 200:
                 raise ValueError('http_'+str(response.status_code))
             chunks, size = [],0
@@ -254,25 +260,35 @@ def collect(stories, scenes, output, fetcher=None):
     registry.write_text('[]',encoding='utf-8')
     selected = []
     for issue,story in enumerate(stories[:3],1):
-        source = story['sources'][0]
         narrations = [text for label,text in scenes if re.search(rf'핵심\s*{issue}(?:\D|$)',label)][1:]
         # The first scene is reserved for the source card by the renderer.
         candidates = []
-        try:
-            document = fetcher.get(source['url'],2_000_000).decode('utf-8',errors='replace')
-            candidates += schema_candidates(document,source['url'])
-        except (ValueError,requests.RequestException,OSError) as exc:
-            report['candidates'].append(dict(issue=issue,status='source_fetch_failed',reason=failure_reason(exc)))
-        try:
-            query = ' '.join(sorted(terms(source['title']),key=lambda t:(-len(t),t))[:4])
-            url = API+'?'+urlencode(dict(action='query',format='json',generator='search',
-                gsrsearch=query,gsrnamespace=6,gsrlimit=3,prop='imageinfo',iiprop='url|extmetadata'))
-            candidates += commons_candidates(json.loads(fetcher.get(url,2_000_000)),source['url'])
-        except (ValueError,requests.RequestException,OSError) as exc:
-            report['candidates'].append(dict(issue=issue,status='commons_fetch_failed',reason=failure_reason(exc)))
+        from .international import event_review_valid
+        overseas = sorted((s for s in story['sources'][1:] if s.get('language')=='en'
+                           and event_review_valid(s,story['sources'][0])),
+                          key=lambda s:not s.get('kind','').startswith('official'))
+        source_rows = [story['sources'][0],*overseas[:1]]
+        for source in source_rows:
+            try:
+                document = fetcher.get(source['url'],2_000_000).decode('utf-8',errors='replace')
+                candidates += schema_candidates(document,source['url'])
+            except (ValueError,requests.RequestException,OSError) as exc:
+                report['candidates'].append(dict(issue=issue,status='source_fetch_failed',reason=failure_reason(exc)))
+            try:
+                query = ' '.join(sorted(terms(source['title']),key=lambda t:(-len(t),t))[:4])
+                url = API+'?'+urlencode(dict(action='query',format='json',generator='search',
+                    gsrsearch=query,gsrnamespace=6,gsrlimit=3,prop='imageinfo',iiprop='url|extmetadata'))
+                candidates += commons_candidates(json.loads(fetcher.get(url,2_000_000)),source['url'])
+            except (ValueError,requests.RequestException,OSError) as exc:
+                report['candidates'].append(dict(issue=issue,status='commons_fetch_failed',reason=failure_reason(exc)))
         accepted = 0
         for c in candidates:
+            source = next(s for s in source_rows if s['url']==c['source_url'])
             verdict, reason = approve(c,source,narrations)
+            if source.get('cross_check_status') == 'candidate_not_confirmation':
+                from .international import event_review_valid
+                if not event_review_valid(source,story['sources'][0]):
+                    verdict,reason = None,'overseas_event_not_grounded_by_existing_review'
             audit = dict(issue=issue,candidate=c,status='held',reason=reason)
             report['candidates'].append(audit)
             if verdict is None or accepted >= 2:

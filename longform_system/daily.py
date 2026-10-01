@@ -35,7 +35,7 @@ def generate(writer, stories, out, existing=None):
         if existing:
             break
         source = evidence(stories[index-2]) if 2 <= index <= 4 else '\n'.join(
-            f"{s['headline']}\n" + (drafts[j+2] if len(drafts) > j+2 else evidence(s)[:1600])
+            f"{s['headline']}\n" + (drafts[j+2] if len(drafts) > j+2 else evidence(s,budget=1600))
             for j,s in enumerate(stories))
         prompt = f'''오늘의엔터 정치 브리핑. 기준일 {date}, 한국시간. 자료에 나온 사건 발생일과
 기사 발행일을 구분하고, 이전 날짜의 일을 오늘 발생한 것처럼 말하지 마라.
@@ -49,6 +49,10 @@ def generate(writer, stories, out, existing=None):
 쟁점에 반론이 없으면 이번에 확보한 자료에서 상대 입장을 확인하지 못했다고 밝혀라.
 동일한 주장을 반론이라고 부르거나, 원문에 없는 가상의 반론을 덧붙이지 마라.
 기관명은 원문 그대로. 유엔사는 유엔군사령부이며 유엔 사무국으로 바꾸지 마라.
+해외 자료는 교차 확인 후보이지 같은 사건이라는 확정이나 독립 검증의 증명이 아니다.
+동일 사건인지 원문 인물·행동·날짜로 확인하고, 다른 사건이면 사용하지 마라.
+정부·국제기구 발표는 해당 기관의 입장으로 귀속한다. 서로 충돌하는 보도는 차이를 밝혀라.
+영문 may/could/alleged/planned 및 부정문을 번역하면서 확정적 사실로 바꾸지 마라.
 미래 결과를 단정하지 말 것. 분량을 위해 반복하거나 사실을 보태지 말 것.
 원문에 '최초'라고 확인되지 않으면 최초/처음이라고 확대 해석하지 마라.
 정책의 세 가지 방향 등 항목을 요약할 때 원문의 항목과 정확히 대응시켜라.
@@ -71,7 +75,7 @@ def generate(writer, stories, out, existing=None):
         deltas = [len(d.split())-SECTIONS[i][2] for i,d in enumerate(drafts)]
         i = (max if total > 560 else min)(range(7), key=lambda n: deltas[n])
         target = max(25, len(drafts[i].split()) + 510-total)
-        source = evidence(stories[i-2]) if 2 <= i <= 4 else '\n'.join(evidence(s)[:1600] for s in stories)
+        source = evidence(stories[i-2]) if 2 <= i <= 4 else '\n'.join(evidence(s,budget=1600) for s in stories)
         revised = writer.ask(f'''기준일 {date}. 아래 '{SECTIONS[i][1]}' 대본의 분량만 조절하라.
 현재 전체 {total}어절. 이 구간을 공백 기준 약 {target}어절로 {'줄여라' if total > 560 else '풀어 설명하라'}.
 원문에 없는 사실/날짜/수치/전망을 추가하지 마라. 상대 입장과 주장 귀속 보존. 중복 반복 금지.
@@ -93,7 +97,7 @@ def generate(writer, stories, out, existing=None):
     out.write_text(script, encoding='utf-8')
     validate(script, stories)
     for i, story in enumerate(stories):
-        report = review(writer, drafts[i+2], evidence(story))
+        report = review(writer, drafts[i+2], evidence(story),source_bundle=story)
         save(out.with_suffix(f'.issue-{i+1}-initial.json'), report)
         if not accepted(report):
             drafts[i+2] = writer.ask(f'''기준일 {date}. 원문과 대조한 편집 검수에서 아래 오류가 발견됐다.
@@ -104,14 +108,16 @@ def generate(writer, stories, out, existing=None):
 약 {len(drafts[i+2].split())}어절의 내레이션 본문만 반환.
 원문:\n{evidence(story)}\n대본:\n{drafts[i+2]}''', 3200)
             out.write_text(assemble(), encoding='utf-8')
-            report = review(writer, drafts[i+2], evidence(story))
+            report = review(writer, drafts[i+2], evidence(story),source_bundle=story)
         reports.append(report)
         save(out.with_suffix('.quality.json'), reports)
         if not accepted(report):
             raise RuntimeError(f'Issue {i+1} failed 95-point review: {report}')
+        from .international import record_event_reviews
+        record_event_reviews(story,report)
     indices = (0,1,5,6)
     frame = '\n'.join(f'[{SECTIONS[i][1]}]\n{drafts[i]}' for i in indices)
-    frame_evidence = '\n'.join(evidence(s)[:2000] for s in stories)
+    frame_evidence = '\n'.join(evidence(s,budget=2000) for s in stories)
     report = review(writer, frame, frame_evidence)
     save(out.with_suffix('.framing-initial.json'), report)
     if not accepted(report):
@@ -176,6 +182,8 @@ def main():
                 print('Applied source-checked editorial corrections; full re-review still required', flush=True)
     else:
         stories = select(collect())
+        from .international import enrich
+        stories = enrich(stories,args.output_dir,current=now())
     save(args.output_dir/'sources.json', stories)
     if args.resume_dir:
         cached = args.resume_dir/'llm-cache.json'
@@ -190,6 +198,7 @@ def main():
     writer = Writer(args.output_dir)
     script_path = args.output_dir/f'{day}.script.md'
     script, reports = generate(writer, stories, script_path, existing)
+    save(args.output_dir/'sources.json',stories)
     package = build_title_package({'theme':stories[0]['headline'], 'chapters':stories})
     title = writer.ask('아래 기사 근거로 오늘의엔터 정치 브리핑 제목 하나만 작성. '
                        '55자 이하, 쉬운 한글, 선정적 표현 금지. 핵심 기관·정책 명칭을 중간에서 자르지 마라. '
