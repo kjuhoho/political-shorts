@@ -26,7 +26,7 @@ from .hook import (
     _NOT_TARGET, detect_entities, detect_frame, josa, make_factcheck, make_hook,
     make_title, pick_actor, simplify, strip_wire_marks, to_polite,
 )
-from . import chrono, invariants
+from . import chrono, explain, invariants
 from .logging_setup import get_logger
 from .subtitle import _complete as _sentence_complete
 from .textutil import clean_text, clip_sentence, strip_byline, truncate
@@ -329,6 +329,34 @@ def _ensure_dateline(segments: list[dict[str, Any]], pub_dates: list[tuple[int, 
         card["caption"] = f"{line} {card['caption']}"
     streams["narration"]["first_done"] = True
     log.info("dateline added: %s", line)
+
+
+def _engage_subject(headline: str) -> str:
+    """The thing the video was about, short enough to open a question with: '강훈식 비서실장 사의'."""
+    h = clean_text(strip_byline(headline or ""))
+    h = re.sub(r"\s*[\[(][^\])]*[\])]", "", h)              # [뉴시스Pic], (종합)
+    head = re.split(r"\.{2,}|…|\s[\"'“]", h)[0].strip(" ,·")
+    # a headline that opens with a quote leaves only the speaker's name behind, which is too thin to ask
+    # about — take the fuller line in that case
+    h = head if len(head) >= 8 else h
+    return clip_sentence(h, 24, ell="").strip(" ,·") if len(h) > 24 else h
+
+
+def _drop_closing_cliches(segments: list[dict[str, Any]]) -> list[str]:
+    """'~지켜봐야 합니다', '~주목됩니다', '~필요한 시점입니다': every audited video closed on one and none of
+    them said anything. They go, as long as the card keeps a sentence of its own."""
+    dropped: list[str] = []
+    for s in segments:
+        if s.get("role") != "outro" or not s.get("narration"):
+            continue
+        kept = [x for x in _whole_sentences(s["narration"]) if not explain.CLOSING_CLICHE.fullmatch(x.strip())]
+        if kept and len(kept) < len(_whole_sentences(s["narration"])):
+            new = " ".join(kept).strip()
+            if s.get("caption") == s.get("narration"):
+                s["caption"] = new
+            dropped.append(s["narration"][:40])
+            s["narration"] = new
+    return dropped
 
 
 def _ensure_comment_prompt(segments: list[dict[str, Any]], question: str) -> None:
@@ -882,7 +910,6 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
 
     # 2) summary card — BACKGROUND: who/what is involved + a term gloss, then
     #    the core fact. A viewer who doesn't follow politics starts here.
-    from . import explain
     summary_fact = analysis.facts[0] if analysis.facts else None
     bg = explain.background(_actor, headline, entities, frame)
     core = simplify(summary_fact.text, add_lead=False) if summary_fact else ""
@@ -985,7 +1012,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     payoff = explain.significance(frame).rstrip(" .")
     caveat = ("" if len(set(leans) - {"wire"}) >= 2 or len(leans) >= 3
               else " 아직 보도가 많지 않아 추가 확인이 필요합니다.")
-    _engage = explain.engage_question(frame, pick_actor(headline, entities, frame))
+    _engage = explain.engage_question(frame, pick_actor(headline, entities, frame),
+                                      _engage_subject(headline), cluster_id)
     segments.append({"role": "outro", "kicker": "",
                      "caption": "여러분의 생각은? 댓글로 남겨주세요",
                      "narration": f"{payoff}.{caveat} {_engage}"})
@@ -1130,7 +1158,9 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             for _fix in _attribute_demands(cand):
                 log.info("neutrality: %s", _fix)
             _strip_years_in(cand, _year_src, _pub_dates)
-            _ensure_comment_prompt(cand, explain.engage_question(frame, pick_actor(headline, entities, frame)))
+            for _c in _drop_closing_cliches(cand):
+                log.info("closing cliche dropped: %s", _c)
+            _ensure_comment_prompt(cand, _engage)
 
             agent_report = quality_agent.review({"headline": headline, "segments": cand}, cfg)
             # mechanical post-conditions (invariants.py) — checked in code, not by another LLM
@@ -1175,7 +1205,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         _mark_incomplete_factcheck_rows(segments)
         _budget = max(lp.target_s * 0.80, 22.0)
         segments = _fit_duration(segments, budget=_budget, caps=_NARR_CAP)
-        _ensure_comment_prompt(segments, explain.engage_question(frame, pick_actor(headline, entities, frame)))
+        _drop_closing_cliches(segments)
+        _ensure_comment_prompt(segments, _engage)
 
     # --- FULL-SCRIPT SUBTITLE: the on-screen caption IS the narration (the words
     #     the voice is saying), verbatim — never compressed. It is split into
@@ -1317,7 +1348,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         "factcheck": fc.to_dict(),
         "disclaimer": DISCLAIMER,
         "style": cfg.headline_style,
-        "engage_question": explain.engage_question(frame, pick_actor(headline, entities, frame)),
+        "engage_question": _engage,
         "invariant_violations": chosen_viol,
         # other clusters this video already covers — recorded as "covered" when it is published
         "absorbed": [{"title": a["title"], "cluster_id": a.get("cluster_id")} for a in absorbed],

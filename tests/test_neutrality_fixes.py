@@ -48,3 +48,31 @@ def test_other_cards_are_left_alone():
     segs = [_card("철저한 진상 규명이 필요합니다.", role="outro")]
     assert _attribute_demands(segs) == []
     assert segs[0]["narration"] == "철저한 진상 규명이 필요합니다."
+
+
+def test_the_closing_cliche_goes_but_the_card_keeps_its_own_sentence():
+    """Every audited video ended on '~지켜봐야 합니다' / '~주목됩니다' / '~필요한 시점입니다'."""
+    from political_shorts.script_gen import _drop_closing_cliches
+
+    seg = {"role": "outro", "narration": "진상 규명은 국방부 조사 결과로 넘어갔습니다. 정치권 대응은 지켜봐야 합니다.",
+           "caption": "진상 규명은 국방부 조사 결과로 넘어갔습니다. 정치권 대응은 지켜봐야 합니다."}
+    assert _drop_closing_cliches([seg])
+    assert seg["narration"] == "진상 규명은 국방부 조사 결과로 넘어갔습니다."
+    assert seg["caption"] == seg["narration"]
+
+
+def test_a_card_that_is_nothing_but_a_cliche_is_left_alone_rather_than_emptied():
+    from political_shorts.script_gen import _drop_closing_cliches
+
+    seg = {"role": "outro", "narration": "앞으로의 대응을 지켜봐야 합니다."}
+    assert _drop_closing_cliches([seg]) == []
+    assert seg["narration"] == "앞으로의 대응을 지켜봐야 합니다."
+
+
+def test_the_question_names_the_story_end_to_end():
+    from political_shorts.script_gen import _engage_subject
+
+    assert _engage_subject("인사 실패·지지율 하락 책임론에 강훈식 사의...청와대 참모진 개편 빨라질 듯") \
+        == "인사 실패·지지율 하락 책임론에 강훈식 사의"
+    assert _engage_subject("용혜인, 14일 만에 자진사퇴 [뉴시스Pic]") == "용혜인, 14일 만에 자진사퇴"
+    assert _engage_subject('김민석 "조국, 뭘 말하는지 모르겠다"...사과 요구 일축') == '김민석 "조국, 뭘 말하는지 모르겠다"'

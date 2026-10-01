@@ -27,6 +27,7 @@ from PIL import (
 )
 
 from .config import CONFIG_DIR, Settings, settings
+from . import music
 from .logging_setup import get_logger
 from .textutil import clean_text
 from .tts import Narration, synthesize_segments
@@ -1106,10 +1107,12 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
 
         n_imgs = sum(1 for p in seg_images if p)
         media_desc = f"{n_imgs} imgs" + (f", {n_broll} b-roll" if n_broll else "")
-        if _bgm_usable(cfg):
-            _mix_bgm(ffmpeg, narration_mp4, Path(cfg.bgm_path), total_dur, out_path, cfg)
-            log.info("video rendered %s (%.1fs, %d segs, %s, +bgm)",
-                     out_path.name, total_dur, total, media_desc)
+        bed, bed_credit = music.pick(cfg, int(script.get("cluster_id") or 0))
+        if _bgm_usable(cfg, bed):
+            _mix_bgm(ffmpeg, narration_mp4, bed, total_dur, out_path, cfg)
+            script["bgm_credit"] = bed_credit            # the description credits the track actually used
+            log.info("video rendered %s (%.1fs, %d segs, %s, +bgm %s)",
+                     out_path.name, total_dur, total, media_desc, bed.name)
         else:
             shutil.move(str(narration_mp4), str(out_path))
             log.info("video rendered %s (%.1fs, %d segs, %s)",
@@ -1133,11 +1136,12 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _bgm_usable(cfg: Settings) -> bool:
+def _bgm_usable(cfg: Settings, bed: Path | None = None) -> bool:
     if not cfg.bgm_enabled:
         return False
-    if not Path(cfg.bgm_path or "").exists():
-        log.warning("BGM_ENABLED but BGM_PATH not found: %s", cfg.bgm_path)
+    bed = bed or Path(cfg.bgm_path or "")
+    if not bed.name or not bed.exists():
+        log.warning("BGM_ENABLED but the track was not found: %s", bed or cfg.bgm_path)
         return False
     return True
 

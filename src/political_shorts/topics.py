@@ -29,6 +29,55 @@ _STOP = {
 # figures so prolific that "same actor" alone means little
 _BROAD_ACTORS = {"이재명", "김민석", "한동훈", "장동혁"}
 
+# Words that say nothing about WHICH story this is — they are in half the politics headlines ever written.
+_BROAD_WORDS = {
+    "국민의힘", "민주당", "더불어민주당", "조국혁신당", "개혁신당", "국회", "대통령", "대통령실", "청와대",
+    "정부", "여야", "여당", "야당", "정치권", "검찰", "법원", "국민", "의원", "대표", "장관", "총리",
+    "논란", "비판", "공방", "발언", "주장", "지적", "반발", "요구", "강조", "밝혀", "밝혔다", "입장",
+    "본회의", "상임위", "국정감사", "국감", "인사청문회", "청문회", "후보자", "관련", "이번", "오늘",
+}
+# The same event, told again the next day, is the same video to a viewer. Two distinctive words in common
+# inside this window is enough: on 2026-09-28 and 09-29 the DMZ mine blast went out twice ("지뢰사고" +
+# "dmz"), because the lead actor differed (장동혁 / 이재명) and the full-signature overlap sat under the
+# threshold.
+_EVENT_DAYS = 3.0
+_EVENT_MIN_SCORE = 2          # one compound name ("지뢰사고") is enough; two short words also are
+
+
+_PARTICLES = ("에서", "에게", "으로", "까지", "부터", "이라", "라고", "에", "은", "는", "이", "가", "을",
+              "를", "의", "와", "과", "도", "만", "로")
+
+
+def _stem(word: str) -> str:
+    """'지뢰사고에' and '지뢰사고' are the same event word; signatures keep the particle."""
+    for p in _PARTICLES:
+        if len(word) - len(p) >= 3 and word.endswith(p):
+            return word[: -len(p)]
+    return word
+
+
+def _event_words(sig: set[str]) -> set[str]:
+    """The words in a signature that actually name the event."""
+    return {_stem(w) for w in sig if len(w) >= 2 and _stem(w) not in _BROAD_WORDS
+            and _stem(w) not in _BROAD_ACTORS and not w.isdigit()}
+
+
+def _event_score(shared: set[str]) -> int:
+    """How strongly a set of shared words pins one event down. A long compound ('지뢰사고', '경찰개혁') names
+    the event on its own; short words need company."""
+    return sum(2 if len(w) >= 4 else 1 for w in shared)
+
+
+def _shared_event(a: set[str], b: set[str]) -> set[str]:
+    """Event words two stories have in common ('지뢰사고' also matches '지뢰사고에', '폭발' matches '폭발원인')."""
+    wa, wb = _event_words(a), _event_words(b)
+    out = wa & wb
+    for x in wa - out:
+        for y in wb - out:
+            if len(x) >= 3 and len(y) >= 3 and (x.startswith(y) or y.startswith(x)):
+                out.add(min(x, y, key=len))
+    return out
+
 
 def _entities_strong(entities: dict | None) -> set[str]:
     """Named politicians + parties that actually pin down the story
@@ -111,4 +160,10 @@ def recent_duplicate(
         for p in (people or set()) - _BROAD_ACTORS:
             if p in prev:
                 return True, f"{when} 게시분과 같은 인물({p}) 관련 사안: {row['headline'][:40]}"
+        # the same EVENT, whoever is reacting to it this time
+        if row["published_ts"] >= time.time() - _EVENT_DAYS * 86400:
+            shared = _shared_event(sig, prev)
+            if _event_score(shared) >= _EVENT_MIN_SCORE:
+                return True, (f"{when} 게시분과 같은 사건({', '.join(sorted(shared)[:3])}): "
+                              f"{row['headline'][:40]}")
     return False, ""

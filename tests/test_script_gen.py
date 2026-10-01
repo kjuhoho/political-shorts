@@ -274,15 +274,24 @@ def test_every_outro_asks_for_a_comment_and_drops_the_bare_subscribe_ask():
     assert keep[0]["narration"].count("댓글") == 1            # an outro that already asks is left alone
 
 
-def test_engage_question_is_neutral_open_and_names_a_person_only_for_personnel():
+def test_engage_question_asks_about_this_story_and_always_invites_a_comment():
+    """Five live videos in a row closed with the identical two lines, and 56% of the month got zero comments
+    (audit 2026-09-30) — so the question carries the story's own subject and varies between phrasings."""
     from political_shorts import explain
     from political_shorts.hook import Frame
-    personnel = explain.engage_question(Frame(kind="personnel"), "김승원")
-    assert personnel.startswith("김승원은 이번 결정") and "댓글" in personnel
-    assert explain.engage_question(Frame(kind="personnel"), "청와대") == explain.ENGAGE["personnel"]
-    for kind, text in explain.ENGAGE.items():
-        assert "댓글" in text and "?" in text, kind
-    assert explain.engage_question(Frame(kind="nonexistent")) == explain.ENGAGE["generic"]
+
+    about = explain.engage_question(Frame(kind="scandal"), "", "강훈식 비서실장 사의", seed=0)
+    assert about.startswith("강훈식 비서실장 사의,") and about.endswith("댓글로 남겨주세요.") and "?" in about
+    other = explain.engage_question(Frame(kind="scandal"), "", "강훈식 비서실장 사의", seed=1)
+    assert other != about                                  # not the same sentence every time
+    assert explain.engage_question(Frame(kind="scandal"), "", "강훈식 비서실장 사의", seed=3) in (about, other)
+
+    # no subject: the frame's own wording, and a personnel story may name the person
+    assert explain.engage_question(Frame(kind="personnel"), "김승원").startswith("김승원의 이번 결정")
+    assert explain.engage_question(Frame(kind="personnel"), "청와대").startswith("이번 인사 결정")
+    assert "댓글" in explain.engage_question(Frame(kind="nonexistent"))
+    for kind, forms in explain.ENGAGE.items():
+        assert forms and all("{it}" in f and "?" in f for f in forms), kind
 
 
 def test_comment_prompt_does_not_stack_a_second_question_on_the_writers_own():
