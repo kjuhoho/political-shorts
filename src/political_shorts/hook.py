@@ -61,6 +61,48 @@ class Entities:
         return "정치권"
 
 
+# A name sitting next to a role is a person, whoever they are: "강훈식 비서실장", "문형배 전 재판관". The
+# hand-written POLITICIANS list above goes stale every month and everyone missing from it was invisible to the
+# picture step (live audit 2026-09-30) — this finds them, and people.py checks who they are before any photo
+# is used.
+_ROLE_WORDS_RX = (r"대통령|국무총리|총리|부총리|장관|차관|의원|원내대표|당대표|대표|비서실장|정책실장|"
+                  r"안보실장|실장|수석|위원장|대변인|청장|총장|처장|재판관|대법관|판사|검사장|지검장|"
+                  r"지사|시장|교육감|후보자|후보|실장급|사무총장")
+_PERSON_BEFORE_ROLE = re.compile(rf"(?<![가-힣])([가-힣]{{2,4}})\s*(?:전|현|신임|차기)?\s*(?:{_ROLE_WORDS_RX})")
+# "국민의힘 대표 장동혁" — the name comes AFTER the role, but only when an organisation came first; a bare
+# "비서실장 사의" would otherwise hand us '사의' as a person and cost a lookup to find out it is not one.
+_PERSON_AFTER_ROLE = re.compile(
+    rf"(?:국민의힘|더불어민주당|민주당|조국혁신당|개혁신당|진보당|정의당|대통령실|청와대|국회|정부|법무부|"
+    rf"외교부|국방부|기획재정부|행정안전부|교육부|고용노동부|국토교통부|보건복지부)\s*"
+    rf"(?:{_ROLE_WORDS_RX})\s+(?:전|현|신임|차기)?\s*([가-힣]{{2,4}})(?![가-힣])")
+_ROLE_ONLY = re.compile(rf"^(?:{_ROLE_WORDS_RX})$")
+# things that look like a name before a role but are not one
+_NOT_NAMES = {"국민의힘", "민주당", "더불어민주당", "조국혁신당", "개혁신당", "진보당", "정의당",
+              "기본소득당", "대통령실", "청와대", "국회", "정부", "여당", "야당", "여야", "검찰", "법원",
+              "경찰", "외교부", "법무부", "국방부", "기재부", "복지부", "노동부", "교육부", "행안부",
+              "민주", "한국", "서울", "경기", "오늘", "이번", "당시", "지난",
+              # ordinary words that sit next to a role and are not anybody
+              "사의", "사퇴", "발언", "임명", "지명", "경질", "논란", "의혹", "출석", "참석", "회의",
+              "표결", "선출", "교체", "인선", "직무", "권한", "명단", "업무", "방침", "입장"}
+
+
+def candidate_people(*texts: str) -> list[str]:
+    """Names that appear next to a role word, in order of appearance — candidates, not verified people."""
+    text = clean_text(" ".join(texts))
+    found: list[tuple[int, str]] = []
+    for rx in (_PERSON_BEFORE_ROLE, _PERSON_AFTER_ROLE):
+        for m in rx.finditer(text):
+            name = m.group(1)
+            if name in _NOT_NAMES or _ROLE_ONLY.match(name):
+                continue
+            found.append((m.start(1), name))
+    out: list[str] = []
+    for _, name in sorted(found):
+        if name not in out:
+            out.append(name)
+    return out
+
+
 def detect_entities(*texts: str) -> Entities:
     text = clean_text(" ".join(texts))
     ent = Entities()

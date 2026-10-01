@@ -155,6 +155,16 @@ class YouTubePublisher(Publisher):
             _status, response = request.next_chunk()
 
         vid = response["id"]
+        # the made cover (thumbnail.py). Needs a verified channel; when YouTube refuses it, the video stays
+        # up with its auto-generated frame — never fail a publish over the picture.
+        cover = meta.get("thumbnail")
+        if cover and Path(cover).exists():
+            try:
+                youtube.thumbnails().set(
+                    videoId=vid, media_body=MediaFileUpload(str(cover), mimetype="image/jpeg")).execute()
+                self.log.info("thumbnail set for %s", vid)
+            except Exception as exc:
+                self.log.warning("thumbnail not accepted (%s) — the auto frame stays", str(exc)[:160])
         url = f"https://youtube.com/shorts/{vid}"
         detail = (f"scheduled publishAt={publish_at}" if publish_at
                   else f"privacy={status['privacyStatus']}")

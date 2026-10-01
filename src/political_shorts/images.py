@@ -28,8 +28,8 @@ from urllib.parse import unquote
 import requests
 
 from .config import Settings, settings
-from .hook import Entities, Frame, detect_topic, pick_actor
-from . import asset_memory
+from .hook import Entities, Frame, candidate_people, detect_topic, pick_actor
+from . import asset_memory, people
 from .logging_setup import get_logger
 from .textutil import clean_text
 
@@ -252,6 +252,19 @@ def _make_asset(info: dict, query: str, kind: str, cache_dir: Path) -> ImageAsse
     return a
 
 
+def _wikidata_portrait(name: str, cfg: Settings) -> dict | None:
+    """A portrait for someone without a usable ko.wikipedia article: Wikidata says who they are (see
+    people.py), Commons serves the file."""
+    filename = people.photo_file(name, cfg)
+    if not filename:
+        return None
+    info = _commons_info(filename)
+    if info and info.get("url"):
+        info.setdefault("title", filename)
+        return info
+    return None
+
+
 def collect_images(
     entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None,
     body_text: str = "",
@@ -303,10 +316,17 @@ def collect_images(
     # several are mentioned in the cluster's combined text — that ambiguity
     # is why `subject` still requires `lead in h`).
     want_pres = bool(entities.president) and lead == PRESIDENT_NAME
+    # Anyone standing next to a role in the headline ("강훈식 비서실장") is a person too, even when the
+    # hand-written POLITICIANS list has never heard of them — people.photo_file() checks with Wikidata who
+    # they are before any face is used. Without this, most of a month's names got no portrait at all and
+    # their stories fell back to a building (live audit 2026-09-30).
+    headline_people = [n for n in candidate_people(h) if n != PRESIDENT_NAME]
+    if not lead_is_person and lead in headline_people:
+        lead_is_person = True
     subject = lead if (lead_is_person and lead in h) else ""   # the poster face
     names: list[str] = []
     for n in ([subject] if subject else []) + \
-             ([PRESIDENT_NAME] if want_pres else []) + in_head + in_body:
+             ([PRESIDENT_NAME] if want_pres else []) + in_head + headline_people + in_body:
         if n and n not in names:
             names.append(n)
 
@@ -333,7 +353,7 @@ def collect_images(
     for name in names:
         if len(assets) >= want or n_portraits >= MAX_PORTRAITS:
             break
-        info = _resolve(name, person=True)
+        info = _resolve(name, person=True) or _wikidata_portrait(name, cfg)
         if info and info["url"] not in used:
             a = _make_asset(info, name, "portrait", cache_dir)
             if a:

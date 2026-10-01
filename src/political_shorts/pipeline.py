@@ -280,6 +280,12 @@ def _process_story(
 
         meta["quality"] = qr.to_dict()
         meta["quality_history"] = history
+        # the cover YouTube shows in search and on the channel page — without one it grabs a frame, which is
+        # how the same building became the thumbnail of four videos out of five (audit 2026-09-30)
+        from . import thumbnail as _thumb
+        _cover = _thumb.build(script, video_path.with_suffix(".jpg"), cfg)
+        if _cover:
+            meta["thumbnail"] = str(_cover)
         out.quality_score = qr.score
         out.quality_band = qr.band
         if not qr.publishable:
