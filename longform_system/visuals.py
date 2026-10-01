@@ -49,7 +49,19 @@ def load_media(registry, stories):
     urls = {s['url'] for story in stories for s in story['sources']}
     media = json.loads(registry.read_text(encoding='utf-8'))
     for row in media:
-        if row.get('reviewed') is not True or row.get('license') not in LICENSES:
+        approved = row.get('reviewed') is True
+        if row.get('approval') == 'automatic-metadata-v1':
+            from .media_collect import approve
+            source = next((s for story in stories for s in story['sources']
+                           if s['url'] == row.get('source_url')),None)
+            proof = row.get('proof',{})
+            verdict, _ = approve(proof,source,[row.get('anchor','')]) if source else (None,None)
+            approved = bool(verdict and verdict['license'] == row.get('license')
+                            and proof.get('source_url') == row.get('source_url')
+                            and proof.get('credit') == row.get('credit')
+                            and proof.get('license_url') == row.get('license_url')
+                            and proof.get('asset_page') == row.get('asset_page'))
+        if not approved or row.get('license') not in LICENSES:
             raise ValueError('Media rights have not been reviewed')
         for field in ('source_url', 'asset_page', 'credit', 'sha256', 'path', 'anchor', 'caption', 'license_url'):
             if not isinstance(row.get(field), str) or not row[field].strip():
@@ -95,7 +107,10 @@ def library_media(stories):
 def plan(scenes, stories, registry=None):
     if len(stories) != 3:
         raise ValueError('Visual brief requires three evidence-backed issues')
-    media = load_media(registry, stories) + library_media(stories)
+    media = load_media(registry, stories)
+    if registry and Path(registry).name == 'media-registry.json':
+        media += load_media(Path(registry).with_name('auto-media-registry.json'),stories)
+    media += library_media(stories)
     counts, result = {}, []
     headlines = [s['headline'] for s in stories]
     for index, (label, narration) in enumerate(scenes):
@@ -122,7 +137,7 @@ def plan(scenes, stories, registry=None):
             if candidates and counts[label] > 1:
                 row.update(kind='media', media=candidates[0], disclosure=candidates[0]['caption'])
         result.append(row)
-    return dict(version=1, generated_without_llm=True, scenes=result,
+    return dict(version=2, generated_without_llm=True, scenes=result,
                 media_scenes=sum(r['kind']=='media' for r in result),
                 notice='No unlicensed article images or guessed politician portraits are collected.')
 

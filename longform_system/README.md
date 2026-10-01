@@ -73,6 +73,47 @@ Fish Audio remains opt-in and is not activated by this visual upgrade.
 
 ## Publication contract
 
+### Automatic event media (2026-10-01)
+
+After script/title review and before TTS, `media_collect.py` inspects the three
+primary article pages' JSON-LD/OG candidates and searches Wikimedia Commons
+(up to three files per issue, imageinfo + per-file extended metadata). It uses
+no keys, LLMs, paid image generation or YouTube scraping. The automatic gate
+requires a **per-asset** CC0/CC-BY-4.0/KOGL-1 licence URL, named creator, exact
+article association, explicit creation/capture date within the two days before
+publication, and at least two non-generic caption/title/narration terms. Upload
+dates are never used as capture dates. Archival/synthetic captions are held.
+
+This is conservative metadata matching, **not visual face recognition or proof
+that a photo depicts the alleged act**. Captions say "보도 연결 자료" and disclose
+that the date is metadata-based. Files without reliable metadata remain held;
+an episode may legitimately receive zero event media. Name-only stock portraits,
+OG-only images and site-wide copyright footers never authorize automatic reuse.
+Currently only HTTPS same-origin media and upload.wikimedia.org originals are
+downloaded. Unmapped CDNs, redirects, paywalls, YouTube players, playlists,
+unknown licences, CC-BY-SA and non-commercial/no-derivatives licences are held.
+
+Budget: <=18 HTTP requests, <=50 MB response data, <=12 MB per media download,
+120-second cooperative deadline, <=2 accepted assets per issue. No HTTP retries.
+Public DNS/IP checks and no redirects exclude internal URLs. Images require
+640x360 minimum and <=30 million pixels. MP4/WebM are decoded locally, source
+audio removed and at most the first 20 seconds normalized to silent MP4. No
+external network protocols are allowed in FFmpeg; conversion timeout is 45s.
+Collection failure falls back to graphics without rerunning script generation.
+
+Artifacts: `media-collection.json` (candidates, holds, reasons, network usage),
+`auto-media-registry.json` (approved metadata, file hashes, exact narration
+anchors) and `collected-media/`. Same-input attempts in the same output folder
+are cached, including negative results. Automatic records explicitly have
+`reviewed: false` and `approval: automatic-metadata-v1`; the renderer rechecks
+the policy and file hash instead of pretending that a human inspected the file.
+The existing manual registry and visually reviewed bundled library are separate.
+
+One live read-only smoke check of the saved September 23 episode made six HTTP
+requests and selected zero files: per-asset reuse permission was unavailable.
+Mock tests cover actual download, integrity, automatic insertion and holds.
+This does not promise footage availability for every day's selected stories.
+
 Only `longform_system/` and its dedicated workflows are owned by this pipeline.
 Source feed configuration and blocked-topic policy are read-only shared data.
 

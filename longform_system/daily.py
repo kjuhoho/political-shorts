@@ -203,6 +203,11 @@ def main():
     save(args.output_dir/'title-review.json', title_review)
     if not accepted(title_review):
         raise RuntimeError('Title failed review')
+    from .media_collect import collect as collect_media
+    from .renderer import clean_script
+    media_collection = collect_media(stories,clean_script(script_path),args.output_dir)
+    print(f"Event media: selected={media_collection.get('selected',0)}, "
+          f"status={media_collection['status']}; details in media-collection.json",flush=True)
     video = args.output_dir/f'{day}.mp4'
     manifest = render(script_path, video, ROOT/'assets/fonts/DoHyeon-Regular.ttf', 'ko-KR-SunHiNeural')
     from .visuals import credits
