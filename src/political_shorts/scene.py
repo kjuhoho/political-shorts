@@ -17,7 +17,7 @@ import re
 from typing import Any
 
 from .subtitle import readable_chunks, read_seconds as _read_seconds
-from .subtitle import _CHUNK_MAX
+from .subtitle import _CHUNK_MAX, _quoted_spans
 from .textutil import clean_text, gloss_jargon
 
 SCENE_MIN_S = 1.35
@@ -115,7 +115,8 @@ def _split_long(text: str, max_s: float = SCENE_MAX_S) -> list[str]:
     text = text.strip()
     if est_seconds(text) <= max_s or len(text) < 14:
         return [text]
-    bs = _boundaries(text)
+    quoted = _quoted_spans(text)                     # a quote is never cut in half (see subtitle._atoms)
+    bs = [c for c in _boundaries(text) if not any(a < c < b for a, b in quoted)]
     if bs:
         mid = len(text) / 2
         cut = min(bs, key=lambda c: abs(c - mid))
@@ -125,7 +126,8 @@ def _split_long(text: str, max_s: float = SCENE_MAX_S) -> list[str]:
     # last resort — nearest word break to the middle, but never between a
     # number and the next number ("'5년 | 10년") or right after an opening quote
     mid = len(text) // 2
-    cands = [m.start() for m in re.finditer(r"\s+", text) if 6 <= m.start() <= len(text) - 6]
+    cands = [m.start() for m in re.finditer(r"\s+", text)
+             if 6 <= m.start() <= len(text) - 6 and not any(a < m.start() < b for a, b in quoted)]
     cands.sort(key=lambda c: abs(c - mid))
     for sp in cands:
         before, after = text[:sp].rstrip(), text[sp:].lstrip()

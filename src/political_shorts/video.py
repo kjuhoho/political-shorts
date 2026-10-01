@@ -771,6 +771,19 @@ def _hold_tail(duration: float) -> str:
     return f"tpad=stop_mode=clone:stop_duration={duration + 0.5:.2f}"
 
 
+# how long before a clip ends its caption comes off, so a cross-dissolve never shows two at once
+_CAPTION_LEAD_OUT = 0.26
+
+
+def _caption_window(duration: float) -> str:
+    """`enable` expression that drops the caption just before the clip ends.
+
+    The clips are joined with a cross-dissolve, and both sides carry a full-frame caption: during the overlap
+    BOTH captions printed on top of each other and neither was readable (live audit, 2026-09-30). Ending the
+    outgoing caption a frame or two before the join leaves exactly one caption on screen at any moment."""
+    return f"lte(t,{max(0.0, duration - _CAPTION_LEAD_OUT):.3f})" if duration > 1.2 else "1"
+
+
 def _segment_clip(
     ffmpeg: str, base_img: Path, is_photo: bool, overlay: Path,
     nar: Narration, duration: float, out_mp4: Path, cfg: Settings, idx: int,
@@ -803,7 +816,7 @@ def _segment_clip(
     else:
         cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
         afilt = "[2:a]apad[a]"
-    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v];{afilt}"
+    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto:enable='{_caption_window(duration)}'[v];{afilt}"
     cmd += [
         "-filter_complex", filt, "-map", "[v]", "-map", "[a]",
         "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
@@ -853,7 +866,7 @@ def _segment_video_clip(
     else:
         cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
         afilt = "[2:a]apad[a]"
-    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto[v];{afilt}"
+    filt = f"{vbg};[bg][1:v]overlay=0:0:format=auto:enable='{_caption_window(duration)}'[v];{afilt}"
     cmd += [
         "-filter_complex", filt, "-map", "[v]", "-map", "[a]",
         "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",

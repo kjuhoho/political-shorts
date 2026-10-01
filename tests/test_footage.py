@@ -175,15 +175,18 @@ def test_collect_footage_tries_topic_terms_before_generic(monkeypatch, tmp_path)
                               broll_cache_dir=str(tmp_path))
     seen_terms: list[str] = []
 
-    def fake_pexels(term, key, cap_bytes, cache_dir):
-        seen_terms.append(term)
+    def fake_pexels(term, key, cap_bytes, cache_dir, strict=True):
+        seen_terms.append((term, strict))
         return []                                    # no hit -> tries the next term
 
     monkeypatch.setattr(footage, "_pexels_videos", fake_pexels)
     ent, fr = _frame_entities()
     footage.collect_footage(ent, fr, "정부, 평양 병원에 의료장비 지원 추진", cfg,
                             body_text="북한 강동군병원에 지원한다")
-    assert seen_terms[0] in footage._TOPIC_PEXELS_TERMS["north_korea"]
+    assert seen_terms[0][0] in footage._TOPIC_PEXELS_TERMS["north_korea"]
+    # a named place is checked against what came back; the generic ambience pool is not
+    assert seen_terms[0][1] is True
+    assert any(term in footage._PEXELS_GENERIC and strict is False for term, strict in seen_terms)
 
 
 def test_collect_footage_falls_back_to_generic_with_no_topic(monkeypatch, tmp_path):

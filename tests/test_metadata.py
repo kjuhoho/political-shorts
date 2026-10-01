@@ -60,3 +60,19 @@ def test_cut_words_never_cuts_mid_word():
     assert _cut_words("가나다 라마바 사아자", 8) == "가나다 라마바"
     assert _cut_words("짧은 제목", 40) == "짧은 제목"
     assert not _cut_words("아주긴한단어만있는제목입니다", 6).endswith(" ")
+
+
+def test_incident_our_own_balance_note_never_reaches_the_description():
+    """2026-09-28 shipped '■ 균형 관련 참고 / - 한쪽 정당만 언급됨(국민의힘) — 상대측 반응 보강 권장' to viewers.
+    It is a production note: it belongs in the sidecar and the run log, not under the video."""
+    from pathlib import Path
+
+    from political_shorts.metadata import build_metadata
+
+    script = {"headline": "예산안 국회 통과", "title": ["예산안 통과"], "segments": [], "sources": [],
+              "source_text": "", "disclaimer": "공개 보도를 정리한 자동 제작 영상입니다."}
+    safety = {"passed": True, "warnings": ["한쪽 정당만 언급됨(국민의힘) — 상대측 반응 보강 권장"]}
+    meta = build_metadata(script, safety, Path("x.mp4"))
+    assert "균형 관련 참고" not in meta["description"]
+    assert "상대측 반응 보강" not in meta["description"]
+    assert meta["safety"]["warnings"] == safety["warnings"]        # still recorded for us

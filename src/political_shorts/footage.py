@@ -195,7 +195,34 @@ def _commons_videos(term: str, cap_bytes: int, cache_dir: Path) -> list[ImageAss
 # --------------------------------------------------------------------------- #
 # Pexels  (free api key)
 # --------------------------------------------------------------------------- #
-def _pexels_videos(term: str, key: str, cap_bytes: int, cache_dir: Path) -> list[ImageAsset]:
+# Stock search returns whatever it likes. Live videos (2026-09) ran a hanbok dance festival under "korea
+# national assembly" over a story about National Assembly witnesses, Seoul apartment blocks under "pyongyang
+# north korea", and Changdeokgung palace under "seoul national assembly". So a clip has to carry the part of
+# the term that MEANS something: the country/city/urban filler words below do not count as a match, because
+# every Korean clip has them.
+_FILLER = {"korea", "korean", "south", "north", "seoul", "city", "cityscape", "urban", "street", "streets",
+           "skyline", "night", "aerial", "view", "building", "buildings", "architecture", "of", "in", "the",
+           "waving", "flag", "people", "walking", "crowd", "zone", "border", "scene", "modern"}
+
+
+def _anchors(term: str) -> set[str]:
+    """The words of a search term that a returned clip must actually be about."""
+    return {w for w in re.findall(r"[a-z]+", term.lower()) if w not in _FILLER}
+
+
+def _describes(video: dict, term: str) -> bool:
+    """Does this Pexels result look like what we asked for? A term made only of filler words (the generic
+    ambience pool) matches anything — that is what ambience is for."""
+    want = _anchors(term)
+    if not want:
+        return True
+    text = " ".join([str(video.get("url", "")), str(video.get("alt", "")),
+                     " ".join(str(t.get("title", "")) for t in (video.get("tags") or []) if isinstance(t, dict))])
+    have = set(re.findall(r"[a-z]+", text.lower()))
+    return bool(want & have)
+
+
+def _pexels_videos(term: str, key: str, cap_bytes: int, cache_dir: Path, strict: bool = True) -> list[ImageAsset]:
     try:
         r = _S.get(
             "https://api.pexels.com/videos/search",
@@ -212,6 +239,9 @@ def _pexels_videos(term: str, key: str, cap_bytes: int, cache_dir: Path) -> list
         return []
 
     for v in vids:
+        if strict and not _describes(v, term):
+            log.debug("pexels %s: skipping unrelated clip %s", term, v.get("url", ""))
+            continue
         files = sorted(
             (f for f in v.get("video_files", []) if (f.get("height") or 0) >= 900),
             key=lambda f: (f.get("height") or 0),
@@ -261,7 +291,10 @@ def collect_footage(
         for term in pexels_terms:
             if len(assets) >= want:
                 break
-            for a in _pexels_videos(term, key, cap_bytes, cache_dir):
+            # the generic pool IS ambience, so it takes whatever it gets; a named place or institution has to
+            # come back as that place (see _describes)
+            strict = term not in _PEXELS_GENERIC
+            for a in _pexels_videos(term, key, cap_bytes, cache_dir, strict=strict):
                 if a.path not in seen:
                     assets.append(a); seen.add(a.path)
             time.sleep(0.3)

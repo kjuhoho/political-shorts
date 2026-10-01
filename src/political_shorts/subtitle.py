@@ -103,11 +103,36 @@ def _wordsplit(s: str, limit: int) -> list[str]:
     return out
 
 
+# A quote must survive whole. A live video (2026-09-30) split one into `…재경위로 부르는 것은` /
+# `적절하지"라고 밝혔습니다.`: the quotation mark closed on the next card and the speaker was left saying
+# something he never said. Cuts inside quotation marks are therefore not cuts.
+_QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("‘", "’"), ("'", "'"), ("「", "」"))
+# a chunk ending on a bare particle or a determiner reads as an unfinished thought ("…장외로 나서는",
+# "…부르는 것은"); it is merged forward instead
+_DANGLING = re.compile(r"(?:[은는이가을를의와과도만로]|으로|에서|에게|에|것은|것을|같은|이런|그런|대한|관련)$")
+
+
+def _quoted_spans(text: str) -> list[tuple[int, int]]:
+    """[(start, end)] of every quoted stretch, so a cut never lands inside one."""
+    spans: list[tuple[int, int]] = []
+    for op, cl in _QUOTE_PAIRS:
+        i = text.find(op)
+        while i != -1:
+            j = text.find(cl, i + 1)
+            if j == -1:
+                break
+            spans.append((i, j + 1))
+            i = text.find(op, j + 1)
+    return spans
+
+
 def _atoms(text: str, hard: int = int(_CHUNK_MAX * 1.35)) -> list[str]:
-    """Smallest clean clause pieces of `text` (split at _CHUNK_BREAKS); a piece
-    with no inner seam that is still way over budget is word-split as a last
-    resort so a scene never carries a 4-line wall of text."""
-    cuts = sorted({m.end() for rx in _CHUNK_BREAKS for m in rx.finditer(text)})
+    """Smallest clean clause pieces of `text` (split at _CHUNK_BREAKS, never inside a quote); a piece with no
+    inner seam that is still way over budget is word-split as a last resort so a scene never carries a 4-line
+    wall of text."""
+    spans = _quoted_spans(text)
+    cuts = sorted({m.end() for rx in _CHUNK_BREAKS for m in rx.finditer(text)
+                   if not any(a < m.end() < b for a, b in spans)})
     raw: list[str] = []
     prev = 0
     for c in cuts:
@@ -137,7 +162,9 @@ def readable_chunks(text: str, budget: int = _CHUNK_MAX) -> list[str]:
     cur = ""
     for a in _atoms(t):
         cand = f"{cur} {a}".strip()
-        if not cur or len(cand) <= budget:
+        # a chunk that would end on a dangling particle keeps going, even past budget: half a thought on
+        # screen is worse than a slightly long card
+        if not cur or len(cand) <= budget or _DANGLING.search(cur.rstrip(" ,·")):
             cur = cand
         else:
             chunks.append(cur)

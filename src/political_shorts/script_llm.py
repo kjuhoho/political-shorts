@@ -599,7 +599,10 @@ def _parse(raw: str) -> tuple[dict[str, str], list[str], dict[str, str], dict[st
         for k, v in _raw_ft.items():
             kk = str(k).strip()
             if kk in _FC_TAGS and str(v).strip():
-                ftab[kk] = _norm(str(v))[:60]
+                # a raw character slice cut rows mid-word ("…장병 3명이" + a hard cut, live audit
+                # 2026-09-30). Trim at a clause boundary instead; a row that still cannot end on a predicate
+                # keeps the ".." mark added downstream, so it never looks finished when it isn't.
+                ftab[kk] = clip_sentence(_norm(str(v)), 56, ell="") or _norm(str(v))[:56]
     subs: dict[str, str] = {}
     _raw_sub = obj.get("subtitles") if isinstance(obj, dict) else None
     if isinstance(_raw_sub, dict):

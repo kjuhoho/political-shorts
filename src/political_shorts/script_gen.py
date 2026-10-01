@@ -205,6 +205,62 @@ def _voice_sentence(v: dict[str, str]) -> str:
     return f"{who} '{clip_sentence(text, 60, ell='').rstrip(' .,')}'라는 입장입니다."
 
 
+# A party's demand is the party's, never ours. A shipped video (2026-09-30) said "국민의힘 (장동혁 대표 등)은
+# … 탄핵 및 국정조사를 추진해야 합니다." — the narrator stating a party's demand as what ought to happen. The
+# same card also cited a source and then said no such source was found. Both are fixed here, mechanically,
+# because the writing rule alone did not hold.
+_DEMAND = re.compile(r"(해야|돼야|되어야|이어야)\s*(합니다|한다)\.?$|(필요|시급|마땅)(합니다|하다)\.?$")
+_ACTOR_AT_START = re.compile(r"^[\"'“‘(]?([가-힣A-Za-z]{2,12})\s*(?:\([^)]*\)\s*)?(?:은|는|이|가|측은|측이|도)\s")
+_NOT_FOUND = re.compile(r"(진보|보수)\s*성향[^.]*(확인하지 못했|찾지 못했|없었습니다)")
+_CITED = re.compile(r"(진보|보수)\s*성향[^.]*(보도에 따르면|에 따르면|보도는|보도에서는)\s*[^.]*[가-힣]")
+
+
+def _whole_sentences(text: str) -> list[str]:
+    """Split on sentence ends, keeping the punctuation (unlike _sentences below, which is for prose flow)."""
+    return [x.strip() for x in re.split(r"(?<=[.!?])\s+", text or "") if x.strip()]
+
+
+def _attribute_demands(segments: list[dict[str, Any]]) -> list[str]:
+    """In place: a sentence that demands something becomes that actor's claim, or goes. Returns what changed."""
+    changed: list[str] = []
+    for seg in segments:
+        if seg.get("role") not in ("sides", "reaction"):
+            continue                                   # where parties speak; the outro is the user's own rule
+        sents = _whole_sentences(str(seg.get("narration", "")))
+        kept: list[str] = []
+        for sent in sents:
+            body = sent.strip()
+            if _DEMAND.search(body):
+                who = _ACTOR_AT_START.match(body)
+                if not who:
+                    if len(sents) > 1:                 # never empty a card to fix one sentence
+                        changed.append(f"dropped (unattributed demand): {body[:40]}")
+                        continue
+                    changed.append(f"kept (would empty the card): {body[:40]}")
+                    kept.append(body)
+                    continue
+                fixed = _DEMAND.sub(lambda m: ("해야" if m.group(1) in (None, "해야") else m.group(1) or "")
+                                    + " 한다고 주장했습니다." if m.group(1) else "하다고 주장했습니다.", body)
+                changed.append(f"attributed: {body[:40]} -> {fixed[-24:]}")
+                kept.append(fixed)
+                continue
+            kept.append(body)
+        # a card that cites a camp's reporting cannot also say that camp was not found. An honest "not found"
+        # on its own is fine, and the card is never emptied to resolve the contradiction.
+        cited = {m.group(1) for x in kept if not _NOT_FOUND.search(x) for m in [_CITED.search(x)] if m}
+        if cited:
+            rest = [x for x in kept if not (_NOT_FOUND.search(x) and _NOT_FOUND.search(x).group(1) in cited)]
+            if rest and len(rest) < len(kept):
+                kept = rest
+                changed.append("dropped the contradicting 'not found' line")
+        new = " ".join(kept).strip()
+        if new != str(seg.get("narration", "")).strip():
+            if seg.get("caption") == seg.get("narration"):
+                seg["caption"] = new
+            seg["narration"] = new
+    return changed
+
+
 def _balance_patch(segments: list[dict[str, Any]], web: dict[str, Any] | None) -> list[dict[str, Any]]:
     """BALANCE, guaranteed in code. A video should carry the other side too: when the script voices fewer than
     two of the parties the research found, the missing voice(s) are added to the "갈리는 입장" card as attributed
@@ -1071,6 +1127,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             cand = _fit_duration(cand, budget=_budget, caps=_NARR_CAP_LLM)
             # after trimming, so a length cut can never remove the other side's voice again
             cand = _balance_patch(cand, research_web)
+            for _fix in _attribute_demands(cand):
+                log.info("neutrality: %s", _fix)
             _strip_years_in(cand, _year_src, _pub_dates)
             _ensure_comment_prompt(cand, explain.engage_question(frame, pick_actor(headline, entities, frame)))
 

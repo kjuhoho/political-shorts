@@ -162,11 +162,9 @@ def build_metadata(
     lines.append("")
     lines.append("■ 고지")
     lines.append(script.get("disclaimer", ""))
-    if safety.get("warnings"):
-        lines.append("")
-        lines.append("■ 균형 관련 참고")
-        for wmsg in safety["warnings"]:
-            lines.append(f"- {wmsg}")
+    # safety["warnings"] stays OUT of the description. It is our own production note ("한쪽 정당만 언급됨 —
+    # 상대측 반응 보강 권장"), and on 2026-09-28 it shipped to viewers verbatim. It is still kept in the
+    # sidecar below ("safety"), where the run log and any later review can read it.
 
     lines.append("")
     lines.append("이 이슈, 여러분은 어떻게 보시나요? 댓글로 알려주세요.")
