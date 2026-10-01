@@ -1,0 +1,15 @@
+[
+  {
+    "path": "assembly-2007.jpg",
+    "sha256": "fca035ea6367338b37cb99c7a7cd67c40c31963b86eee50fef07fe187b6b622c",
+    "reviewed": true,
+    "license": "KOGL-1",
+    "license_url": "http://www.kogl.or.kr/open/info/license_info/by.do",
+    "credit": "대한민국 국회",
+    "asset_page": "https://commons.wikimedia.org/wiki/File:국회의사당_야경_(2007-12-12).jpg",
+    "original_source": "https://www.assembly.go.kr/portal/bbs/B0000052/view.do?nttId=1559042&menuNo=600122",
+    "caption": "국회의사당 자료 사진 / 2007-12-12 촬영 / 해당 사건 현장 아님",
+    "anchors": ["국회의사당", "국회 본회의"],
+    "exclude": ["일본", "중국", "미국 의회", "북한", "대만"]
+  }
+]

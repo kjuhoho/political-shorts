@@ -13,6 +13,14 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
         raise RuntimeError('All three issues, framing and title require passing 95-point reviews')
     if meta.get('media_check', {}).get('passed') is not True:
         raise RuntimeError('Encoded-media review failed')
+    # Never silently truncate the end: media licence/source credits live there.
+    description = meta['description']
+    if len(description.encode('utf-8')) > 4900:
+        raise RuntimeError('Description exceeds safe budget; preserve all source and licence credits')
+    from .visuals import credits
+    required_credits = credits(meta.get('render', {}).get('scenes', []))
+    if required_credits and required_credits not in description:
+        raise RuntimeError('Required media attribution missing from description')
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
@@ -35,7 +43,7 @@ def upload(video: Path, meta: dict[str, Any]) -> dict[str, str]:
     topic_row, topic_sha = ledger.reserve(topic_key, digest_file(video))
     request = youtube.videos().insert(
         part="snippet,status",
-        body={"snippet": {"title": meta["title"][:100], "description": meta["description"][:4900],
+        body={"snippet": {"title": meta["title"][:100], "description": description,
                           "tags": meta["tags"], "categoryId": meta["category_id"],
                           "defaultLanguage": "ko", "defaultAudioLanguage": "ko"},
               "status": {"privacyStatus": meta["privacy_status"], "selfDeclaredMadeForKids": False}},

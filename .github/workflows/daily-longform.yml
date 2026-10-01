@@ -61,6 +61,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install feedparser PyYAML Pillow edge-tts groq requests trafilatura google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - if: steps.gate.outputs.skip != 'true'
+        name: Independent longform regression tests (no API calls)
+        run: python -m unittest longform_system.test_visuals longform_system.test_fish_audio longform_system.test_guards longform_system.test_usage
+      - if: steps.gate.outputs.skip != 'true'
         env:
           LONGFORM_GROQ_API_KEY: ${{ secrets.LONGFORM_GROQ_API_KEY }}
           PS_YT_TOKEN_B64: ${{ secrets.PS_YT_TOKEN_B64 }}

@@ -26,6 +26,51 @@ requests stop rather than silently spending again. Per video: at most 60 scenes
 and 12,000 UTF-8 text bytes. Unit tests use mocked HTTP; real voice quality and
 account access remain unverified until credentials and user consent are ready.
 
+## Visual edition (2026-10-01)
+
+The independent renderer now creates a deterministic per-sentence storyboard:
+three-issue overview, literal short source excerpts, contextual number emphasis,
+editorial topic illustrations, and licensed still/video inserts. Artwork moves
+slightly while captions and source/date labels remain stationary. No additional
+LLM or image-generation requests are used. `sources.json` beside the script is
+required. A `.visual-plan.json` records assignments; `qa/` contains a decoded
+midpoint frame from every encoded scene, not merely the source drawings.
+
+Article excerpts are **redrawn source cards**, not screenshots or original video
+footage. Article publication dates are labelled as such. Numbers retain their
+full narration, including denials and forecasts; no invented chart comparisons,
+geographic movements, actor portraits or event reconstructions are generated.
+
+`media/library.json` contains visually inspected, hash-pinned reusable material.
+The initial library contains one National Assembly exterior, photographed
+2007-12-12, attributed to 대한민국 국회 under KOGL Type 1. It is used only for
+narrow, evidence-backed Korean National Assembly anchors, never as a current
+event photo. Images are bundled once, eliminating recurring search/download
+costs. Library coverage is intentionally small: most stories use graphics.
+This is NOT unrestricted automatic news-video collection.
+
+Optional episode `media-registry.json` accepts a list of records with `reviewed`,
+`license`, `license_url`, `credit`, `source_url`, `asset_page`, `sha256`, `path`,
+`anchor`, and `caption`. Files must be inside the registry folder, <=50 MB,
+JPEG/PNG/MP4, with exact hashes and explicit editorial review. `source_url`
+must match the issue's primary evidence; `anchor` must match that narration.
+Captions should include capture date and historical/illustrative status. Rights
+and event correspondence require actual review, not an automatically set flag.
+Allowed licences: CC0, CC-BY-4.0, KOGL-1, public-domain, own-work. Used media
+credits, source pages, licence links and modification notices enter the YouTube
+description. Video source audio is never included. Missing media uses graphics;
+invalid supplied media fails closed. Do not mislabel all Wikimedia content CC0.
+
+Offline preview without news/LLM/TTS calls:
+
+```powershell
+python -m longform_system.visual_preview --bundle <existing-artifact-folder> --output <preview-folder> --ffmpeg <ffmpeg-executable> --all-scenes
+```
+
+This reuses the saved MP4's narration and render manifest. It is prominently
+marked historical/design-only and must not be published as today's briefing.
+Fish Audio remains opt-in and is not activated by this visual upgrade.
+
 ## Publication contract
 
 Only `longform_system/` and its dedicated workflows are owned by this pipeline.

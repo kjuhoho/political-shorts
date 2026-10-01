@@ -205,11 +205,12 @@ def main():
         raise RuntimeError('Title failed review')
     video = args.output_dir/f'{day}.mp4'
     manifest = render(script_path, video, ROOT/'assets/fonts/DoHyeon-Regular.ttf', 'ko-KR-SunHiNeural')
+    from .visuals import credits
     media_report = check_media(video)
     save(video.with_suffix('.media.json'), media_report)
     if not 240 <= manifest['duration_s'] <= 360:
         raise RuntimeError(f"Duration outside 4–6 minutes: {manifest['duration_s']}")
-    meta = dict(title=package.title, description=f'기준일: {day} (한국시간)\n'+package.description,
+    meta = dict(title=package.title, description=f'기준일: {day} (한국시간)\n'+package.description+credits(manifest['scenes']),
                 tags=package.tags, privacy_status='public', category_id='25', date=day,
                 sources=stories, render=manifest, quality=reports, title_review=title_review,
                 video_sha256=digest_file(video), media_check=media_report,

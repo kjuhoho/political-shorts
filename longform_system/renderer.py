@@ -16,6 +16,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import edge_tts
 from .fish_audio import provider, validate_config, synthesize
+from .visuals import plan as visual_plan, draw_scene, video_filter
 
 W, H, FPS = 1920, 1080, 30
 PALETTES = [(12, 28, 48), (20, 48, 71), (43, 37, 70), (23, 59, 58), (62, 42, 32)]
@@ -121,6 +122,11 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
     scenes = clean_script(script_path)
     if len(scenes) < 5:
         raise ValueError("A longform script needs at least five narration chunks")
+    source_path = script_path.parent / 'sources.json'
+    stories = json.loads(source_path.read_text(encoding='utf-8'))
+    storyboard = visual_plan(scenes, stories, script_path.parent/'media-registry.json')
+    output.with_suffix('.visual-plan.json').write_text(
+        json.dumps(storyboard, ensure_ascii=False, indent=2), encoding='utf-8')
     # Measure natural narration before spending time encoding every scene.
     # Keep this diagnostic audio so a length hold is concrete and reviewable.
     prepared_audio = provider() == 'fish'
@@ -141,39 +147,41 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         raise ValueError(f'Natural narration lasts {spoken_seconds:.1f}s; 5-minute length policy not met')
     clips: list[Path] = []
     manifest_scenes = []
-    raw = script_path.read_text(encoding='utf-8')
-    sources = re.findall(r'\[화면 출처 텍스트: (.*?)\]', raw)
-    seen_labels = set()
     qa = output.parent / 'qa'
     qa.mkdir(exist_ok=True)
     for i, (label, text) in enumerate(scenes):
         png, mp3, clip = work / f"{i:02d}.png", work / f"{i:02d}.mp3", work / f"{i:02d}.mp4"
-        match = re.search(r'핵심\s*(\d)', label)
-        source = ''
-        if match:
-            source = sources[int(match.group(1))-1]
-            source = '출처: ' + ' | '.join(source.split(' | ')[:2]) + ' | 원문은 설명란'
-        card(label, text, png, i, font_path, source)
-        if label not in seen_labels:
-            Image.open(png).save(qa / f'{i:02d}.png')
-            seen_labels.add(label)
+        visual = storyboard['scenes'][i]
+        overlay = work / f'{i:02d}.overlay.png'
+        draw_scene(visual, png, overlay, font_path)
         if not prepared_audio:
             asyncio.run(make_audio(text, mp3, voice))
         seconds = duration(mp3)
         frames = max(1, round(seconds * FPS))
-        run(["ffmpeg", "-y", "-loop", "1", "-i", str(png), "-i", str(mp3),
-             "-filter_complex", f"[0:v]fps={FPS},format=yuv420p[v]",
-             "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        asset = visual['media']
+        has_video = bool(asset and Path(asset['resolved_path']).suffix.lower() == '.mp4')
+        picture_input = (['-stream_loop','-1','-i',asset['resolved_path']] if has_video
+                         else ['-loop','1','-i',str(png)])
+        run(["ffmpeg", "-y", "-v", "error", *picture_input,
+             "-loop", "1", "-i", str(overlay), "-i", str(mp3),
+             "-filter_complex", video_filter(frames, has_video),
+             "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
              "-c:a", "aac", "-b:a", "192k", "-t", str(seconds), str(clip)])
+        # Inspect actual encoded frames for EVERY scene, not just the source PNG.
+        run(['ffmpeg','-y','-v','error','-ss',str(seconds/2),'-i',str(clip),
+             '-frames:v','1',str(qa/f'{i:02d}.png')])
         clips.append(clip)
-        manifest_scenes.append({"index": i + 1, "label": label, "text": text, "duration_s": seconds})
+        manifest_scenes.append({"index": i + 1, "label": label, "text": text, "duration_s": seconds,
+                                "visual_kind":visual['kind'], "source":visual['source'],
+                                "media":visual['media']})
     concat = work / "concat.txt"
     concat.write_text("".join(f"file '{clip.as_posix()}'\n" for clip in clips), encoding="utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
     run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c", "copy", str(output)])
     actual = duration(output)
     manifest = {"video": str(output), "duration_s": actual,
-                "scenes": manifest_scenes, "source_script": str(script_path), "tts_provider":provider()}
+                "scenes": manifest_scenes, "source_script": str(script_path), "tts_provider":provider(),
+                "visual_version":storyboard['version'], "media_scenes":storyboard['media_scenes']}
     output.with_suffix(".render.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
