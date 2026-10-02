@@ -78,6 +78,7 @@ winget install --id Gyan.FFmpeg -e
 | provider | 품질 | 비용 | 필요한 키 |
 |---|---|---|---|
 | `edge` (기본) | 매우 좋음 | 무료 | 없음 |
+| `fish` | 자연스러운 음성 | 모델/계정에 따라 다름 | `FISH_API_KEY` (`FISH_REFERENCE_ID` 선택) |
 | `elevenlabs` | 최상 | 유료 | `ELEVENLABS_API_KEY` (+ `ELEVENLABS_VOICE_ID`) |
 | `azure` | 최상급 | 무료티어→유료 | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` |
 | `gcloud` | 좋음 | 무료티어 | `GOOGLE_TTS_API_KEY` |
@@ -87,6 +88,15 @@ winget install --id Gyan.FFmpeg -e
 한국어 음성 예: edge/azure `ko-KR-SunHiNeural`·`ko-KR-InJoonNeural`,
 gcloud `ko-KR-Neural2-A`. `TTS_VOICE`에 지정, 비우면 provider 기본값.
 설정한 provider가 실패하면 자동으로 `edge` → `sapi` → 무음 순으로 폴백합니다.
+
+Fish Audio를 쓰려면 `.env`에 `TTS_PROVIDER=fish`, `FISH_API_KEY=발급받은_키`를
+설정합니다. 원하는 목소리의 ID가 있으면 `FISH_REFERENCE_ID`에도 넣으세요.
+`FISH_MODEL=s2.1-pro-free`는 개발용 기본값이며 운영 모델은 `s2.1-pro`로
+변경할 수 있습니다. `TTS_RATE`는 Fish Audio의 말하기 속도(0.5~2.0배)에도 적용됩니다.
+실제 API 호출은 사용량이 발생할 수 있으므로 먼저 짧은 영상으로 확인하세요.
+GitHub Actions의 `daily-short` 작업에는 저장소 Secrets에 `PS_FISH_KEY`를 넣으면
+Fish Audio가 자동 선택됩니다. 같은 방식으로 `PS_FISH_REFERENCE_ID`를 넣으면
+지정한 목소리를 사용합니다. 키가 없으면 기존 `.env` 설정을 따릅니다.
 
 ## 배경음악(BGM)
 

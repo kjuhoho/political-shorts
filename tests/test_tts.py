@@ -7,7 +7,39 @@ from political_shorts import tts_providers
 
 
 def test_registry_has_all_providers():
-    assert set(tts_providers.REGISTRY) == {"edge", "elevenlabs", "azure", "gcloud", "openai"}
+    assert set(tts_providers.REGISTRY) == {"edge", "fish", "elevenlabs", "azure", "gcloud", "openai"}
+
+
+def test_fish_request_and_audio_file(tmp_path: Path, monkeypatch):
+    cfg = replace(load_settings(), fish_api_key="test-key", fish_reference_id="voice-123", tts_rate=210)
+    calls = []
+
+    class Response:
+        content = b"ID3" + b"\0" * 300
+
+        def raise_for_status(self):
+            pass
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(tts_providers.requests, "post", fake_post)
+    paths = tts_providers.synth_fish(["안녕하세요"], tmp_path, cfg)
+    assert paths == [tmp_path / "seg_00.mp3"]
+    assert paths[0].read_bytes().startswith(b"ID3")
+    assert calls[0][1]["headers"]["model"] == "s2.1-pro-free"
+    assert calls[0][1]["json"] == {
+        "text": "안녕하세요", "format": "mp3", "prosody": {"speed": 1.2},
+        "reference_id": "voice-123",
+    }
+
+
+def test_fish_missing_key_fails_before_request(tmp_path: Path):
+    cfg = replace(load_settings(), fish_api_key="")
+    import pytest
+    with pytest.raises(RuntimeError, match="FISH_API_KEY"):
+        tts_providers.synth_fish(["안녕"], tmp_path, cfg)
 
 
 def test_rate_percent_mapping():
