@@ -988,5 +988,41 @@
   "frame": "personnel",
   "remote_id": "jhrBYKaLOdE",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1791178731,
+  "signature": "국정지지율 리얼미터 이재명 전주보다",
+  "actor": "이재명",
+  "headline": "이 대통령 국정지지율 37.4%...전주보다 0.5%p↓[리얼미터]",
+  "frame": "poll",
+  "remote_id": "TRqV5-Bk9Lo",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791178731,
+  "signature": "리얼미터 소폭하락 악재로 안보 이대통령 인사 지지율",
+  "actor": "",
+  "headline": "이대통령 지지율 37.4%...\"인사·안보 등 악재로 소폭하락\"[리얼미터](종합)",
+  "frame": "poll",
+  "remote_id": "TRqV5-Bk9Lo",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791178731,
+  "signature": "국힘 리얼미터 민주",
+  "actor": "",
+  "headline": "민주 42.5% 국힘 38.4%...민주 3.8%p↑ 국힘 1.0%p↓[리얼미터]",
+  "frame": "poll",
+  "remote_id": "TRqV5-Bk9Lo",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791178731,
+  "signature": "3주 dmz 김지용 리얼미터 만에 사건 소폭 영향 지뢰 지지율 폭발 하락",
+  "actor": "",
+  "headline": "이 대통령 지지율 ‘37.4%’ 3주 만에 소폭 하락···“김지용·DMZ 지뢰 폭발 사건 영향”[리얼미터]",
+  "frame": "poll",
+  "remote_id": "TRqV5-Bk9Lo",
+  "platform": "youtube"
  }
 ]
