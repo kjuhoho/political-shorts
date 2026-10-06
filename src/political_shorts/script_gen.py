@@ -1283,11 +1283,15 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     # catches a subject only named in the article body, not the headline.
     _body_text = f"{titles}\n{summaries}"
     images: list[dict[str, Any]] = []
+    # one picture per SCENE, not per card: scene.plan splits a card into ~2 scenes, and a video that runs out
+    # of pictures starts showing the same one again (user, 2026-10-06).
+    _want_media = min(16, len([s for s in segments if s.get("narration")]) * 2 + 2)
     try:
         from .images import collect_images
 
         images = [a.__dict__ for a in
-                  collect_images(entities, frame, headline, cfg, body_text=_body_text)]
+                  collect_images(entities, frame, headline, cfg, body_text=_body_text,
+                                 want=max(0, _want_media - (3 if getattr(cfg, "broll_enabled", False) else 0)))]
     except Exception as exc:  # pragma: no cover - network dependent
         log.warning("image collection failed: %s", exc)
     if getattr(cfg, "broll_enabled", False):
@@ -1295,7 +1299,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
             from .footage import collect_footage
 
             images += [a.__dict__ for a in
-                      collect_footage(entities, frame, headline, cfg, body_text=_body_text)]
+                      collect_footage(entities, frame, headline, cfg, body_text=_body_text,
+                                      want=min(5, max(3, _want_media // 4)))]
         except Exception as exc:  # pragma: no cover - network dependent
             log.warning("b-roll collection failed: %s", exc)
 

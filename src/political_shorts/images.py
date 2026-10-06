@@ -42,6 +42,7 @@ MIN_W, MIN_H = 340, 340
 MAX_BYTES = 14_000_000
 
 PRESIDENT_NAME = "이재명"          # sitting president — bio page is a standard article
+MAX_IMAGES = 16                    # hard ceiling: beyond this the download time stops being worth it
 MAX_PORTRAITS = 5                  # people faces per video (user wants portraits to
                                   # dominate; locations are only filler / safe
                                   # backdrops for cards about no one in particular)
@@ -267,14 +268,17 @@ def _wikidata_portrait(name: str, cfg: Settings) -> dict | None:
 
 def collect_images(
     entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None,
-    body_text: str = "",
+    body_text: str = "", want: int = 0,
 ) -> list[ImageAsset]:
+    """`want` is how many pictures the video actually needs (one per scene, ideally). IMAGE_MAX_COUNT is the
+    floor: with six photos spread over 11-19 scenes, every photo came back two or three times inside the same
+    video (user, 2026-10-06)."""
     cfg = cfg or settings
     if not cfg.image_enabled:
         return []
     cache_dir = Path(cfg.image_cache_dir or "assets/cache/images")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    want = max(2, cfg.image_max_count)
+    want = min(MAX_IMAGES, max(2, cfg.image_max_count, want))
 
     h = clean_text(headline)
     topic = detect_topic(headline, body_text)

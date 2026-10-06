@@ -730,6 +730,13 @@ def _assign_images(
     # a PERSON/QUOTE scene should show a face; a CONTEXT/ISSUE scene should show
     # context media, not a portrait held over from the setup pass.
     _face_types = {"PERSON", "QUOTE", "HOOK", "FACT", "CONCLUSION"}
+    # The face stays the video's most frequent image (user: 사진은 되도록 인물 중심) but it does not carry
+    # the whole thing: those role/scene-type tests match nearly every card, so the subject's portrait was
+    # landing on 11 cards out of 12 and the video was one still photo end to end (user, 2026-10-06). Half the
+    # cards at most while there is other media to show; with nothing else collected, a face still beats a
+    # drawn backdrop.
+    lead_cap = max(2, round(len(segments) * 0.5))
+    lead_used = sum(1 for p in picks if p and p == lead_path)
     for i, seg in enumerate(segments):
         if picks[i] is not None:
             continue
@@ -737,8 +744,9 @@ def _assign_images(
         stype = str(seg.get("scene_type") or "")
         pic = None
         want_face = (role in setup_roles) or (stype in _face_types)
-        if lead_path and (want_face or not context):
+        if lead_path and (want_face or not context) and (lead_used < lead_cap or not context):
             pic = lead_path
+            lead_used += 1
         if pic is None:
             pic = _take_photo(fi); fi += 1
         picks[i] = pic

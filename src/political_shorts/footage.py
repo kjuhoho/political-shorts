@@ -263,7 +263,7 @@ def _pexels_videos(term: str, key: str, cap_bytes: int, cache_dir: Path, strict:
 # public
 # --------------------------------------------------------------------------- #
 def collect_footage(
-    entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None,
+    entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None, want: int = 0,
     body_text: str = "",
 ) -> list[ImageAsset]:
     cfg = cfg or settings
@@ -272,7 +272,7 @@ def collect_footage(
     cache_dir = Path(cfg.broll_cache_dir or "assets/cache/footage")
     cache_dir.mkdir(parents=True, exist_ok=True)
     cap_bytes = max(4, int(getattr(cfg, "broll_max_mb", 40))) * 1_000_000
-    want = max(1, int(getattr(cfg, "broll_max_count", 3)))
+    want = min(6, max(1, int(getattr(cfg, "broll_max_count", 3)), want))
 
     topic = detect_topic(headline, body_text)
     rnd = random.Random(clean_text(headline))

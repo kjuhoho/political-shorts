@@ -37,9 +37,13 @@ def test_photos_are_person_centric_not_location_dominated():
     imgs = _imgs(["이재명"], ["국회", "광화문", "한강", "서울역"])
     out = _assign_images(SEGMENTS, imgs, topic="이재명")
     faces = sum(1 for p in out if p and p.startswith("P_"))
-    # a story about one person should be mostly that person's face, not scenery
-    assert faces >= len(SEGMENTS) - 2
+    others = sum(1 for p in out if p and p.startswith("L_"))
+    # a story about one person leads on that person and shows them more than anything else — but it is a
+    # video, not a still: the face took 11 cards out of 12 until 2026-10-06, and viewers saw one photo
     assert out[0] == "P_이재명"          # the hook leads on the subject
+    assert faces >= others               # still the dominant image
+    assert faces <= round(len(SEGMENTS) * 0.5) + 1
+    assert others >= 1                   # something else does appear
 
 
 def test_no_portraits_falls_back_to_locations_cleanly():
