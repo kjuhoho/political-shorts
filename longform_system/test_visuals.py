@@ -15,6 +15,27 @@ def stories():
 
 
 class VisualTests(unittest.TestCase):
+    def test_generated_illustrations_are_not_evidence(self):
+        from .illustrations import choose, library
+        self.assertEqual(len(library()),6)
+        self.assertEqual(choose('관세와 수출을 논의합니다.')['id'],'trade')
+        self.assertEqual(choose('알 수 없는 주제입니다.')['id'],'evidence')
+        board = plan([('핵심 1','첫 문장입니다.'),('핵심 1','외교 회담을 논의합니다.')],stories())
+        row = board['scenes'][1]
+        self.assertEqual(row['kind'],'illustration')
+        self.assertIsNone(row['media'])
+        self.assertIn('실제 사건 현장 아님',row['disclosure'])
+        self.assertIn('AI 생성',credits(board['scenes']))
+
+    def test_all_illustrations_draw_without_clipping(self):
+        from .illustrations import library
+        font = Path(__file__).resolve().parents[1]/'assets/fonts/DoHyeon-Regular.ttf'
+        row = plan([('핵심 1','첫 문장입니다.'),('핵심 1','자료를 확인합니다.')],stories())['scenes'][1]
+        with tempfile.TemporaryDirectory() as tmp:
+            for asset in library().values():
+                row['illustration'] = asset
+                draw_scene(row,Path(tmp)/'art.png',Path(tmp)/'overlay.png',font)
+
     def test_source_mapping_not_global_keyword(self):
         result = plan([('핵심 3','국회에서 논의했습니다.'),('훅','세 이슈입니다.')],stories())
         self.assertEqual(result['scenes'][0]['source']['url'],'https://example.org/2')

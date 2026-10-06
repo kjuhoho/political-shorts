@@ -144,17 +144,26 @@ def plan(scenes, stories, registry=None):
                 row.update(kind='media', media=candidates[0], disclosure=candidates[0]['caption'])
                 media_source = next(s for s in stories[issue]['sources'] if s['url']==candidates[0]['source_url'])
                 row['source'] = {k:media_source[k] for k in ('name','url','published','title')}
+        # Illustrations are never registered as real evidence or licensed footage.
+        from .illustrations import choose
+        if row['kind'] == 'issue' or (row['kind'] == 'overview' and counts[label] % 2 == 0):
+            row.update(kind='illustration', illustration=choose(narration, row.get('headline', ''), index),
+                       disclosure='AI 생성 설명용 이미지 · 실제 사건 현장 아님')
         result.append(row)
-    return dict(version=2, generated_without_llm=True, scenes=result,
+    return dict(version=3, generated_without_llm=True, scenes=result,
+                illustration_scenes=sum(r['kind']=='illustration' for r in result),
                 media_scenes=sum(r['kind']=='media' for r in result),
                 notice='No unlicensed article images or guessed politician portraits are collected.')
 
 
 def credits(scenes):
     used = {r['media']['sha256']:r['media'] for r in scenes if r.get('media')}
+    generated = ('\n\n설명 화면: AI 생성 일러스트와 편집 그래픽을 사용했습니다. '
+                 '실제 사건 현장·인물 촬영 자료가 아닙니다.'
+                 if any(r.get('illustration') for r in scenes) else '')
     if not used:
-        return ''
-    return '\n\n자료 화면 출처\n'+'\n\n'.join(
+        return generated
+    return generated+'\n\n자료 화면 출처\n'+'\n\n'.join(
         f"{m['caption']}\n{m['credit']} / {m['license']}\n{m['asset_page']}\n"
         f"{m['license_url']}\n편집: 크기 조정·화면 배치·확대 이동. 권리자의 지지를 의미하지 않습니다."
         for m in used.values())
@@ -169,7 +178,14 @@ def draw_scene(row, background, overlay, font_path):
         d.line((0,y,W,y), fill='#10243a', width=1)
     d.rounded_rectangle((80,185,1840,740), radius=32, fill='#142e48')
     kind = row['kind']
-    if kind == 'overview':
+    if kind == 'illustration':
+        with Image.open(row['illustration']['resolved_path']) as src:
+            fitted = ImageOps.contain(src.convert('RGB'), (1030, 550))
+            image.paste(fitted, (100+(1030-fitted.width)//2,190+(550-fitted.height)//2))
+        text_block(d,row.get('headline') or '오늘의 흐름을 살펴봅니다',
+                   (1180,270),font_path,590,315,48)
+        text_block(d,'설명용 일러스트',(1180,650),font_path,590,65,30,'#48d4c0')
+    elif kind == 'overview':
         for n, title in enumerate(row['headlines']):
             x = 120+n*575
             d.ellipse((x,225,x+90,315), fill='#48d4c0')
@@ -238,8 +254,11 @@ def video_filter(frames, has_video=False):
     art = ('[0:v]scale=1680:510:force_original_aspect_ratio=decrease,'
            'pad=1920:1080:(ow-iw)/2:205+(510-ih)/2:color=0x091729,setsar=1,fps=30[art];'
            if has_video else
-           f"[0:v]zoompan=z='1+0.018*on/{max(1,frames)}':"
-           f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d={frames}:s=1920x1080:fps=30[art];")
+           # Six-second shot rhythm without adding TTS calls or stretching audio.
+           # Only artwork moves; text overlay is composited afterwards.
+           f"[0:v]zoompan=z='1+0.025*mod(on,180)/180+0.015*mod(floor(on/180),2)':"
+           f"x='(iw-iw/zoom)*(0.3+0.4*mod(floor(on/180),2))':"
+           f"y='ih/2-ih/zoom/2':d={frames}:s=1920x1080:fps=30[art];")
     return art + ('[art][1:v]overlay=0:0:shortest=1,'
                   'drawbox=x=80:y=755:w=1760:h=4:color=0x48d4c0:t=fill,'
                   'format=yuv420p[v]')

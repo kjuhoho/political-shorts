@@ -1,0 +1,56 @@
+[
+  {
+    "id": "diplomacy",
+    "path": "diplomacy.png",
+    "sha256": "79b5bda5441e2e371c5e9655aedf9772b0abc303f4a2a2df3f0d16dcb6a819e1",
+    "type": "ai-explanatory",
+    "visually_checked": true,
+    "generation_mode": "built-in image_gen",
+    "prompt": "Use case: illustration-story. Asset type: reusable explanatory background for a neutral Korean news briefing, not a news photograph. Create one polished wide 16:9 editorial illustration of international diplomacy: a stylized translucent globe behind an empty round conference table, several abstract unmarked chairs, paper documents. Navy, teal, warm ivory palette, refined dimensional paper-cut style with subtle grain and soft lighting. Rich but uncluttered composition, central subject with generous safe margins. No people, no flags, no logos, no text, no numbers, no borders, no charts or invented factual data. Clearly illustrative, not photorealistic or depicting any actual meeting."
+  },
+  {
+    "id": "economy",
+    "path": "economy.png",
+    "sha256": "dd1717b96e6f0aee0e51234e4d15245c2133687b0a87ffe6603018d925dbf52a",
+    "type": "ai-explanatory",
+    "visually_checked": true,
+    "generation_mode": "built-in image_gen",
+    "prompt": "Use case: illustration-story. Asset type: reusable explanatory background for a neutral Korean news briefing, not a news photograph. Create one polished wide 16:9 editorial illustration: a tabletop still life of a modest home model, grocery basket with vegetables, plain coins and a blank budget notebook, no graphs. Navy, teal, warm ivory palette, refined dimensional paper-cut style with subtle grain and soft lighting. Rich but uncluttered composition, central subject with generous safe margins. No people, no flags, no logos, no text, no numbers, no borders, no charts or invented factual data. Clearly illustrative, not photorealistic and not depicting an actual event."
+  },
+  {
+    "id": "evidence",
+    "path": "evidence.png",
+    "sha256": "a3b89c8a469f2cd62ab6da8c4e18f2f5f8dfce781166209be5bd33abc6225cf2",
+    "type": "ai-explanatory",
+    "visually_checked": true,
+    "generation_mode": "built-in image_gen",
+    "prompt": "Use case: illustration-story. Asset type: reusable explanatory background for a neutral Korean news briefing, not a news photograph. Create one polished wide 16:9 editorial illustration: an editorial research desk with blank documents, a magnifying glass, tabbed folders and a desk lamp, no crime evidence or accusations. Navy, teal, warm ivory palette, refined dimensional paper-cut style with subtle grain and soft lighting. Rich but uncluttered composition, central subject with generous safe margins. No people, no flags, no logos, no text, no numbers, no borders, no charts or invented factual data. Clearly illustrative, not photorealistic and not depicting an actual event."
+  },
+  {
+    "id": "legislation",
+    "path": "legislation.png",
+    "sha256": "bf95a4e2ce25efd7ee98bbd3755d0527e6bec7dfa7dddc03bc39abfbde04848a",
+    "type": "ai-explanatory",
+    "visually_checked": true,
+    "generation_mode": "built-in image_gen",
+    "prompt": "Use case: illustration-story. Asset type: reusable explanatory background for a neutral Korean news briefing, not a news photograph. Create one polished wide 16:9 editorial illustration: an imagined empty legislative chamber with curved rows of seats, an open blank law book in the foreground, no recognizable real building. Navy, teal, warm ivory palette, refined dimensional paper-cut style with subtle grain and soft lighting. Rich but uncluttered composition, central subject with generous safe margins. No people, no flags, no logos, no text, no numbers, no borders, no charts or invented factual data. Clearly illustrative, not photorealistic and not depicting an actual event."
+  },
+  {
+    "id": "trade",
+    "path": "trade.png",
+    "sha256": "3d8ac0bf8876ed45995464d37a570b032a707f779952a098931f868a5ea0c3d2",
+    "type": "ai-explanatory",
+    "visually_checked": true,
+    "generation_mode": "built-in image_gen",
+    "prompt": "Use case: illustration-story. Asset type: reusable explanatory background for a neutral Korean news briefing, not a news photograph. Create one polished wide 16:9 editorial illustration: a stylized cargo port with colorful unmarked containers, a cargo ship and warehouse, no flags or recognizable real location. Navy, teal, warm ivory palette, refined dimensional paper-cut style with subtle grain and soft lighting. Rich but uncluttered composition, central subject with generous safe margins. No people, no flags, no logos, no text, no numbers, no borders, no charts or invented factual data. Clearly illustrative, not photorealistic and not depicting an actual event."
+  },
+  {
+    "id": "civic",
+    "path": "civic.png",
+    "sha256": "1f63a020742fe13dbe923799308c91213e6bd370c2438172b401b43b501aa621",
+    "type": "ai-explanatory",
+    "visually_checked": true,
+    "generation_mode": "built-in image_gen",
+    "prompt": "Use case: illustration-story. Asset type: reusable explanatory background for a neutral Korean news briefing, not a news photograph. Create one polished wide 16:9 editorial illustration: a peaceful imagined neighborhood with homes, a bus, park trees and a public service building, no people or slogans. Navy, teal, warm ivory palette, refined dimensional paper-cut style with subtle grain and soft lighting. Rich but uncluttered composition, central subject with generous safe margins. No people, no flags, no logos, no text, no numbers, no borders, no charts or invented factual data. Clearly illustrative, not photorealistic and not depicting an actual event."
+  }
+]

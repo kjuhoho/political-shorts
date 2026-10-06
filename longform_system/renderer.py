@@ -173,6 +173,7 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         clips.append(clip)
         manifest_scenes.append({"index": i + 1, "label": label, "text": text, "duration_s": seconds,
                                 "visual_kind":visual['kind'], "source":visual['source'],
+                                "illustration":visual.get('illustration'),
                                 "media":visual['media']})
     concat = work / "concat.txt"
     concat.write_text("".join(f"file '{clip.as_posix()}'\n" for clip in clips), encoding="utf-8")
@@ -181,7 +182,8 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
     actual = duration(output)
     manifest = {"video": str(output), "duration_s": actual,
                 "scenes": manifest_scenes, "source_script": str(script_path), "tts_provider":provider(),
-                "visual_version":storyboard['version'], "media_scenes":storyboard['media_scenes']}
+                "visual_version":storyboard['version'], "media_scenes":storyboard['media_scenes'],
+                "illustration_scenes":storyboard['illustration_scenes']}
     output.with_suffix(".render.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
