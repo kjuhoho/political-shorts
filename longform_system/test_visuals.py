@@ -22,15 +22,17 @@ class VisualTests(unittest.TestCase):
         self.assertEqual(choose('알 수 없는 주제입니다.')['id'],'evidence')
         board = plan([('핵심 1','첫 문장입니다.'),('핵심 1','외교 회담을 논의합니다.')],stories())
         row = board['scenes'][1]
-        self.assertEqual(row['kind'],'illustration')
+        self.assertEqual(row['kind'],'motion')
         self.assertIsNone(row['media'])
         self.assertIn('실제 사건 현장 아님',row['disclosure'])
-        self.assertIn('AI 생성',credits(board['scenes']))
+        self.assertIn('모션그래픽',credits(board['scenes']))
 
     def test_all_illustrations_draw_without_clipping(self):
         from .illustrations import library
         font = Path(__file__).resolve().parents[1]/'assets/fonts/DoHyeon-Regular.ttf'
         row = plan([('핵심 1','첫 문장입니다.'),('핵심 1','자료를 확인합니다.')],stories())['scenes'][1]
+        row['kind'] = 'illustration'
+        row.pop('motion',None)
         with tempfile.TemporaryDirectory() as tmp:
             for asset in library().values():
                 row['illustration'] = asset

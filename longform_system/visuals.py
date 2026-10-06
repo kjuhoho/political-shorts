@@ -144,18 +144,18 @@ def plan(scenes, stories, registry=None):
                 row.update(kind='media', media=candidates[0], disclosure=candidates[0]['caption'])
                 media_source = next(s for s in stories[issue]['sources'] if s['url']==candidates[0]['source_url'])
                 row['source'] = {k:media_source[k] for k in ('name','url','published','title')}
-        # Illustrations are never registered as real evidence or licensed footage.
-        from .illustrations import choose
-        if row['kind'] == 'issue' or (row['kind'] == 'overview' and counts[label] % 2 == 0):
-            row.update(kind='illustration', illustration=choose(narration, row.get('headline', ''), index),
-                       disclosure='AI 생성 설명용 이미지 · 실제 사건 현장 아님')
-        if row['kind'] == 'illustration' and any(term in narration for term in
-                ('공급망','화물','항만','해상 운송','물류')):
-            from .motion import DISCLOSURE
-            row.update(kind='motion', motion='supply-chain', disclosure=DISCLOSURE)
-            row.pop('illustration',None)
+        # Priority is editorial, not a model's vague importance score: source,
+        # contextual numbers, cleared media and the first recap stay foreground.
+        recap = row['kind']=='overview' and '요약' in label and counts[label]==1
+        if row['kind'] in ('issue','overview') and not recap:
+            from .motion import DISCLOSURE, select_theme
+            row.update(kind='motion', motion=select_theme(narration,row.get('headline','')),
+                       disclosure=DISCLOSURE, visual_priority='background',
+                       selection_reason='ordinary-narration-topic-match')
+        else:
+            row.update(visual_priority='foreground',selection_reason='evidence-number-media-or-recap')
         result.append(row)
-    return dict(version=4, generated_without_llm=True, scenes=result,
+    return dict(version=5, generated_without_llm=True, scenes=result,
                 motion_scenes=sum(r['kind']=='motion' for r in result),
                 illustration_scenes=sum(r['kind']=='illustration' for r in result),
                 media_scenes=sum(r['kind']=='media' for r in result),
@@ -188,7 +188,7 @@ def draw_scene(row, background, overlay, font_path):
     kind = row['kind']
     if kind == 'motion':
         from .motion import frame
-        image = frame(0,font_path)
+        image = frame(0,font_path,row['motion'])
     elif kind == 'illustration':
         with Image.open(row['illustration']['resolved_path']) as src:
             fitted = ImageOps.contain(src.convert('RGB'), (1030, 550))

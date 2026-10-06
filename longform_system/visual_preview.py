@@ -33,9 +33,10 @@ def main():
         offset += row['duration_s']
     selected, kinds = [], set()
     for i,row in enumerate(board['scenes']):
-        if args.all_scenes or row['kind'] not in kinds:
+        key = row.get('motion') or row['kind']
+        if args.all_scenes or key not in kinds:
             selected.append(i)
-            kinds.add(row['kind'])
+            kinds.add(key)
     clips = []
     for i in selected:
         row = board['scenes'][i]
@@ -43,7 +44,7 @@ def main():
         png, overlay, clip = [args.output/f'{i:02d}{suffix}' for suffix in ('.png','.overlay.png','.mp4')]
         draw_scene(row,png,overlay,args.font)
         seconds = manifest['scenes'][i]['duration_s']
-        inputs, has_video, full_frame = picture_input(row,png,args.output,args.font,args.ffmpeg)
+        inputs, has_video, full_frame = picture_input(row,png,args.output,args.font,args.ffmpeg,offsets[i])
         subprocess.run([args.ffmpeg,'-y','-v','error',*inputs,
             '-loop','1','-i',str(overlay),'-ss',str(offsets[i]),'-i',str(video),
             '-filter_complex',video_filter(round(seconds*30),has_video,full_frame),

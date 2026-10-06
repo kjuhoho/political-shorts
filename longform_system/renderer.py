@@ -159,7 +159,8 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
             asyncio.run(make_audio(text, mp3, voice))
         seconds = duration(mp3)
         frames = max(1, round(seconds * FPS))
-        picture_input, has_video, full_frame = motion_picture_input(visual,png,work,font_path)
+        offset = sum(s['duration_s'] for s in manifest_scenes)
+        picture_input, has_video, full_frame = motion_picture_input(visual,png,work,font_path,offset=offset)
         run(["ffmpeg", "-y", "-v", "error", *picture_input,
              "-loop", "1", "-i", str(overlay), "-i", str(mp3),
              "-filter_complex", video_filter(frames, has_video, full_frame),
@@ -173,6 +174,8 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
                                 "visual_kind":visual['kind'], "source":visual['source'],
                                 "illustration":visual.get('illustration'),
                                 "motion":visual.get('motion'),
+                                "visual_priority":visual.get('visual_priority'),
+                                "selection_reason":visual.get('selection_reason'),
                                 "media":visual['media']})
     concat = work / "concat.txt"
     concat.write_text("".join(f"file '{clip.as_posix()}'\n" for clip in clips), encoding="utf-8")
