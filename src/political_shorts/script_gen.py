@@ -1285,7 +1285,7 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
     images: list[dict[str, Any]] = []
     # one picture per SCENE, not per card: scene.plan splits a card into ~2 scenes, and a video that runs out
     # of pictures starts showing the same one again (user, 2026-10-06).
-    _want_media = min(16, len([s for s in segments if s.get("narration")]) * 2 + 2)
+    _want_media = min(20, len([s for s in segments if s.get("narration")]) * 2 + 2)
     try:
         from .images import collect_images
 

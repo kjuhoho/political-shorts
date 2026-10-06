@@ -15,6 +15,7 @@ def _env(monkeypatch, tmp_path):
         "url": "https://commons/lead.jpg", "width": 800, "title": "President Lee Jae Myung 20260306",
         "file": FILES[0], "article": "이재명"})
     monkeypatch.setattr(people, "photo_files", lambda name, c, article_title="", session=None: list(FILES))
+    monkeypatch.setattr(people, "is_person", lambda *a, **k: True)        # offline: no Wikidata round trip
     monkeypatch.setattr(images, "_commons_info",
                         lambda f: {"url": f"https://commons/{f}", "width": 900, "height": 1200})
     return cfg

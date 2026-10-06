@@ -691,6 +691,14 @@ def _assign_images(
                           if who and _topic and len(_topic) <= 4
                           and (who == _topic or who in _topic or _topic in who)), None)
 
+    # every photo of the SAME person as the poster face: the setup cards show him from different angles
+    # instead of holding one still (user, 2026-10-06). Poster face first, so the video still opens on it.
+    lead_query = next((str(im.get("query") or "") for im in images
+                       if im.get("kind") == "portrait" and im.get("path") == lead_path), "")
+    lead_paths = [lead_path] if lead_path else []
+    lead_paths += [p for p, who in portraits
+                   if lead_query and who == lead_query and p not in lead_paths]
+
     used: set[str] = set()             # media already placed once
     fi = 0
 
@@ -736,7 +744,9 @@ def _assign_images(
     # cards at most while there is other media to show; with nothing else collected, a face still beats a
     # drawn backdrop.
     lead_cap = max(2, round(len(segments) * 0.5))
-    lead_used = sum(1 for p in picks if p and p == lead_path)
+    lead_set = set(lead_paths)
+    lead_used = sum(1 for p in picks if p and p in lead_set)
+    li = 0
     for i, seg in enumerate(segments):
         if picks[i] is not None:
             continue
@@ -744,8 +754,9 @@ def _assign_images(
         stype = str(seg.get("scene_type") or "")
         pic = None
         want_face = (role in setup_roles) or (stype in _face_types)
-        if lead_path and (want_face or not context) and (lead_used < lead_cap or not context):
-            pic = lead_path
+        if lead_paths and (want_face or not context) and (lead_used < lead_cap or not context):
+            pic = lead_paths[li % len(lead_paths)]
+            li += 1
             lead_used += 1
         if pic is None:
             pic = _take_photo(fi); fi += 1

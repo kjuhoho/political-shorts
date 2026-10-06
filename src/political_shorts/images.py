@@ -42,8 +42,10 @@ MIN_W, MIN_H = 340, 340
 MAX_BYTES = 14_000_000
 
 PRESIDENT_NAME = "이재명"          # sitting president — bio page is a standard article
-MAX_IMAGES = 16                    # hard ceiling: beyond this the download time stops being worth it
-MAX_PORTRAITS = 5                  # people faces per video (user wants portraits to
+MAX_IMAGES = 20                    # hard ceiling: beyond this the download time stops being worth it
+PHOTOS_PER_PERSON = 3              # different shots of the SAME person in one video — with one, the subject's
+                                  # single face had to carry the whole story (user, 2026-10-06)
+MAX_PORTRAITS = 8                  # people faces per video (user wants portraits to
                                   # dominate; locations are only filler / safe
                                   # backdrops for cards about no one in particular)
 
@@ -64,6 +66,16 @@ LOCATION_POOL = [
     "국립중앙박물관", "국립중앙도서관", "국립서울현충원", "북악산",
     "한강", "서울역", "남산서울타워", "63빌딩", "코엑스", "용산구", "여의도동",
     "세종특별자치시", "인천국제공항", "김포국제공항", "서울월드컵경기장",
+    # 2026-10-06: the pool was 30 titles for two videos a day, so asset_memory had nothing left to rotate to
+    # by midweek. Each of these was resolved live and its lead photo CHECKED to be its own subject — the
+    # batch's rejects are instructive: "수원시청" leads with a fortress gate, "국립과천과학관" with a train,
+    # "강남역"/"홍대입구역" with platform signage (this project has shipped station signage over a story about
+    # Pyongyang), "서대문형무소역사관" with a prison (too charged for filler on an unrelated story).
+    "문화체육관광부", "농림축산식품부", "해양수산부", "산업통상자원부",
+    "부산광역시청", "대구광역시청", "광주광역시청", "제주특별자치도청", "경기도청", "울산광역시청",
+    "성남시청", "고양시청", "세종특별자치시청", "전북특별자치도청", "강원특별자치도청", "경상북도청",
+    "명동", "광장시장", "남대문시장", "동대문디자인플라자", "롯데월드타워",
+    "인천항", "부산항", "평택항",
 ]
 # frame-relevant establishing shots, tried before the shuffled general pool. Several per frame on purpose:
 # with one or two, the same building opened four videos out of five (live audit 2026-09-30), and
@@ -73,11 +85,12 @@ _FRAME_LOCATION = {
                 "광화문광장", "대한민국 국회의사당", "서울광장"],
     "vote": ["대한민국 국회의사당", "국회의사당역", "여의도동", "서울광장"],
     "clash": ["대한민국 국회의사당", "광화문광장", "서울특별시청", "여의도", "청계광장"],
-    "personnel": ["대한민국 국회의사당", "서울특별시청", "세종특별자치시", "용산구"],
-    "poll": ["서울광장", "광화문광장", "청계광장", "서울역"],
+    "personnel": ["대한민국 국회의사당", "서울특별시청", "세종특별자치시", "용산구", "세종특별자치시청"],
+    "poll": ["서울광장", "광화문광장", "청계광장", "서울역", "명동", "광장시장"],
     "remark": ["대한민국 국회의사당", "광화문광장", "용산구", "여의도"],
     "appoint": ["대한민국 국회의사당", "세종특별자치시", "용산구"],
-    "economy": ["한국은행", "기획재정부", "국세청 (대한민국)", "코엑스"],
+    "economy": ["한국은행", "기획재정부", "국세청 (대한민국)", "코엑스",
+                "남대문시장", "광장시장", "산업통상자원부", "부산항", "인천항"],
     "security": ["판문점", "임진각", "도라산역", "오두산 통일전망대"],
 }
 # ministry / agency shots for stories that name one — tried before the frame pool when the headline matches
@@ -89,8 +102,19 @@ MINISTRY_LOCATION = {
     "법무부": "법무부 (대한민국)", "경찰": "대한민국 경찰청", "경찰청": "대한민국 경찰청",
     "한국은행": "한국은행", "국세청": "국세청 (대한민국)", "대법원": "대법원", "법원": "대법원",
     "헌법재판소": "헌법재판소", "헌재": "헌법재판소",
+    "문화체육관광부": "문화체육관광부", "문체부": "문화체육관광부",
+    "농림축산식품부": "농림축산식품부", "농식품부": "농림축산식품부",
+    "해양수산부": "해양수산부", "해수부": "해양수산부",
+    "산업통상자원부": "산업통상자원부", "산업부": "산업통상자원부", "산자부": "산업통상자원부",
+}
+# A place name is weaker evidence than an institution name: it is often just where something happened, and
+# two syllables collide easily ("강원" sits in the dateline of every DMZ story, which was pulling the
+# provincial office ahead of 판문점). So regions are tried AFTER the topic shots, not before them.
+REGION_LOCATION = {
     "부산": "부산광역시청", "대구": "대구광역시청", "광주": "광주광역시청",
-    "제주": "제주특별자치도청", "경기도": "경기도청",
+    "제주": "제주특별자치도청", "경기도": "경기도청", "울산": "울산광역시청",
+    "성남": "성남시청", "고양시": "고양시청", "전북": "전북특별자치도청",
+    "강원": "강원특별자치도청", "경북": "경상북도청",
 }
 # topic-relevant establishing shots (hook.detect_topic), tried BEFORE the
 # frame pool above — a story about 북한/평양 gets DMZ/Panmunjom imagery
@@ -109,7 +133,7 @@ _TOPIC_LOCATION = {
     "un": ["유엔본부"],
     "us": ["주한미국대사관"],
     "china": ["주한중국대사관"],
-    "economy": ["기획재정부", "한국은행"],
+    "economy": ["기획재정부", "한국은행", "남대문시장", "부산항"],
 }
 
 _S = requests.Session()
@@ -261,28 +285,50 @@ def _pretty_file(filename: str) -> str:
     return clean_text(re.sub(r"\.\w+$", "", filename).replace("_", " "))
 
 
-def _rotating_portrait(name: str, cfg: Settings) -> dict | None:
-    """This person, but not the same shot as last time. The article's lead image was the only photo we ever
-    used, so the president looked identical in every video (user, 2026-10-06)."""
+def _portrait_infos(name: str, cfg: Settings, n: int = 1) -> list[dict]:
+    """Up to `n` DIFFERENT photos of this person, least-recently-used first. One per person meant the
+    president looked identical in every video, and that one face then filled the video (user, 2026-10-06)."""
     info = _resolve(name, person=True)
+    # '조국' is the article about the FATHERLAND, '김문수' once pointed at a businessman: a name can resolve to
+    # a standard article that is not this politician at all, and then his whole Commons category (20 photos
+    # for 조국) is unreachable while a stranger's picture carries his story. Wikipedia's own disambiguator is
+    # the answer, and it is used only when the plain article is POSITIVELY not a human.
+    if not info or not people.is_person(str(info.get("article") or ""), cfg):
+        alt = _resolve(f"{name} (정치인)", person=True)
+        if alt and people.is_person(str(alt.get("article") or ""), cfg):
+            info = alt
+        elif info:
+            return []                                    # a non-person's photo is never this person's face
     if not info:
-        return None
+        return []
     files = people.photo_files(name, cfg, article_title=str(info.get("article") or name))
-    files = [f for f in [info.get("file") or ""] + files if f]
-    files = list(dict.fromkeys(files))
+    lead_file = people.norm_file(info.get("file") or "")
+    files = [people.norm_file(f) for f in [lead_file] + files if f]
+    files = list(dict.fromkeys(f for f in files if f))
     if len(files) < 2:
-        return info
+        return [info]
     # the memory stores the pretty file title (that is what an asset carries), so compare on the same string
     seen = asset_memory.recent(cfg)
+    out: list[dict] = []
     for candidate in sorted(files, key=lambda f: _pretty_file(f) in seen):
-        if candidate == info.get("file"):
-            return info                                  # the article's own lead image, already resolved
+        if len(out) >= max(1, n):
+            break
+        if candidate == lead_file:
+            out.append(info)                             # the article's own lead image, already resolved
+            continue
         got = _commons_info(candidate)
-        if got and got.get("url") and (got.get("width") or 0) >= 300:
+        if got and got.get("url") and (got.get("width") or 0) >= 300 \
+                and got["url"] not in {o.get("url") for o in out}:
             got["title"] = _pretty_file(candidate)
             got["file"] = candidate
-            return got
-    return info
+            out.append(got)
+    return out or [info]
+
+
+def _rotating_portrait(name: str, cfg: Settings) -> dict | None:
+    """The single best photo of this person right now (the rotating one)."""
+    got = _portrait_infos(name, cfg, 1)
+    return got[0] if got else None
 
 
 def _wikidata_portrait(name: str, cfg: Settings) -> dict | None:
@@ -374,13 +420,18 @@ def collect_images(
     _rnd.Random(clean_text(headline)).shuffle(pool)
     # an institution named in the headline gets its own building before anything generic
     named = [title for word, title in MINISTRY_LOCATION.items() if word in h]
-    locs: list[str] = []
-    for t in named + _TOPIC_LOCATION.get(topic, []) + _FRAME_LOCATION.get(frame.kind, []) + pool:
-        if t not in locs:
-            locs.append(t)
+    regions = [title for word, title in REGION_LOCATION.items() if word in h]
     # the frame list always leads with the same building, so the same photo opened video after video (four
-    # out of five were the National Assembly). What recent videos used goes to the back of the queue.
-    locs = asset_memory.freshest_first(locs, cfg)
+    # out of five were the National Assembly). What recent videos used goes to the back of the queue —
+    # but only WITHIN its own tier: applied to the whole list, a never-used landmark from the generic pool
+    # jumped ahead of the story's own topic shot as soon as that one had run this week (caught by
+    # test_collect_images_tries_topic_locations_before_the_generic_pool, 2026-10-06).
+    locs: list[str] = []
+    for tier in (named, _TOPIC_LOCATION.get(topic, []), regions,
+                 _FRAME_LOCATION.get(frame.kind, []), pool):
+        for t in asset_memory.freshest_first(list(tier), cfg):
+            if t not in locs:
+                locs.append(t)
 
     assets: list[ImageAsset] = []
     used: set[str] = set()
@@ -389,18 +440,34 @@ def collect_images(
     for name in names:
         if len(assets) >= want or n_portraits >= MAX_PORTRAITS:
             break
-        info = _rotating_portrait(name, cfg) or _wikidata_portrait(name, cfg)
-        if info and info["url"] not in used:
+        # SEVERAL shots of the same person, most of all the story's own face: it appears on half the cards, so
+        # with one photo those cards were the same still over and over (user, 2026-10-06).
+        room = max(1, min(want - len(assets), MAX_PORTRAITS - n_portraits))
+        lead_face = (name == subject) or (want_pres and name == PRESIDENT_NAME)
+        infos = _portrait_infos(name, cfg, min(PHOTOS_PER_PERSON if lead_face else 2, room))
+        if not infos:
+            one = _wikidata_portrait(name, cfg)
+            infos = [one] if one else []
+        first = True
+        for info in infos:
+            if len(assets) >= want or n_portraits >= MAX_PORTRAITS:
+                break
+            if not info or info.get("url") in used:
+                continue
             a = _make_asset(info, name, "portrait", cache_dir)
-            if a:
-                # the president counts as the lead face whenever want_pres
-                # fired, even on stories where `subject` itself stayed ""
-                # (headline used an honorific short form) — no ambiguity
-                # left to guard against once we already know it's him.
-                a.is_lead = (name == subject) or (want_pres and name == PRESIDENT_NAME)
-                assets.append(a)
-                used.add(info["url"])
-                n_portraits += 1
+            if not a:
+                continue
+            # the president counts as the lead face whenever want_pres
+            # fired, even on stories where `subject` itself stayed ""
+            # (headline used an honorific short form) — no ambiguity
+            # left to guard against once we already know it's him. Only the
+            # FIRST of his photos is the poster face; the others are the same
+            # person from another angle, for the cards in between.
+            a.is_lead = first and lead_face
+            first = False
+            assets.append(a)
+            used.add(info["url"])
+            n_portraits += 1
 
     for title in locs:
         if len(assets) >= want:
