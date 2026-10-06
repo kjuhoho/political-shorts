@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 import edge_tts
 from .fish_audio import provider, validate_config, synthesize
 from .visuals import plan as visual_plan, draw_scene, video_filter
+from .motion import picture_input as motion_picture_input
 
 W, H, FPS = 1920, 1080, 30
 PALETTES = [(12, 28, 48), (20, 48, 71), (43, 37, 70), (23, 59, 58), (62, 42, 32)]
@@ -158,13 +159,10 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
             asyncio.run(make_audio(text, mp3, voice))
         seconds = duration(mp3)
         frames = max(1, round(seconds * FPS))
-        asset = visual['media']
-        has_video = bool(asset and Path(asset['resolved_path']).suffix.lower() == '.mp4')
-        picture_input = (['-stream_loop','-1','-i',asset['resolved_path']] if has_video
-                         else ['-loop','1','-i',str(png)])
+        picture_input, has_video, full_frame = motion_picture_input(visual,png,work,font_path)
         run(["ffmpeg", "-y", "-v", "error", *picture_input,
              "-loop", "1", "-i", str(overlay), "-i", str(mp3),
-             "-filter_complex", video_filter(frames, has_video),
+             "-filter_complex", video_filter(frames, has_video, full_frame),
              "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
              "-c:a", "aac", "-b:a", "192k", "-t", str(seconds), str(clip)])
         # Inspect actual encoded frames for EVERY scene, not just the source PNG.
@@ -174,6 +172,7 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         manifest_scenes.append({"index": i + 1, "label": label, "text": text, "duration_s": seconds,
                                 "visual_kind":visual['kind'], "source":visual['source'],
                                 "illustration":visual.get('illustration'),
+                                "motion":visual.get('motion'),
                                 "media":visual['media']})
     concat = work / "concat.txt"
     concat.write_text("".join(f"file '{clip.as_posix()}'\n" for clip in clips), encoding="utf-8")
@@ -184,6 +183,7 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
                 "scenes": manifest_scenes, "source_script": str(script_path), "tts_provider":provider(),
                 "visual_version":storyboard['version'], "media_scenes":storyboard['media_scenes'],
                 "illustration_scenes":storyboard['illustration_scenes']}
+    manifest['motion_scenes'] = storyboard['motion_scenes']
     output.with_suffix(".render.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 

@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from .visuals import plan, draw_scene, video_filter
+from .motion import picture_input
 
 
 def main():
@@ -42,9 +43,10 @@ def main():
         png, overlay, clip = [args.output/f'{i:02d}{suffix}' for suffix in ('.png','.overlay.png','.mp4')]
         draw_scene(row,png,overlay,args.font)
         seconds = manifest['scenes'][i]['duration_s']
-        subprocess.run([args.ffmpeg,'-y','-v','error','-loop','1','-i',str(png),
+        inputs, has_video, full_frame = picture_input(row,png,args.output,args.font,args.ffmpeg)
+        subprocess.run([args.ffmpeg,'-y','-v','error',*inputs,
             '-loop','1','-i',str(overlay),'-ss',str(offsets[i]),'-i',str(video),
-            '-filter_complex',video_filter(round(seconds*30)),
+            '-filter_complex',video_filter(round(seconds*30),has_video,full_frame),
             '-map','[v]','-map','2:a','-t',str(seconds),'-c:v','libx264','-preset','veryfast',
             '-crf','22','-c:a','aac',str(clip)],check=True)
         subprocess.run([args.ffmpeg,'-y','-v','error','-ss',str(seconds/2),'-i',str(clip),

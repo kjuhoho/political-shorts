@@ -149,8 +149,14 @@ def plan(scenes, stories, registry=None):
         if row['kind'] == 'issue' or (row['kind'] == 'overview' and counts[label] % 2 == 0):
             row.update(kind='illustration', illustration=choose(narration, row.get('headline', ''), index),
                        disclosure='AI 생성 설명용 이미지 · 실제 사건 현장 아님')
+        if row['kind'] == 'illustration' and any(term in narration for term in
+                ('공급망','화물','항만','해상 운송','물류')):
+            from .motion import DISCLOSURE
+            row.update(kind='motion', motion='supply-chain', disclosure=DISCLOSURE)
+            row.pop('illustration',None)
         result.append(row)
-    return dict(version=3, generated_without_llm=True, scenes=result,
+    return dict(version=4, generated_without_llm=True, scenes=result,
+                motion_scenes=sum(r['kind']=='motion' for r in result),
                 illustration_scenes=sum(r['kind']=='illustration' for r in result),
                 media_scenes=sum(r['kind']=='media' for r in result),
                 notice='No unlicensed article images or guessed politician portraits are collected.')
@@ -161,6 +167,8 @@ def credits(scenes):
     generated = ('\n\n설명 화면: AI 생성 일러스트와 편집 그래픽을 사용했습니다. '
                  '실제 사건 현장·인물 촬영 자료가 아닙니다.'
                  if any(r.get('illustration') for r in scenes) else '')
+    if any(r.get('motion') for r in scenes):
+        generated += '\n\n설명용 모션그래픽: 코드로 제작한 개념 애니메이션이며 실제 사건 현장·운송 경로가 아닙니다.'
     if not used:
         return generated
     return generated+'\n\n자료 화면 출처\n'+'\n\n'.join(
@@ -178,7 +186,10 @@ def draw_scene(row, background, overlay, font_path):
         d.line((0,y,W,y), fill='#10243a', width=1)
     d.rounded_rectangle((80,185,1840,740), radius=32, fill='#142e48')
     kind = row['kind']
-    if kind == 'illustration':
+    if kind == 'motion':
+        from .motion import frame
+        image = frame(0,font_path)
+    elif kind == 'illustration':
         with Image.open(row['illustration']['resolved_path']) as src:
             fitted = ImageOps.contain(src.convert('RGB'), (1030, 550))
             image.paste(fitted, (100+(1030-fitted.width)//2,190+(550-fitted.height)//2))
@@ -249,9 +260,10 @@ def draw_scene(row, background, overlay, font_path):
     front.save(overlay)
 
 
-def video_filter(frames, has_video=False):
+def video_filter(frames, has_video=False, full_frame_video=False):
     # Only artwork moves. Narration, dates and source attribution remain sharp.
-    art = ('[0:v]scale=1680:510:force_original_aspect_ratio=decrease,'
+    art = ('[0:v]setsar=1,fps=30[art];' if full_frame_video else
+           '[0:v]scale=1680:510:force_original_aspect_ratio=decrease,'
            'pad=1920:1080:(ow-iw)/2:205+(510-ih)/2:color=0x091729,setsar=1,fps=30[art];'
            if has_video else
            # Six-second shot rhythm without adding TTS calls or stretching audio.
