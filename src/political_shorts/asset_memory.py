@@ -62,9 +62,10 @@ def keys_of(assets: Iterable[Any]) -> list[str]:
     out: list[str] = []
     for a in assets or []:
         get = a.get if isinstance(a, dict) else (lambda k, d=None: getattr(a, k, d))
-        for field in ("query", "source_url", "title"):
+        # BOTH the search term and the file: the term rotates location pools, the file rotates the photos of
+        # one person (keying a portrait by '이재명' alone would say "used" for every picture of him).
+        for field in ("query", "title", "source_url"):
             v = get(field, "")
-            if v:
+            if v and str(v) not in out:
                 out.append(str(v))
-                break
     return out

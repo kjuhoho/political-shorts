@@ -208,6 +208,8 @@ def _resolve(title: str, person: bool) -> dict | None:
     if person and info["width"] and info["width"] < 300:
         return None
     info["title"] = clean_text(re.sub(r"\.\w+$", "", filename).replace("_", " "))
+    info["file"] = filename
+    info["article"] = str(s.get("titles", {}).get("canonical") or s.get("title") or title)
     return info
 
 
@@ -251,6 +253,36 @@ def _make_asset(info: dict, query: str, kind: str, cache_dir: Path) -> ImageAsse
                    kind=kind, width=w or info.get("width", 0), height=h or info.get("height", 0))
     path.with_suffix(".json").write_text(json.dumps(asdict(a), ensure_ascii=False), encoding="utf-8")
     return a
+
+
+def _pretty_file(filename: str) -> str:
+    """'President_Lee_Jae_Myung_20260306.jpg' -> 'President Lee Jae Myung 20260306' — the form an asset (and
+    so the asset memory) carries."""
+    return clean_text(re.sub(r"\.\w+$", "", filename).replace("_", " "))
+
+
+def _rotating_portrait(name: str, cfg: Settings) -> dict | None:
+    """This person, but not the same shot as last time. The article's lead image was the only photo we ever
+    used, so the president looked identical in every video (user, 2026-10-06)."""
+    info = _resolve(name, person=True)
+    if not info:
+        return None
+    files = people.photo_files(name, cfg, article_title=str(info.get("article") or name))
+    files = [f for f in [info.get("file") or ""] + files if f]
+    files = list(dict.fromkeys(files))
+    if len(files) < 2:
+        return info
+    # the memory stores the pretty file title (that is what an asset carries), so compare on the same string
+    seen = asset_memory.recent(cfg)
+    for candidate in sorted(files, key=lambda f: _pretty_file(f) in seen):
+        if candidate == info.get("file"):
+            return info                                  # the article's own lead image, already resolved
+        got = _commons_info(candidate)
+        if got and got.get("url") and (got.get("width") or 0) >= 300:
+            got["title"] = _pretty_file(candidate)
+            got["file"] = candidate
+            return got
+    return info
 
 
 def _wikidata_portrait(name: str, cfg: Settings) -> dict | None:
@@ -357,7 +389,7 @@ def collect_images(
     for name in names:
         if len(assets) >= want or n_portraits >= MAX_PORTRAITS:
             break
-        info = _resolve(name, person=True) or _wikidata_portrait(name, cfg)
+        info = _rotating_portrait(name, cfg) or _wikidata_portrait(name, cfg)
         if info and info["url"] not in used:
             a = _make_asset(info, name, "portrait", cache_dir)
             if a:

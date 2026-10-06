@@ -97,6 +97,101 @@ def _ask_wikidata(name: str, session: Any) -> dict[str, Any]:
     return {}
 
 
+COMMONS = "https://commons.wikimedia.org/w/api.php"
+# files in a person's category that are not a picture OF them
+_NOT_A_PHOTO = ("signature", "서명", "성적표", "합격", "logo", "로고", "map", "지도", "seal", "coat of arms",
+                "flag", "국기", "emblem", "문서", "document", "certificate", "chart", "graph", "poster")
+
+
+def _entity_of_article(title: str, session: Any) -> str:
+    """The Wikidata id of a ko.wikipedia article — the only safe way to the right person, because the Korean
+    label alone is ambiguous: a plain search for '이재명' returns a voice actor before the president."""
+    r = session.get("https://ko.wikipedia.org/w/api.php",
+                    params={"action": "query", "prop": "pageprops", "titles": title, "format": "json"},
+                    timeout=20)
+    if r.status_code != 200:
+        return ""
+    for p in (r.json().get("query") or {}).get("pages", {}).values():
+        qid = (p.get("pageprops") or {}).get("wikibase_item")
+        if qid:
+            return str(qid)
+    return ""
+
+
+def _category_photos(category: str, session: Any, limit: int = 12) -> list[str]:
+    """Photos anywhere under a person's Commons category (deepcat covers the per-year subcategories, where
+    most of a politician's pictures actually live)."""
+    r = session.get(COMMONS, params={"action": "query", "list": "search",
+                                     "srsearch": f'deepcat:"{category}" filetype:bitmap',
+                                     "srnamespace": 6, "srlimit": limit, "format": "json"}, timeout=25)
+    if r.status_code != 200 or "error" in r.json():
+        return []
+    out = []
+    for hit in (r.json().get("query") or {}).get("search", []):
+        name = str(hit.get("title", ""))[5:]
+        low = name.lower()
+        if low.endswith((".jpg", ".jpeg", ".png")) and not any(w in low for w in _NOT_A_PHOTO):
+            out.append(name)
+    return out
+
+
+# a file name that reads like a meeting or a summit is usually two or more people in frame; those are kept,
+# but they go behind the ones that are plainly this person
+_GROUP_SHOT = ("meets", "meeting", "with ", " and ", "summit", "회담", "접견", "면담", "정상", "ceremony",
+               "attends", "visit", "session", "cabinet")
+_SOLO = ("portrait", "초상", "프로필", "profile")
+
+
+def _solo_first(files: list[str]) -> list[str]:
+    """Portraits first, group shots last — same files, better order."""
+    def rank(f: str) -> int:
+        low = f.lower()
+        if any(w in low for w in _SOLO):
+            return 0
+        return 2 if any(w in low for w in _GROUP_SHOT) else 1
+    return sorted(files, key=rank)
+
+
+def photo_files(name: str, cfg: Any, article_title: str = "", session: Any = None) -> list[str]:
+    """Every usable photo of this person, best first — the article's own lead image, then their Commons
+    category. One photo per person meant the same shot in every video (user, 2026-10-06)."""
+    name = (name or "").strip()
+    if not name:
+        return []
+    cache = _load(cfg)
+    key = f"photos::{article_title or name}"
+    hit = cache.get(key)
+    if isinstance(hit, dict) and time.time() - float(hit.get("ts", 0)) < CACHE_DAYS * 86400:
+        return list(hit.get("files") or [])
+    if session is None:
+        from .images import _S as session
+    files: list[str] = []
+    try:
+        lead = photo_file(name, cfg, session) if not article_title else ""
+        if lead:
+            files.append(lead)
+        qid = _entity_of_article(article_title, session) if article_title else ""
+        if qid:
+            r = session.get(API, params={"action": "wbgetentities", "ids": qid, "props": "claims",
+                                         "format": "json"}, timeout=20)
+            claims = ((r.json().get("entities") or {}).get(qid) or {}).get("claims", {}) if r.status_code == 200 else {}
+            for f in _values(claims, "P18"):
+                if f not in files:
+                    files.append(f)
+            for cat in _values(claims, "P373"):
+                for f in _category_photos(cat, session):
+                    if f not in files:
+                        files.append(f)
+    except Exception as exc:
+        log.debug("photo list failed for %s: %s", name, exc)
+        return files
+    files = _solo_first(files)
+    cache[key] = {"ts": time.time(), "files": files}
+    _save(cfg, cache)
+    log.info("portraits available for %s: %d", article_title or name, len(files))
+    return files
+
+
 def photo_file(name: str, cfg: Any, session: Any = None) -> str:
     """The Commons file name of this person's photo, or '' — cached, including the empty answer."""
     name = (name or "").strip()

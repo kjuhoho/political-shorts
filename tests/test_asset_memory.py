@@ -44,10 +44,13 @@ def test_very_old_entries_are_forgotten_so_the_file_cannot_grow_forever(tmp_path
     assert list(kept) == ["새사진"]
 
 
-def test_keys_come_from_assets_and_from_the_script_dicts():
+def test_keys_cover_both_the_search_term_and_the_file():
+    """A portrait keyed by '이재명' alone would mark every photo of him as used; the file name has to count
+    too, or the president looks identical in every video (user, 2026-10-06)."""
     class _A:
-        query, source_url, title = "광화문광장", "https://x/1", "Gwanghwamun"
+        query, source_url, title = "이재명", "https://commons/x", "Lee Jae Myung 2026.jpg"
 
-    assert asset_memory.keys_of([_A()]) == ["광화문광장"]
-    assert asset_memory.keys_of([{"source_url": "https://pexels/3", "title": "street"}]) == ["https://pexels/3"]
+    keys = asset_memory.keys_of([_A()])
+    assert "이재명" in keys and "Lee Jae Myung 2026.jpg" in keys
+    assert asset_memory.keys_of([{"source_url": "https://pexels/3", "title": "street"}])         == ["street", "https://pexels/3"]
     assert asset_memory.keys_of([{}]) == []
