@@ -25,6 +25,18 @@ def _no_network_research(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_network_photo_lookups(monkeypatch):
+    """The picture stage now asks Wikipedia/Commons what ELSE exists of a person or a place (people.py,
+    images._place_files). Those are HTTP calls: a test that walks collect_images must not make them, so they
+    answer "nothing extra" unless the test says otherwise."""
+    from political_shorts import images, people
+
+    monkeypatch.setattr(images, "_place_files", lambda title, cfg: [])
+    monkeypatch.setattr(people, "is_person", lambda *a, **k: True)
+    monkeypatch.setattr(people, "photo_files", lambda *a, **k: [])
+
+
+@pytest.fixture(autouse=True)
 def _fresh_llm_process_state():
     """The LLM layer keeps process-wide state (stage-1 analysis cache, rate-limit cooldowns).
     Reset it so one test's answers or 'cooling down' never leak into the next."""

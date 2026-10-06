@@ -36,7 +36,11 @@ SOUTH_KOREA = "Q884"
 PUBLIC_LIFE = {"Q82955", "Q16533", "Q212238", "Q600751", "Q40348", "Q193391", "Q1930187", "Q43845"}
 CACHE = "people_cache.json"
 CACHE_DAYS = 30.0
-CACHE_VER = "v2"              # bumped when the collection widens, so a cached short list isn't the answer
+CACHE_VER = "v3"              # bumped when the collection widens, so a cached short list isn't the answer
+MAX_PER_PERSON = 150          # a month of videos can only use so many; past this the list is just bytes
+SUBCATS = 12                  # per-year subcategories to walk ("… in 2025", "… in 2026")
+SUBCAT_DEPTH = 2              # 'X by year' is only a container: its children hold the files
+_NOT_A_CATEGORY = ("videos of", "sound", "audio", "signatures")
 
 
 def _cache_path(cfg: Any) -> Path:
@@ -109,7 +113,8 @@ def _entity_of_article(title: str, session: Any) -> str:
     """The Wikidata id of a ko.wikipedia article — the only safe way to the right person, because the Korean
     label alone is ambiguous: a plain search for '이재명' returns a voice actor before the president."""
     r = session.get("https://ko.wikipedia.org/w/api.php",
-                    params={"action": "query", "prop": "pageprops", "titles": title, "format": "json"},
+                    params={"action": "query", "prop": "pageprops", "titles": title,
+                            "redirects": 1, "format": "json"},        # '대한민국 국회의사당' is a redirect
                     timeout=20)
     if r.status_code != 200:
         return ""
@@ -118,6 +123,12 @@ def _entity_of_article(title: str, session: Any) -> str:
         if qid:
             return str(qid)
     return ""
+
+
+def bare_file(title: str) -> str:
+    """'File:A.jpg' / '파일:A.jpg' / 'ファイル:A.jpg' -> 'A.jpg'. Each language edition names the file namespace
+    in its own language, and slicing off a fixed five characters ate the first letters of every Korean one."""
+    return str(title or "").split(":", 1)[-1].strip()
 
 
 def norm_file(name: str) -> str:
@@ -131,7 +142,23 @@ def _usable(name: str) -> bool:
     return low.endswith((".jpg", ".jpeg", ".png")) and not any(w in low for w in _NOT_A_PHOTO)
 
 
-def _category_photos(category: str, session: Any, limit: int = 40) -> list[str]:
+def _subcategories(category: str, session: Any, limit: int = SUBCATS) -> list[str]:
+    """'Category:Lee Jae-myung' holds almost no files itself — the pictures sit in 'Category:Lee Jae-myung in
+    2025' and friends. deepcat is supposed to reach them and often does not."""
+    r = session.get(COMMONS, params={"action": "query", "list": "categorymembers",
+                                     "cmtitle": f"Category:{category}", "cmtype": "subcat",
+                                     "cmlimit": limit, "format": "json"}, timeout=25)
+    if r.status_code != 200:
+        return []
+    out = []
+    for m in ((r.json().get("query") or {}).get("categorymembers") or []):
+        title = str(m.get("title", ""))
+        if ":" in title:
+            out.append(title.split(":", 1)[-1])
+    return out
+
+
+def _category_photos(category: str, session: Any, limit: int = 50) -> list[str]:
     """Photos anywhere under a person's Commons category (deepcat covers the per-year subcategories, where
     most of a politician's pictures actually live)."""
     r = session.get(COMMONS, params={"action": "query", "list": "search",
@@ -141,13 +168,13 @@ def _category_photos(category: str, session: Any, limit: int = 40) -> list[str]:
         return []
     out = []
     for hit in (r.json().get("query") or {}).get("search", []):
-        name = str(hit.get("title", ""))[5:]
+        name = bare_file(hit.get("title", ""))
         if _usable(name):
             out.append(name)
     return out
 
 
-def _category_members(category: str, session: Any, limit: int = 50) -> list[str]:
+def _category_members(category: str, session: Any, limit: int = 300) -> list[str]:
     """The files sitting DIRECTLY in the category — deepcat is a search index and quietly misses files (and
     returns nothing at all when the extension is unavailable), so the plain listing runs beside it."""
     r = session.get(COMMONS, params={"action": "query", "list": "categorymembers",
@@ -157,7 +184,7 @@ def _category_members(category: str, session: Any, limit: int = 50) -> list[str]
         return []
     out = []
     for m in ((r.json().get("query") or {}).get("categorymembers") or []):
-        name = str(m.get("title", ""))[5:]
+        name = bare_file(m.get("title", ""))
         if _usable(name):
             out.append(name)
     return out
@@ -179,22 +206,32 @@ def _mentions(filename: str, tokens: list[list[str]]) -> bool:
     return any(all(p in low for p in parts) for parts in tokens)
 
 
-def _article_images(title: str, tokens: list[list[str]], session: Any, limit: int = 40) -> list[str]:
-    """Pictures used in the person's OWN ko.wikipedia article. A biography also illustrates other people
-    (a rival at the same debate), and this project has shipped a wrong face before, so a file is taken only
-    when its own name says it is this person."""
-    if not tokens:
+def article_images(title: str, session: Any, limit: int = 60, host: str = "ko.wikipedia.org") -> list[str]:
+    """Every raster picture in an article, ungated — for a PLACE, where the article's subject is the place
+    itself and there is no "is this the right face" question to answer."""
+    return _article_images(title, None, session, limit, host)
+
+
+def _article_images(title: str, tokens: list[list[str]] | None, session: Any, limit: int = 60,
+                    host: str = "ko.wikipedia.org") -> list[str]:
+    """Pictures used in the person's OWN article, in any language edition — the English one carries shots the
+    Korean one does not. A biography also illustrates other people (a rival at the same debate), and this
+    project has shipped a wrong face before, so a file is taken only when its own name says it is this
+    person."""
+    if tokens is not None and not tokens:
         return []
-    r = session.get("https://ko.wikipedia.org/w/api.php",
+    if not title:
+        return []
+    r = session.get(f"https://{host}/w/api.php",
                     params={"action": "query", "prop": "images", "titles": title,
-                            "imlimit": limit, "format": "json"}, timeout=20)
+                            "imlimit": limit, "redirects": 1, "format": "json"}, timeout=20)
     if r.status_code != 200:
         return []
     out = []
     for p in ((r.json().get("query") or {}).get("pages") or {}).values():
         for im in p.get("images", []) or []:
-            name = str(im.get("title", ""))[5:]
-            if _usable(name) and _mentions(name, tokens):
+            name = bare_file(im.get("title", ""))
+            if _usable(name) and (tokens is None or _mentions(name, tokens)):
                 out.append(name)
     return out
 
@@ -288,10 +325,31 @@ def photo_files(name: str, cfg: Any, article_title: str = "", session: Any = Non
                     files.append(f)
             cats = list(_values(claims, "P373"))
             # the Commons category is often only a sitelink, with no P373 claim at all
-            sl = str(((ent.get("sitelinks") or {}).get("commonswiki") or {}).get("title", ""))
+            links = ent.get("sitelinks") or {}
+            sl = str((links.get("commonswiki") or {}).get("title", ""))
             if sl.startswith("Category:") and sl[9:] not in cats:
                 cats.append(sl[9:])
+            for wiki, host in (("enwiki", "en.wikipedia.org"), ("jawiki", "ja.wikipedia.org")):
+                other = str((links.get(wiki) or {}).get("title", ""))
+                for f in _article_images(other, tokens, session, host=host):
+                    if f not in files:
+                        files.append(f)
+        # the top category plus its children, two levels down: 'Lee Jae-myung' holds one file, while
+        # 'Portraits of Lee Jae-myung' and 'Lee Jae-myung by year' -> 'Lee Jae-myung in 2025' hold the rest.
+        frontier = list(cats)
+        for _ in range(SUBCAT_DEPTH):
+            nxt: list[str] = []
+            for cat in frontier:
+                for sub in _subcategories(cat, session):
+                    if sub not in cats and not any(w in sub.lower() for w in _NOT_A_CATEGORY):
+                        cats.append(sub)
+                        nxt.append(sub)
+            frontier = nxt
+            if not frontier or len(cats) > 40:
+                break
         for cat in cats:
+            if len(files) >= MAX_PER_PERSON:
+                break
             for f in _category_photos(cat, session) + _category_members(cat, session):
                 if f not in files:
                     files.append(f)
@@ -302,7 +360,7 @@ def photo_files(name: str, cfg: Any, article_title: str = "", session: Any = Non
         log.debug("photo list failed for %s: %s", name, exc)
         return files
     files = list(dict.fromkeys(norm_file(f) for f in files if f))
-    files = _solo_first(files)
+    files = _solo_first(files)[:MAX_PER_PERSON]
     cache[key] = {"ts": time.time(), "files": files}
     _save(cfg, cache)
     log.info("portraits available for %s: %d", article_title or name, len(files))

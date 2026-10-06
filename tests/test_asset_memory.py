@@ -21,9 +21,11 @@ def test_what_was_used_goes_last_and_the_rest_keep_their_order(tmp_path):
 
 
 def test_an_old_use_stops_counting(tmp_path):
+    # expressed in terms of the window itself: it widened from 6 to 12 days once a person had dozens of
+    # photos and a place had a dozen, so a shot can wait much longer before it has to come round again
     cfg = _cfg(tmp_path)
     now = time.time()
-    asset_memory.remember(cfg, ["대한민국 국회의사당"], now=now - 10 * 86400)
+    asset_memory.remember(cfg, ["대한민국 국회의사당"], now=now - (asset_memory.AVOID_DAYS + 2) * 86400)
     assert asset_memory.recent(cfg, now=now) == set()
     assert asset_memory.freshest_first(POOL, cfg, now=now) == POOL
 

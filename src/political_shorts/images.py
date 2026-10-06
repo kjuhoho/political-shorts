@@ -45,6 +45,26 @@ PRESIDENT_NAME = "이재명"          # sitting president — bio page is a stan
 MAX_IMAGES = 20                    # hard ceiling: beyond this the download time stops being worth it
 PHOTOS_PER_PERSON = 3              # different shots of the SAME person in one video — with one, the subject's
                                   # single face had to carry the whole story (user, 2026-10-06)
+PLACE_CACHE_VER = "v8"
+PLACE_SHOTS = 12                   # pictures kept per place: past this an article's gallery is mostly noise
+# A place's article also carries pictures that are not neutral filler for an unrelated story: a square's
+# article illustrates the rally that happened there. Those stay out.
+_NOT_NEUTRAL = ("protest", "rally", "demonstration", "집회", "시위", "촛불", "candle", "탄핵", "추모", "추모제",
+                "funeral", "장례", "분향", "crash", "사고", "disaster", "참사", "fire", "화재", "war", "전쟁",
+                "victim", "희생", "memorial", "위안부", "comfort women",
+                # a venue's article is mostly the EVENTS held there: an AFC Champions League photo opened a
+                # video about a constitutional amendment (caught live, 2026-10-06). Note the words have to be
+                # distinctive — a bare "경기" would throw away 경기도청.
+                "afc", "fifa", "league", "champions", "match", "concert", "콘서트", "festival", "축제",
+                "olympic", "올림픽", "marathon", "k-pop", "kpop", "idol", " vs ", "cup",
+                # the rest of the tail, seen live: drills, building sites, and one official's own meeting
+                "소방", "훈련", "구급", "구조", "건설현장", "공사", "meets", "meeting", "접견", "면담",
+                "ambassador", "대사", "간담회", "기자회견", "ceremony", "기공식", "착공",
+                # a ROLE in the file name means the picture is of someone doing something, not of the place.
+                # (hook.candidate_people cannot judge a file name: it reads '경기도' and '남대문' as people.)
+                # '시장' is deliberately absent - it is also every market in the pool.
+                "지사", "장관", "의원", "대통령", "총리", "청장", "위원장", "군수", "후보", "비서실장",
+                "대변인", "총장", "방문", "참석", "회의", "연설", "격려")
 MAX_PORTRAITS = 8                  # people faces per video (user wants portraits to
                                   # dominate; locations are only filler / safe
                                   # backdrops for cards about no one in particular)
@@ -344,6 +364,96 @@ def _wikidata_portrait(name: str, cfg: Settings) -> dict | None:
     return None
 
 
+# the part of a Korean place name that its photos are actually named after: '제주특별자치도청' -> '제주'
+# (its files read '제주도청 제1청사'), '남대문시장' -> '남대문'
+_PLACE_TAIL = re.compile(r"(특별자치시청|특별자치도청|광역시청|특별자치시|특별자치도|광역시|특별시|"
+                         r"시청|도청|구청|국제공항|공항|시장|공원|광장|역)$")
+
+
+def neutral_shots(files: list[str], title: str = "") -> list[str]:
+    """Which of a place's pictures can open an unrelated story: no rally, no disaster, no event held there,
+    nothing historic (a 1965 aerial view is not today's establishing shot). The ones whose name says they are
+    OF this place come first; the others stay behind them rather than being thrown away."""
+    # A photo that names a politician is a PORTRAIT, wherever it is filed. It must come through the portrait
+    # path, where the card actually names that person — never as anonymous filler: '이재명-경기도.jpg' sits in
+    # the Gyeonggi provincial office's category, and as a location shot it would have put his face on a card
+    # about somebody else (caught live, 2026-10-06).
+    from .hook import POLITICIANS
+    known = set(POLITICIANS) | {PRESIDENT_NAME}
+    out = [f for f in dict.fromkeys(f for f in files if f)
+           if not any(w in f.lower() for w in _NOT_NEUTRAL) and not re.search(r"1[89]\d\d", f)
+           and not any(who in f for who in known)]
+    core = _PLACE_TAIL.sub("", str(title or "")).strip()
+    if len(core) >= 2:
+        out.sort(key=lambda f: core not in f)            # stable: keeps the original order within each group
+    return out[:PLACE_SHOTS]
+
+
+def _place_files(title: str, cfg: Settings) -> list[str]:
+    """Every usable picture in this place's own article, cached for a month — so a location is a SET of shots,
+    not one photo that every video reuses until it ages out of the memory."""
+    from . import people
+    cache = people._load(cfg)
+    key = f"place::{PLACE_CACHE_VER}::{title}"
+    hit = cache.get(key)
+    if isinstance(hit, dict) and time.time() - float(hit.get("ts", 0)) < people.CACHE_DAYS * 86400:
+        return list(hit.get("files") or [])
+    try:
+        files = [people.norm_file(f) for f in people.article_images(title, _S)]
+        # '대한민국 국회의사당' uses no file in its text — the photo comes from Wikidata, so the article sweep
+        # found nothing for the location this project uses most. Its Commons category has the rest.
+        qid = people._entity_of_article(title, _S)
+        if qid:
+            r = _S.get(people.API, params={"action": "wbgetentities", "ids": qid,
+                                           "props": "claims|sitelinks", "format": "json"}, timeout=TIMEOUT)
+            ent = ((r.json().get("entities") or {}).get(qid) or {}) if r.status_code == 200 else {}
+            cats = list(people._values(ent.get("claims", {}), "P373"))
+            sl = str(((ent.get("sitelinks") or {}).get("commonswiki") or {}).get("title", ""))
+            if sl.startswith("Category:") and sl[9:] not in cats:
+                cats.append(sl[9:])
+            for cat in cats:
+                for f in people._category_members(cat, _S, limit=60) + people._category_photos(cat, _S):
+                    f = people.norm_file(f)
+                    if f not in files:
+                        files.append(f)
+    except Exception as exc:
+        log.debug("place photos failed for %s: %s", title, exc)
+        return []
+    files = neutral_shots(files, title)
+    cache[key] = {"ts": time.time(), "files": files}
+    people._save(cfg, cache)
+    return files
+
+
+def _location_infos(title: str, cfg: Settings, n: int = 1) -> list[dict]:
+    """This place, but not the same shot as the last video that used it."""
+    info = _resolve(title, person=False)
+    if not info:
+        return []
+    from . import people
+    lead = people.norm_file(info.get("file") or "")
+    seen = asset_memory.recent(cfg)
+    if n <= 1 and lead and _pretty_file(lead) not in seen:
+        return [info]            # its usual shot has not run lately — no reason to go looking for another
+    files = list(dict.fromkeys([f for f in [lead] + _place_files(title, cfg) if f]))
+    if len(files) < 2:
+        return [info]
+    out: list[dict] = []
+    for candidate in sorted(files, key=lambda f: _pretty_file(f) in seen):
+        if len(out) >= max(1, n):
+            break
+        if candidate == lead:
+            out.append(info)
+            continue
+        got = _commons_info(candidate)
+        if got and got.get("url") and (got.get("width") or 0) >= MIN_W \
+                and got["url"] not in {o.get("url") for o in out}:
+            got["title"] = _pretty_file(candidate)
+            got["file"] = candidate
+            out.append(got)
+    return out or [info]
+
+
 def collect_images(
     entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None,
     body_text: str = "", want: int = 0,
@@ -472,8 +582,9 @@ def collect_images(
     for title in locs:
         if len(assets) >= want:
             break
-        info = _resolve(title, person=False)
-        if info and info["url"] not in used:
+        for info in _location_infos(title, cfg, 1):
+            if not info or info["url"] in used:
+                continue
             a = _make_asset(info, title, "photo", cache_dir)
             if a:
                 assets.append(a)

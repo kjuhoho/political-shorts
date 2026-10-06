@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 FILE = "asset_history.json"
-KEEP_DAYS = 14.0            # how long a use is remembered
-AVOID_DAYS = 6.0            # how long it is pushed to the back of the queue
+KEEP_DAYS = 28.0            # how long a use is remembered
+AVOID_DAYS = 12.0           # how long it is pushed to the back of the queue
+                            # (6 days was sized for pools of 3-5 pictures; a person now has dozens, so a
+                            #  shot can wait two weeks before it has to come round again)
 
 
 def _path(cfg: Any) -> Path:

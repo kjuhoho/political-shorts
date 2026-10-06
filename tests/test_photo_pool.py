@@ -191,3 +191,95 @@ def test_rotation_never_beats_relevance(monkeypatch, tmp_path):
     hl = "정부, 평양 병원에 의료장비 지원 추진"
     got = images.collect_images(detect_entities(hl), detect_frame(hl), hl, cfg)
     assert got and got[0].query in images._TOPIC_LOCATION["north_korea"]
+
+# --------------------------------------------------------------------------- #
+# a PLACE is a set of shots too, not one photo
+# --------------------------------------------------------------------------- #
+def test_a_place_that_ran_lately_shows_a_different_shot(monkeypatch, cfg):
+    from political_shorts import asset_memory
+
+    monkeypatch.setattr(images, "_resolve", lambda title, person=False: {
+        "url": "https://commons/lead.jpg", "width": 800, "title": "National Assembly 1",
+        "file": "National_Assembly_1.jpg", "article": title})
+    monkeypatch.setattr(images, "_place_files",
+                        lambda title, c: ["National Assembly 1.jpg", "National Assembly 2.jpg"])
+    monkeypatch.setattr(images, "_commons_info",
+                        lambda f: {"url": f"https://commons/{f}", "width": 900, "height": 700})
+    asset_memory.remember(cfg, ["National Assembly 1"])          # its usual shot ran this week
+    got = images._location_infos("대한민국 국회의사당", cfg, 1)
+    assert got and got[0]["title"] == "National Assembly 2"
+
+
+def test_a_place_whose_shot_is_still_fresh_costs_no_extra_lookup(monkeypatch, cfg):
+    """541 photos are reachable across the pool, but a video must not pay an HTTP call per location to find
+    that out: the alternatives are looked up only once the usual shot has actually been used."""
+    monkeypatch.setattr(images, "_resolve", lambda title, person=False: {
+        "url": "https://commons/lead.jpg", "width": 800, "title": "National Assembly 1",
+        "file": "National_Assembly_1.jpg", "article": title})
+
+    def boom(*a, **k):
+        raise AssertionError("looked up alternatives for a place whose own shot is fresh")
+
+    monkeypatch.setattr(images, "_place_files", boom)
+    assert images._location_infos("대한민국 국회의사당", cfg, 1)[0]["url"] == "https://commons/lead.jpg"
+
+
+def test_a_squares_protest_photo_is_not_neutral_filler():
+    """A square's article illustrates the rally that happened there; that is not filler for another story."""
+    assert images.neutral_shots([
+        "Gwanghwamun Square 2026.jpg", "Candlelight protest at Gwanghwamun.jpg",
+        "Aerial view of Gwanghwamun, 1965.jpg", "시위 광화문.jpg", "참사 분향소.jpg",
+    ]) == ["Gwanghwamun Square 2026.jpg"]
+
+
+def test_a_file_name_survives_a_korean_namespace_prefix():
+    """'파일:' is three characters, not five: slicing a fixed five ate the first letters of every Korean file
+    name, so the whole article sweep resolved to nothing (caught live, 2026-10-06)."""
+    assert people.bare_file("파일:Seoul City Hall.JPG") == "Seoul City Hall.JPG"
+    assert people.bare_file("File:Seoul City Hall.JPG") == "Seoul City Hall.JPG"
+    assert people.bare_file("ファイル:Tokyo.jpg") == "Tokyo.jpg"
+
+
+def test_a_redirect_is_followed_when_asking_what_pictures_exist():
+    """'대한민국 국회의사당' is a redirect; without redirects=1 the lookup answered "no pictures" for the
+    single most-used location in the project."""
+    calls = []
+
+    class _S:
+        def get(self, url, params=None, timeout=None):
+            calls.append(params or {})
+            raise RuntimeError("stop here")
+
+    for fn in (lambda: people._entity_of_article("대한민국 국회의사당", _S()),
+               lambda: people.article_images("대한민국 국회의사당", _S())):
+        try:
+            fn()
+        except Exception:
+            pass
+    assert calls and all(c.get("redirects") for c in calls)
+
+def test_a_politicians_photo_is_never_location_filler():
+    """'이재명-경기도.jpg' is filed under the Gyeonggi provincial office. As a location shot it would have put
+    his face on a card about somebody else; a face must come through the portrait path, labelled."""
+    kept = images.neutral_shots(["경기도청 Gyeonggi Prov. Gov't Office.jpg", "이재명-경기도.jpg"], "경기도청")
+    assert kept == ["경기도청 Gyeonggi Prov. Gov't Office.jpg"]
+
+
+def test_a_role_in_the_file_name_means_it_is_about_a_person():
+    kept = images.neutral_shots([
+        "Sejong City Hall West.jpg",
+        "김동연 경기도지사와 말레이시아 장관 20231024 (01).jpg",
+        "1-1경남고성군 백두현군수만나현안사업건의.jpg",
+    ], "세종특별자치시청")
+    assert kept == ["Sejong City Hall West.jpg"]
+
+
+def test_a_market_keeps_its_own_name():
+    """'시장' is a role word AND every market in the pool, so it must not be filtered."""
+    assert images.neutral_shots(["남대문시장, gate 6.jpg"], "남대문시장") == ["남대문시장, gate 6.jpg"]
+
+
+def test_shots_that_name_the_place_come_first():
+    got = images.neutral_shots(["Something else entirely.jpg", "제주도청 제1청사 본관 (3).jpg"],
+                               "제주특별자치도청")
+    assert got[0] == "제주도청 제1청사 본관 (3).jpg"      # '제주' survives the '특별자치도청' tail
