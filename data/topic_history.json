@@ -1141,5 +1141,23 @@
   "frame": "vote",
   "remote_id": "UPbzNS898XE",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1791526429,
+  "signature": "강경 개혁 검찰 공격 내부 능력 명분으로 민주당 안되면서 여권 요구 이재명 큰자리",
+  "actor": "이재명",
+  "headline": "이 대통령 “능력 안되면서 큰자리 요구, 개혁 명분으로 내부 공격”...여권 강경…",
+  "frame": "remark",
+  "remote_id": "W-YIoF8lamE",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791526429,
+  "signature": "강경파 김지용 능력도 되면서 반대 요구 자리 직격",
+  "actor": "",
+  "headline": "이 “능력도 안 되면서 큰 자리 요구”...‘김지용 반대’ 여 강경파 직격?",
+  "frame": "remark",
+  "remote_id": "W-YIoF8lamE",
+  "platform": "youtube"
  }
 ]
