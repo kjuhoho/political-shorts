@@ -1123,5 +1123,23 @@
   "frame": "poll",
   "remote_id": "9xbV_vrLunw",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1791510860,
+  "signature": "cptpp 가입 국회 농어민 말라 신뢰 신청 올해 이재명 지시",
+  "actor": "이재명",
+  "headline": "이 대통령 \"CPTPP 가입, 올해 신청 말라\" 지시...청와대 \"농어민 신뢰 회…",
+  "frame": "vote",
+  "remote_id": "UPbzNS898XE",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791510860,
+  "signature": "cptpp 가입 보류 원점 이틀만에 재검토",
+  "actor": "",
+  "headline": "이, ‘CPTPP 원점 재검토’ 이틀만에 가입 보류",
+  "frame": "vote",
+  "remote_id": "UPbzNS898XE",
+  "platform": "youtube"
  }
 ]
