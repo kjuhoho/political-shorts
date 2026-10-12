@@ -1249,5 +1249,41 @@
   "frame": "scandal",
   "remote_id": "T2cln9_mqEU",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1791765904,
+  "signature": "개혁신당 국민의힘 대법원 리얼미터 민주당 부동산 악재에 안보 이대통령 이재명 인사 조국 조국혁신당 조희대 지지율 진보당 하락세",
+  "actor": "이재명",
+  "headline": "이대통령 지지율 35.2%...\"인사·안보·부동산 악재에 하락세\"[리얼미터]",
+  "frame": "poll",
+  "remote_id": "qcKEOU7zZiU",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791765904,
+  "signature": "국힘 리얼미터 민주 역전 오차범위",
+  "actor": "",
+  "headline": "민주 35.5% 국힘 41.3%...국힘, 오차범위 내 역전[리얼미터]",
+  "frame": "poll",
+  "remote_id": "qcKEOU7zZiU",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791765904,
+  "signature": "2주 국정지지율 리얼미터 연속 하락",
+  "actor": "",
+  "headline": "이 대통령 국정지지율 35.2%...2주 연속 하락[리얼미터]",
+  "frame": "poll",
+  "remote_id": "qcKEOU7zZiU",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1791765904,
+  "signature": "2주 범위 연속 오차 접전 지지율 하락해",
+  "actor": "",
+  "headline": "이 대통령 지지율 2주 연속 하락해 35.2%···민주당 35.5%, 국민의힘 41.3% 오차 범위 내 접전",
+  "frame": "poll",
+  "remote_id": "qcKEOU7zZiU",
+  "platform": "youtube"
  }
 ]
