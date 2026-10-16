@@ -91,9 +91,12 @@ class Settings:
 
     # tts
     enable_tts: bool = True
-    tts_provider: str = "edge"          # edge | elevenlabs | azure | gcloud | openai | sapi
+    tts_provider: str = "edge"          # edge | fish | elevenlabs | azure | gcloud | openai | sapi
     tts_voice: str = ""                 # provider-specific voice name/id (blank = provider default)
     tts_rate: int = 175                 # SAPI words-per-minute-ish; also nudges edge rate
+    fish_api_key: str = ""
+    fish_reference_id: str = ""
+    fish_model: str = "s2.1-pro-free"
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     elevenlabs_model: str = "eleven_multilingual_v2"
@@ -242,6 +245,9 @@ def load_settings() -> Settings:
         tts_provider=_get("TTS_PROVIDER", "edge").lower(),
         tts_voice=_get("TTS_VOICE", ""),
         tts_rate=_get_int("TTS_RATE", 175),
+        fish_api_key=_get("FISH_API_KEY", ""),
+        fish_reference_id=_get("FISH_REFERENCE_ID", ""),
+        fish_model=_get("FISH_MODEL", "s2.1-pro-free"),
         elevenlabs_api_key=_get("ELEVENLABS_API_KEY", ""),
         elevenlabs_voice_id=_get("ELEVENLABS_VOICE_ID", ""),
         elevenlabs_model=_get("ELEVENLABS_MODEL", "eleven_multilingual_v2"),

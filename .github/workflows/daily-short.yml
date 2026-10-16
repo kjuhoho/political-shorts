@@ -90,6 +90,8 @@ jobs:
           PS_GEMINI_KEY: ${{ secrets.PS_GEMINI_KEY }}
           PS_GROQ_KEY: ${{ secrets.PS_GROQ_KEY }}
           PS_OPENAI_KEY: ${{ secrets.PS_OPENAI_KEY }}
+          PS_FISH_KEY: ${{ secrets.PS_FISH_KEY }}
+          PS_FISH_REFERENCE_ID: ${{ secrets.PS_FISH_REFERENCE_ID }}
           PS_YT_API_KEY: ${{ secrets.PS_YT_API_KEY }}
         run: |
           mkdir -p secrets
@@ -119,6 +121,11 @@ jobs:
           # Every key that exists is written, so llm.complete() can fall back to
           # the next provider when the preferred one is down or rate-limited.
           [ -n "$PS_OPENAI_KEY" ] && echo "OPENAI_API_KEY=$PS_OPENAI_KEY" >> .env
+          if [ -n "$PS_FISH_KEY" ]; then
+            echo "FISH_API_KEY=$PS_FISH_KEY" >> .env
+            echo "TTS_PROVIDER=fish" >> .env
+            [ -n "$PS_FISH_REFERENCE_ID" ] && echo "FISH_REFERENCE_ID=$PS_FISH_REFERENCE_ID" >> .env
+          fi
           [ -n "$PS_GROQ_KEY" ]   && echo "GROQ_API_KEY=$PS_GROQ_KEY" >> .env
           [ -n "$PS_GEMINI_KEY" ] && echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
           # research stage: YouTube coverage + comments (optional; skipped without the key)

@@ -89,6 +89,40 @@ def synth_edge(texts: list[str], out_dir: Path, cfg: Settings) -> list[Path | No
 
 
 # --------------------------------------------------------------------------- #
+# Fish Audio
+# --------------------------------------------------------------------------- #
+def synth_fish(texts: list[str], out_dir: Path, cfg: Settings) -> list[Path | None]:
+    if not cfg.fish_api_key:
+        raise RuntimeError("FISH_API_KEY not set")
+    headers = {
+        "Authorization": f"Bearer {cfg.fish_api_key}",
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg",
+        "model": cfg.fish_model,
+    }
+    voice = cfg.fish_reference_id or cfg.tts_voice
+    speed = max(0.5, min(2.0, cfg.tts_rate / 175))
+    out: list[Path | None] = []
+    for i, text in enumerate(texts):
+        payload = {"text": text, "format": "mp3", "prosody": {"speed": speed}}
+        if voice:
+            payload["reference_id"] = voice
+        try:
+            r = requests.post(
+                "https://api.fish.audio/v1/tts",
+                headers=headers,
+                json=payload,
+                timeout=120,
+            )
+            r.raise_for_status()
+            out.append(_save(r.content, out_dir / f"seg_{i:02d}.mp3"))
+        except Exception as exc:
+            log.warning("fish seg %d failed: %s", i, exc)
+            out.append(None)
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # ElevenLabs
 # --------------------------------------------------------------------------- #
 def _elevenlabs_voice(cfg: Settings) -> str:
@@ -236,6 +270,7 @@ def synth_openai(texts: list[str], out_dir: Path, cfg: Settings) -> list[Path | 
 
 REGISTRY = {
     "edge": synth_edge,
+    "fish": synth_fish,
     "elevenlabs": synth_elevenlabs,
     "azure": synth_azure,
     "gcloud": synth_gcloud,
