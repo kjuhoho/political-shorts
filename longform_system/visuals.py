@@ -144,6 +144,14 @@ def plan(scenes, stories, registry=None):
                 row.update(kind='media', media=candidates[0], disclosure=candidates[0]['caption'])
                 media_source = next(s for s in stories[issue]['sources'] if s['url']==candidates[0]['source_url'])
                 row['source'] = {k:media_source[k] for k in ('name','url','published','title')}
+        # A literal, reviewed explanation sentence is more useful than a generic
+        # looping icon. Do not generate new causal diagrams from guessed facts.
+        explanation_key = label+'::explanation'
+        if row['kind']=='issue' and not counts.get(explanation_key) and any(
+                narration.startswith(term) for term in ('쉽게 말하면','쉽게 말해','차이는','핵심은','예를 들어','반면')):
+            row.update(kind='explanation',explanation=narration,
+                       disclosure='대본 핵심 설명 · 아래 출처에 근거')
+            counts[explanation_key] = 1
         # Priority is editorial, not a model's vague importance score: source,
         # contextual numbers, cleared media and the first recap stay foreground.
         recap = row['kind']=='overview' and '요약' in label and counts[label]==1
@@ -155,7 +163,7 @@ def plan(scenes, stories, registry=None):
         else:
             row.update(visual_priority='foreground',selection_reason='evidence-number-media-or-recap')
         result.append(row)
-    return dict(version=5, generated_without_llm=True, scenes=result,
+    return dict(version=6, generated_without_llm=True, scenes=result,
                 motion_scenes=sum(r['kind']=='motion' for r in result),
                 illustration_scenes=sum(r['kind']=='illustration' for r in result),
                 media_scenes=sum(r['kind']=='media' for r in result),
@@ -213,6 +221,9 @@ def draw_scene(row, background, overlay, font_path):
         text_block(d,'내레이션 속 수치 · 아래 문장과 함께 확인',(140,220),font_path,1600,70,34,'#48d4c0')
         text_block(d,' / '.join(row['numbers']),(140,320),font_path,1600,210,136)
         text_block(d,row['headline'],(140,555),font_path,1600,125,40)
+    elif kind == 'explanation':
+        text_block(d,'이 뉴스에서 이해할 점',(140,235),font_path,1600,70,38,'#48d4c0')
+        text_block(d,row['explanation'],(140,350),font_path,1590,300,62)
     elif kind == 'media':
         asset = row['media']
         if Path(asset['resolved_path']).suffix.lower() != '.mp4':

@@ -44,7 +44,7 @@ def grounding_errors(report, text, sources):
     findings = report.get('findings')
     if not isinstance(findings, list):
         return ['findings 배열이 없습니다. 오류 없으면 빈 배열을 반환하세요.']
-    if not accepted(report) and not findings:
+    if not factual_accepted(report) and not findings:
         return ['불합격 판단에 대응하는 findings의 정확한 대본·원문 인용이 없습니다.']
     errors = []
     normalize = lambda value: ' '.join(value.split())
@@ -65,10 +65,14 @@ def grounded(report, text, sources):
     return not grounding_errors(report, text, sources)
 
 
-def accepted(report):
+def factual_accepted(report):
     return (type(report.get('score')) is int and 95 <= report['score'] <= 100
             and all(report.get(k) is True for k in ('facts_ok','dates_ok','balance_ok','safety_ok'))
             and isinstance(report.get('issues'), list))
+
+
+def accepted(report):
+    return factual_accepted(report) and report.get('editorial_ok',True) is True
 
 
 def publication_reviews_ok(meta):
@@ -80,11 +84,16 @@ def publication_reviews_ok(meta):
 
 
 def review(writer, text, sources, kind='script', source_bundle=None):
+    from .editorial import review_contract, audit
     prompt = (f'기준일: {now():%Y년 %m월 %d일} (한국시간)\n{RUBRIC}\n'
               + ('제목 검수다. 명사형 제목과 브리핑 브랜드 문구를 허용한다. 원문 제목을 그대로 복사할 필요는 없다. '
                  '본문용 배경 설명·완결 문장·후속 전망 기준은 적용하지 않는다. 원문 대비 의미 왜곡, 과장, '
                  '명칭 잘림, 혐오, 근거 없는 단정만 평가하라.\n' if kind == 'title' else '') +
+              '인용은 차이를 입증하는 짧은 연속 구절(가급적 15~60자)만 복사하라. '
+              '문장 전체를 의역하거나 여러 곳을 이어 붙이지 마라.\n'
               f'검증 자료:\n{sources}\n검수 대상:\n{text}')
+    if kind != 'title':
+        prompt += review_contract(kind)
     if source_bundle and any(s.get('language')=='en' for s in source_bundle['sources']):
         prompt += ('\n추가 JSON 필드 source_checks 배열: 해외 원문 URL마다 '
                    '{"url":"해외 원문 URL","same_event":true 또는 false,'
@@ -95,6 +104,8 @@ def review(writer, text, sources, kind='script', source_bundle=None):
     for attempt in range(2):
         report = writer.json(prompt, 2000)
         errors = grounding_errors(report, text, sources)
+        if kind != 'title':
+            errors += audit(report,text,sources)
         if not errors:
             return report
         directory = getattr(writer, 'state_dir', None)
@@ -106,6 +117,21 @@ def review(writer, text, sources, kind='script', source_bundle=None):
                    + '\n관련 인용은 위 대본과 자료에서 그대로 복사하세요. 의역·말줄임표·기억에 의한 인용 금지. '
                    '실제 오류가 없으면 통과 여부를 정직하게 재평가하되 점수를 억지로 높이지 마세요.')
     raise RuntimeError('Reviewer did not ground its findings; refusing unsupported repair or publication')
+
+
+def validate_claims(body, source_text):
+    """Cheap source checks; never silently correct a date or waive review."""
+    if blocked(body) or any(term in body for term in HARMFUL):
+        raise RuntimeError('Blocked or harmful wording in narration')
+    for claim in ('최초', '유일'):
+        if claim in body and claim not in source_text:
+            raise RuntimeError(f'Unsupported superlative: {claim}')
+    if re.search(r'\d+(?:현대|현재|오늘|이번)', body):
+        raise RuntimeError('Malformed numeric fragment in narration')
+    allowed = set(re.findall(r'(?<!\d)(20\d{2})(?!\d)', source_text)) | {str(now().year)}
+    for year in re.findall(r'(?<!\d)(20\d{2})\s*년', body):
+        if year not in allowed:
+            raise RuntimeError(f'Unsupported year: {year}')
 
 
 def validate(script, stories):
@@ -126,14 +152,7 @@ def validate(script, stories):
     if not 460 <= words <= 560:
         raise RuntimeError(f'Script has {words} words, needs 460–560 for natural 5-minute narration')
     source_text = ' '.join(s['body'] for story in stories for s in story['sources']) + now().strftime('%Y년 %m월 %d일')
-    for claim in ('최초', '유일'):
-        if claim in body and claim not in source_text:
-            raise RuntimeError(f'Unsupported superlative: {claim}')
-    if re.search(r'\d+(?:현대|현재|오늘|이번)', body):
-        raise RuntimeError('Malformed numeric fragment in narration')
-    for year in re.findall(r'\b(20\d{2})년', body):
-        if year not in source_text:
-            raise RuntimeError(f'Unsupported year: {year}')
+    validate_claims(body, source_text)
     today = now()
     if not re.search(fr'{today.year}년\s*0?{today.month}월\s*0?{today.day}일', body):
         raise RuntimeError('Missing explicit briefing date')

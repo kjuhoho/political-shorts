@@ -7,11 +7,12 @@ from dataclasses import replace
 from pathlib import Path
 from .research import ROOT, now, collect, select, evidence
 from .llm import Writer
-from .guards import validate, review, accepted
+from .guards import validate, validate_claims, review, accepted
 from .renderer import render
 from .title_system import build_title_package
 from .ledger import digest_file
 from .media_check import check as check_media
+from .editorial import GENERATION_ORDER, direction
 
 SECTIONS = [('0:00–0:20','훅',34), ('0:20–0:50','맥락',51),
             ('0:50–1:45','핵심 1',93), ('1:45–2:40','핵심 2',93),
@@ -24,18 +25,41 @@ def save(path, value):
 
 
 def generate(writer, stories, out, existing=None):
-    drafts, reports = [], []
+    drafts, reports = ['']*7, []
     date = now().strftime('%Y년 %m월 %d일')
+    preflight_repairs = []
+    def checked(text, index):
+        selected = [stories[index-2]] if 2 <= index <= 4 else stories
+        source = '\n'.join(evidence(s, budget=1600 if len(selected)>1 else 4000) for s in selected)
+        try:
+            validate_claims(text, source)
+            return text
+        except RuntimeError as exc:
+            if len(preflight_repairs) >= 1:
+                raise
+            entry = dict(section=SECTIONS[index][1], error=str(exc), original=text)
+            preflight_repairs.append(entry)
+            save(out.with_suffix('.preflight.json'), preflight_repairs)
+            revised = writer.ask(f'''기준일 {date}. 아래 대본의 기계 검사 오류: {exc}
+원문으로 확인할 수 있는 내용만으로 해당 오류를 수정하라. 연도를 임의로 올해로 치환하지 마라.
+사건일을 확인할 수 없으면 날짜 단정을 제거하라. 주장·반론·분량과 완결된 존댓말은 유지.
+내레이션만 반환. 원문:\n{source}\n대본:\n{text}''', 3200)
+            validate_claims(revised, source)
+            entry['revised'] = revised
+            save(out.with_suffix('.preflight.json'), preflight_repairs)
+            return revised
     if existing:
+        drafts = []
         for section in re.split(r'(?m)^## .*\n', existing)[1:]:
             drafts.append(re.sub(r'(?m)^\[화면 출처.*$', '', section).replace('[SHORTS_HOOK]', '').strip())
         if len(drafts) != 7:
             raise RuntimeError('Resume artifact has invalid sections')
-    for index, (stamp, label, budget) in enumerate(SECTIONS):
+    for index in GENERATION_ORDER:
+        stamp,label,budget = SECTIONS[index]
         if existing:
             break
         source = evidence(stories[index-2]) if 2 <= index <= 4 else '\n'.join(
-            f"{s['headline']}\n" + (drafts[j+2] if len(drafts) > j+2 else evidence(s,budget=1600))
+            f"{s['headline']}\n원문 근거: {evidence(s,budget=1200)}\n참고 대본(독립 근거 아님): {drafts[j+2]}"
             for j,s in enumerate(stories))
         prompt = f'''오늘의엔터 정치 브리핑. 기준일 {date}, 한국시간. 자료에 나온 사건 발생일과
 기사 발행일을 구분하고, 이전 날짜의 일을 오늘 발생한 것처럼 말하지 마라.
@@ -61,9 +85,12 @@ def generate(writer, stories, out, existing=None):
 요약 구간이면 세 이슈를 하나씩 빠짐없이 요약하고 '내일은 후속 발표가 나왔는지 확인하겠습니다'처럼
 확인 계획을 예고하되, 확정되지 않은 사건을 내일 발생한다고 약속하지 마라.
 자료:\n{source}'''
+        prompt += '\n'+direction(index)
+        if 2 <= index <= 4 and any(drafts[2:index]):
+            prompt += '\n앞 이슈에서 이미 설명한 내용(사실 근거가 아닌 중복 방지용):\n'+'\n'.join(drafts[2:index])[:900]
         text = writer.ask(prompt, 3200)
         text = re.sub(r'^#+.*\n?', '', text, flags=re.M).strip().strip('`')
-        drafts.append(text)
+        drafts[index] = checked(text, index)
         out.with_suffix('.draft.md').write_text('\n\n'.join(drafts), encoding='utf-8')
         print(f'Section {label}: {len(text.split())} words', flush=True)
     # Repair only the section responsible for an out-of-band total. Always
@@ -80,10 +107,11 @@ def generate(writer, stories, out, existing=None):
 현재 전체 {total}어절. 이 구간을 공백 기준 약 {target}어절로 {'줄여라' if total > 560 else '풀어 설명하라'}.
 원문에 없는 사실/날짜/수치/전망을 추가하지 마라. 상대 입장과 주장 귀속 보존. 중복 반복 금지.
 완결된 한국어 내레이션만 반환. 훅의 기준일은 보존.
+{direction(i)}
 근거:\n{source}\n기존 대본:\n{drafts[i]}''', 3200)
         candidate_total = total-len(drafts[i].split())+len(revised.split())
         if abs(candidate_total-510) < abs(total-510):
-            drafts[i] = revised
+            drafts[i] = checked(revised, i)
     def assemble():
         parts = []
         for i, ((stamp,label,_), body) in enumerate(zip(SECTIONS,drafts)):
@@ -93,6 +121,10 @@ def generate(writer, stories, out, existing=None):
                 body += f"\n[화면 출처 텍스트: {s['name']} | {s['published'][:10]} | {s['url']}]"
             parts.append(f'## {stamp} | {label}\n{body}')
         return '\n\n'.join(parts)
+    script = assemble()
+    out.write_text(script, encoding='utf-8')
+    for i, body in enumerate(drafts):
+        drafts[i] = checked(body, i)
     script = assemble()
     out.write_text(script, encoding='utf-8')
     validate(script, stories)
@@ -106,6 +138,7 @@ def generate(writer, stories, out, existing=None):
 누구의 추정인지 귀속해라. 기관명은 원문 그대로 쓰고 유엔사와 유엔 사무국을 혼동하지 마라.
 기사 발행일과 사건 발생일을 구분. 예정인 연설을 이미 완료했다고 쓰지 마라.
 약 {len(drafts[i+2].split())}어절의 내레이션 본문만 반환.
+{direction(i+2)}
 원문:\n{evidence(story)}\n대본:\n{drafts[i+2]}''', 3200)
             out.write_text(assemble(), encoding='utf-8')
             report = review(writer, drafts[i+2], evidence(story),source_bundle=story)
@@ -117,14 +150,16 @@ def generate(writer, stories, out, existing=None):
         record_event_reviews(story,report)
     indices = (0,1,5,6)
     frame = '\n'.join(f'[{SECTIONS[i][1]}]\n{drafts[i]}' for i in indices)
-    frame_evidence = '\n'.join(evidence(s,budget=2000) for s in stories)
-    report = review(writer, frame, frame_evidence)
+    frame_evidence = '\n'.join(evidence(s,budget=1600) for s in stories)
+    report = review(writer, frame, frame_evidence,kind='framing')
     save(out.with_suffix('.framing-initial.json'), report)
     if not accepted(report):
         fixed = writer.json(f'''기준일 {date}. 아래 검수 오류를 원문에 근거해서 모두 수정하라.
 {json.dumps(report,ensure_ascii=False)}
 기관명·사건 발생일 정확성, 주장 귀속, 아직 예정인 일의 시제를 확인.
 훅에 기준일 유지. 각 구간 분량 유지. 요약에는 반드시 서로 다른 세 이슈 모두 포함.
+{direction(0)}
+요약은 도입에서 던진 물음의 답을 빠짐없이 전달하라.
 JSON 형식: {{"hook":"본문","context":"본문","implications":"본문","outro":"본문"}}
 원문:\n{frame_evidence}\n대본:\n{frame}''', 3200)
         for i,key in zip(indices,('hook','context','implications','outro')):
@@ -133,7 +168,7 @@ JSON 형식: {{"hook":"본문","context":"본문","implications":"본문","outro
             drafts[i] = fixed[key].strip()
         out.write_text(assemble(), encoding='utf-8')
         frame = '\n'.join(f'[{SECTIONS[i][1]}]\n{drafts[i]}' for i in indices)
-        report = review(writer, frame, frame_evidence)
+        report = review(writer, frame, frame_evidence,kind='framing')
     reports.append(report)
     save(out.with_suffix('.quality.json'), reports)
     if not accepted(report):

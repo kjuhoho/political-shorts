@@ -61,6 +61,18 @@ async def make_audio(text: str, output: Path, voice: str) -> None:
     await edge_tts.Communicate(text, voice=voice, rate="-5%").save(str(output))
 
 
+def prepare_audio(scenes, work, voice):
+    """Measure the exact scene audio that will be rendered, without a second TTS pass."""
+    if not scenes or len(scenes) > 60 or sum(len(t.encode()) for _,t in scenes) > 12000:
+        raise ValueError('Per-video TTS request/text budget exceeded')
+    seconds = 0
+    for i, (_, text) in enumerate(scenes):
+        mp3 = work / f'{i:02d}.mp3'
+        asyncio.run(make_audio(text, mp3, voice))
+        seconds += duration(mp3)
+    return seconds
+
+
 def duration(path: Path) -> float:
     p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
@@ -130,19 +142,7 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         json.dumps(storyboard, ensure_ascii=False, indent=2), encoding='utf-8')
     # Measure natural narration before spending time encoding every scene.
     # Keep this diagnostic audio so a length hold is concrete and reviewable.
-    prepared_audio = provider() == 'fish'
-    if prepared_audio:
-        if len(scenes) > 60 or sum(len(t.encode()) for _,t in scenes) > 12000:
-            raise ValueError('Fish per-video request/text budget exceeded')
-        spoken_seconds = 0
-        for i, (_, text) in enumerate(scenes):
-            mp3 = work / f'{i:02d}.mp3'
-            asyncio.run(make_audio(text, mp3, voice))
-            spoken_seconds += duration(mp3)
-    else:
-        timing_audio = output.with_suffix('.timing.mp3')
-        asyncio.run(make_audio(' '.join(text for _,text in scenes), timing_audio, voice))
-        spoken_seconds = duration(timing_audio)
+    spoken_seconds = prepare_audio(scenes, work, voice)
     output.with_suffix('.timing.json').write_text(json.dumps({'natural_duration_s':spoken_seconds}), encoding='utf-8')
     if not 240 <= spoken_seconds <= 360:
         raise ValueError(f'Natural narration lasts {spoken_seconds:.1f}s; 5-minute length policy not met')
@@ -155,8 +155,6 @@ def render(script_path: Path, output: Path, font_path: Path, voice: str) -> dict
         visual = storyboard['scenes'][i]
         overlay = work / f'{i:02d}.overlay.png'
         draw_scene(visual, png, overlay, font_path)
-        if not prepared_audio:
-            asyncio.run(make_audio(text, mp3, voice))
         seconds = duration(mp3)
         frames = max(1, round(seconds * FPS))
         offset = sum(s['duration_s'] for s in manifest_scenes)
