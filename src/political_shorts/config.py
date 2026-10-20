@@ -127,6 +127,7 @@ class Settings:
     image_enabled: bool = True
     image_min_count: int = 4
     image_max_count: int = 6
+    hook_quote_first: bool = True
     image_providers: str = "wikimedia"   # openverse stock tends to be off-topic
     image_cache_dir: str = ""          # resolved to ROOT/assets/cache/images if blank
 
@@ -267,6 +268,7 @@ def load_settings() -> Settings:
         image_enabled=_get_bool("IMAGE_ENABLED", True),
         image_min_count=_get_int("IMAGE_MIN_COUNT", 4),
         image_max_count=_get_int("IMAGE_MAX_COUNT", 6),
+        hook_quote_first=_get_bool("HOOK_QUOTE_FIRST", True),
         image_providers=_get("IMAGE_PROVIDERS", "wikimedia"),
         image_cache_dir=_resolve(_get("IMAGE_CACHE_DIR", "") or "assets/cache/images"),
         broll_enabled=_get_bool("BROLL_ENABLED", False),

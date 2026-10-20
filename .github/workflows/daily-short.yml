@@ -156,6 +156,8 @@ jobs:
           git add -f data/topic_history.json || true
           # which photos/clips the last videos used, so tomorrow's picks different ones (asset_memory)
           git add -f data/asset_history.json || true
+          # which opener each video used (variants.py), so the channel check can compare views by arm
+          git add -f data/variant_history.json || true
           if ! git diff --cached --quiet; then
             git commit -m "run: update topic history [skip ci]"
             # other bots push to main too (the longform workflow records its day); a rejected push would lose

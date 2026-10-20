@@ -151,6 +151,52 @@ def cluster_trend_score(texts: list[str], trending: list[dict]) -> tuple[float, 
     return round(best, 2), hit
 
 
+QUOTE_WINDOW = 5      # how far down the order a quotable story may be pulled from
+
+
+def has_quote(cluster_id: int, cfg: Settings) -> bool:
+    """Does this story carry a whole, attributable remark the video can open on? (offline, no LLM)"""
+    from .analyze import analyze
+    from .db import cluster_articles, connect
+    from .hook import detect_entities, detect_frame, pick_actor
+    from .hook_engine import HookContext, find_quotes
+
+    with connect(cfg.db_path) as conn:
+        rows = cluster_articles(conn, cluster_id)
+    if not rows:
+        return False
+    titles = " \n ".join(r["title"] for r in rows)
+    summaries = " \n ".join((r["summary"] or "") for r in rows)
+    an = analyze(titles, summaries)
+    ent, fr = detect_entities(titles, summaries), detect_frame(titles, summaries)
+    head = rows[0]["title"]
+    ctx = HookContext(headline=head, facts=[f.text for f in an.facts], claims=[c.text for c in an.claims],
+                      frame=fr, entities=ent, actor=pick_actor(head, ent, fr), n_sources=len(rows))
+    return bool(find_quotes(ctx))
+
+
+def prefer_quotable(cluster_ids: list[int], cfg: Settings | None = None, window: int = QUOTE_WINDOW) -> list[int]:
+    """Move the first QUOTABLE story among the top `window` to the front.
+
+    The market's top Korean politics Shorts open on a named person's own words; at 6% of stories a quote
+    opener would otherwise appear less than once a week, which is too rare to learn anything from. One story,
+    from the top few only: this is a tie-break between stories the ranking already considers worth making, so
+    a quote can never promote a minor story over a major one. No-op on any failure or with the switch off."""
+    cfg = cfg or settings
+    if not cluster_ids or not getattr(cfg, "hook_quote_first", True):
+        return cluster_ids
+    try:
+        for i, cid in enumerate(cluster_ids[:window]):
+            if has_quote(cid, cfg):
+                if i == 0:
+                    return cluster_ids
+                log.info("cluster %d carries a quotable remark - promoted from #%d to #1", cid, i + 1)
+                return [cid, *cluster_ids[:i], *cluster_ids[i + 1:]]
+    except Exception as exc:
+        log.warning("quote preference skipped: %s", exc)
+    return cluster_ids
+
+
 def rerank_by_trend(cluster_ids: list[int], cfg: Settings | None = None) -> list[int]:
     """Stable re-sort of the build order: hottest (by Google Trends overlap)
     first, ties keep the original newsworthiness order. No-op on any failure."""

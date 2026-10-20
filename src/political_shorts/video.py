@@ -717,6 +717,10 @@ def _assign_images(
         # handled separately (lead_path on the setup cards) so the subject
         # portrait isn't silently eaten by the first card here.
         hay = f"{seg.get('caption', '')} {seg.get('narration', '')} {seg.get('kicker', '')}"
+        if seg.get("hook_kind") == "quote" and seg.get("hook_speaker"):
+            # a quote card is about WHO SAID IT. The words may name somebody else ('김승원 후보자는 ...'), and
+            # that person's face under another person's quote reads as his statement.
+            hay = str(seg["hook_speaker"])
         for path, who in portraits:
             if who and who in hay and path not in used:
                 used.add(path)
@@ -754,6 +758,12 @@ def _assign_images(
         stype = str(seg.get("scene_type") or "")
         pic = None
         want_face = (role in setup_roles) or (stype in _face_types)
+        if seg.get("hook_kind") == "quote" and seg.get("hook_speaker"):
+            # the speaker's own portrait was not available (a party, or nobody collected): the story's subject
+            # must not stand in for him. A neutral picture, or the drawn backdrop, is honest; a wrong face is not.
+            picks[i] = _take_photo(fi) if context else None
+            fi += 1
+            continue
         if lead_paths and (want_face or not context) and (lead_used < lead_cap or not context):
             pic = lead_paths[li % len(lead_paths)]
             li += 1
@@ -997,7 +1007,12 @@ def render_video(script: dict[str, Any], out_path: Path, cfg: Settings | None = 
         thumb_s = 0.0
 
         # ---- designed opening frame (the Shorts poster) --------------------
-        if getattr(cfg, "thumb_enabled", True):
+        # A quote opener starts speaking at t=0: the poster is 1.3s of SILENCE (measured on a real render: the
+        # first audio arrives at 1.67s), which is most of the window a viewer gives a Short before swiping. The
+        # cover for YouTube is a separate image now (thumbnail.py -> thumbnails.set), so nothing needs the
+        # poster as a first frame.
+        _quote_opener = bool(segments) and segments[0].get("hook_kind") == "quote"
+        if getattr(cfg, "thumb_enabled", True) and not _quote_opener:
             imgs = script.get("images", [])
             portrait = next((im["path"] for im in imgs
                              if im.get("kind") == "portrait" and im.get("path")

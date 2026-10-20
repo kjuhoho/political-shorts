@@ -331,6 +331,16 @@ def _ensure_dateline(segments: list[dict[str, Any]], pub_dates: list[tuple[int, 
     log.info("dateline added: %s", line)
 
 
+def _speaker_names(segments: list[dict[str, Any]], entities: Any) -> list[str]:
+    """The person a quote opener is attributed to, as the name the portrait lookup knows ('이재명 대통령' ->
+    '이재명'). A party has no face, and an unlisted name is not looked up on the strength of a title."""
+    who = next((s.get("hook_speaker", "") for s in segments if s.get("role") == "hook"), "")
+    name = who.split()[0] if who else ""
+    if name and (name in getattr(entities, "politicians", []) or name == "이재명"):
+        return [name]
+    return []
+
+
 def _engage_subject(headline: str) -> str:
     """The thing the video was about, short enough to open a question with: '강훈식 비서실장 사의'."""
     h = clean_text(strip_byline(headline or ""))
@@ -901,12 +911,14 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
         facts=[f.text for f in analysis.facts],
         claims=[c.text for c in analysis.claims],
         frame=frame, entities=entities, actor=_actor, n_sources=n_sources,
+        quote_first=bool(getattr(cfg, "hook_quote_first", True)),
     ))
     hcap, hnar = hk.caption, hk.narration
     if not hnar or len(hnar) < 8:                       # engine gave up -> template
         hcap, hnar = make_hook(headline, entities, frame, cfg.headline_style)
     segments.append({"role": "hook", "kicker": "오늘의 이슈",
-                     "caption": hcap, "narration": hnar, "hook_kind": hk.kind})
+                     "caption": hcap, "narration": hnar, "hook_kind": hk.kind,
+                     **({"hook_speaker": hk.speaker} if getattr(hk, "speaker", "") else {})})
 
     # 2) summary card — BACKGROUND: who/what is involved + a term gloss, then
     #    the core fact. A viewer who doesn't follow politics starts here.
@@ -1291,7 +1303,8 @@ def build_script(cluster_id: int, cfg: Settings | None = None, *,
 
         images = [a.__dict__ for a in
                   collect_images(entities, frame, headline, cfg, body_text=_body_text,
-                                 want=max(0, _want_media - (3 if getattr(cfg, "broll_enabled", False) else 0)))]
+                                 want=max(0, _want_media - (3 if getattr(cfg, "broll_enabled", False) else 0)),
+                                 also_people=_speaker_names(segments, entities))]
     except Exception as exc:  # pragma: no cover - network dependent
         log.warning("image collection failed: %s", exc)
     if getattr(cfg, "broll_enabled", False):

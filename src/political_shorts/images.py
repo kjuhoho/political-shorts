@@ -456,7 +456,7 @@ def _location_infos(title: str, cfg: Settings, n: int = 1) -> list[dict]:
 
 def collect_images(
     entities: Entities, frame: Frame, headline: str, cfg: Settings | None = None,
-    body_text: str = "", want: int = 0,
+    body_text: str = "", want: int = 0, also_people: list[str] | None = None,
 ) -> list[ImageAsset]:
     """`want` is how many pictures the video actually needs (one per scene, ideally). IMAGE_MAX_COUNT is the
     floor: with six photos spread over 11-19 scenes, every photo came back two or three times inside the same
@@ -518,7 +518,7 @@ def collect_images(
     subject = lead if (lead_is_person and lead in h) else ""   # the poster face
     names: list[str] = []
     for n in ([subject] if subject else []) + \
-             ([PRESIDENT_NAME] if want_pres else []) + in_head + headline_people + in_body:
+             ([PRESIDENT_NAME] if want_pres else []) + list(also_people or []) + in_head + headline_people + in_body:
         if n and n not in names:
             names.append(n)
 

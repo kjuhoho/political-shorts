@@ -149,8 +149,14 @@ def report(days: int) -> dict[str, Any]:
     if not key:
         return {"error": "YOUTUBE_API_KEY is not set — public counts unavailable", "videos": rows}
     stats = fetch_videos([r["video_id"] for r in rows], key)
+    try:
+        from political_shorts import variants
+        arms = variants.load(settings)
+    except Exception:
+        arms = {}
     for r in rows:
         r.update(stats.get(r["video_id"], {}))
+        r["hook"] = (arms.get(r["video_id"]) or {}).get("hook") or "(untagged)"
         r["title_shape"] = title_shape(r.get("title", ""))
         r["engagement"] = round((r.get("likes", 0) + r.get("comments", 0)) / max(1, r.get("views", 0)), 4)
     published = [r for r in rows if r.get("views") is not None and r.get("title")]
@@ -175,6 +181,9 @@ def report(days: int) -> dict[str, Any]:
                    "median_views": round(statistics.median([r["views"] for r in live]), 1) if live else 0},
         "distribution": _distribution(live),
         "by_frame": _bucket(live, lambda r: r.get("frame") or "(none)"),
+        # the opener experiment: a person's own quote vs the narrator's question. Videos before 2026-10-20
+        # carry no tag; they are the control.
+        "by_hook": _bucket(live, lambda r: r.get("hook") or "(untagged)"),
         "by_slot": _bucket(live, lambda r: r["slot"]),
         "by_weekday": _bucket(live, lambda r: r["weekday"]),
         "by_title_shape": _bucket(live, lambda r: r["title_shape"]),
@@ -209,7 +218,7 @@ def main() -> int:
             continue
         print(f"{r['kst']:<12}{r['views']:>7}{r['likes']:>7}{r['comments']:>6}{r['seconds']:>5}  "
               f"{(r.get('frame') or '-'):<10}{r['slot']:<9}{r['title'][:52]}")
-    for name in ("by_frame", "by_slot", "by_weekday", "by_title_shape", "by_length"):
+    for name in ("by_frame", "by_hook", "by_slot", "by_weekday", "by_title_shape", "by_length"):
         parts = [f"{b['bucket']} n={b['n']} med={b['median_views']}{' (weak)' if b['weak'] else ''}"
                  for b in rep[name]]
         print(f"\n{name}: " + " | ".join(parts))

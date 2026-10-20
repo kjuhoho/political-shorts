@@ -59,6 +59,7 @@ class Hook:
     narration: str
     kind: str = "question"
     lead_number: str = ""
+    speaker: str = ""               # a quote opener: who said it ('이재명 대통령' / '국민의힘')
 
 
 @dataclass
@@ -70,6 +71,7 @@ class HookContext:
     entities: Entities
     actor: str = ""
     n_sources: int = 1
+    quote_first: bool = True        # config: HOOK_QUOTE_FIRST (the channel's opener experiment)
 
     @property
     def blob(self) -> str:
@@ -254,7 +256,161 @@ def _fallback_question(ctx: HookContext) -> Hook:
     return Hook(caption=_clip(line, 24), narration=line, kind="question")
 
 
-_ORDER = (_surprise, _twist, _question, _outcome_first, _conflict, _number, _generic)
+# --------------------------------------------------------------------------- #
+# the quote opener: a named person's own words, verbatim, in the first seconds
+# --------------------------------------------------------------------------- #
+_PAIRS = {"“": "”", "‘": "’", '"': '"', "'": "'"}
+_SAID = re.compile(r"^\s*(?:라고|이라고|라며|이라며|며|고)?\s*(?:\S{0,6}\s)?"
+                   r"(?:말했|말하|말한|밝혔|밝히|강조했|강조하|주장했|주장하|지적했|지적하|비판했|비판하|"
+                   r"반박했|반박하|덧붙였|언급했|호소했|촉구했|당부했|경고했|답했|설명했|전했|못박|일축했)")
+_ROLES = ("대통령", "국무총리", "총리", "부총리", "원내대표", "대표", "최고위원", "의원", "장관", "차관",
+          "위원장", "비서실장", "수석대변인", "대변인", "수석", "대법원장", "청장", "처장", "후보자", "시장", "지사")
+_ROLE_RX = "|".join(sorted(_ROLES, key=len, reverse=True))
+_PARTY_ROLE = r"(?:\s?(?:원내대표|대표|수석대변인|대변인|최고위원|지도부))?"
+_SUBJ = r"\s?(?:은|는|이|가|도|측은|측이|께서는|께서)"
+# a quote must end like an utterance, not a headline fragment ("청와대 책임")
+_UTTERANCE_END = re.compile(r"(?:다|요|까|죠|니다|니까|세요|라|네|자|지|해|야)\s*[.?!]?$")
+# openers that only mean something with the sentence before them
+_NEEDS_CONTEXT = re.compile(r"^(?:그리고|그러나|하지만|그래서|따라서|또한|다만|이어|그는|그녀는|이는|이것은|그것은)")
+# words that would make the very first seconds an attack line, however accurately quoted
+_TOO_HOT = re.compile(r"매국|내란\s*수괴|쓰레기|범죄자|사기꾼|미친|척결|응징|처단|죽여|죽이|빨갱이|"
+                      r"독재자|살인|암살|테러|폭도|국적|역적|반역")
+QUOTE_MAX = 40
+_FILLER_MAX = 24          # words between the speaker and the opening quote mark ('21일 국회에서')
+
+
+@dataclass
+class Quote:
+    text: str
+    speaker: str
+    score: float
+
+
+def _spans(s: str) -> list[tuple[int, int, str]]:
+    """(start, end, inner text) of properly PAIRED quote marks. A bare regex also pairs a closing mark with the
+    next opening one, which turned '"A"라고 공격했다 "B"' into the 'quote' 라고 공격했다."""
+    out: list[tuple[int, int, str]] = []
+    i = 0
+    while i < len(s):
+        close = _PAIRS.get(s[i])
+        if close:
+            j = s.find(close, i + 1)
+            if j > i:
+                out.append((i, j + 1, s[i + 1:j]))
+                i = j + 1
+                continue
+        i += 1
+    return out
+
+
+def _people(ctx: HookContext) -> list[str]:
+    from .hook import candidate_people
+    names = {*ctx.entities.politicians}
+    return sorted(names, key=len, reverse=True)
+
+
+def _speaker_before(prefix: str, ctx: HookContext, headline_form: bool = False) -> tuple[str, bool]:
+    """-> (speaker, subject_form). Who said it, from the words just before the opening quote mark.
+
+    Only a person or party the pipeline already recognises, and only as the SUBJECT of the sentence
+    ('이재명 대통령은 21일 "…"라고 말했다') or as the byline-style lead of a headline ('이재명 "…"').
+    The last name mentioned before the quote is not necessarily the speaker: it can be the person being
+    addressed, and an unnamed 'one official' never opens a video."""
+    pre = prefix.rstrip()
+    known = _people(ctx)
+    parties = sorted(ctx.entities.parties, key=len, reverse=True)
+
+    def other_named(gap: str, own: str) -> bool:
+        return any(n != own and n in gap for n in (*known, *parties))
+
+    # 1) headline form: the quote is directly preceded by the name (and role): '이재명 "…"'.
+    #    OFF for the opener: quote marks in a Korean headline routinely hold a CONDENSED paraphrase, not the
+    #    words as said ('김민석 "용혜인, 당 지키는 선택한 것 이해"' was a summary of a longer remark), and the
+    #    channel's rule is that remarks are quoted whole. Only a verb-confirmed body sentence qualifies.
+    if headline_form:
+        for name in known:
+            m = re.search(rf"(?:^|[^가-힣]){re.escape(name)}(?:\s?({_ROLE_RX}))?\s*[,:]?$", pre)
+            if m:
+                return (f"{name} {m.group(1)}" if m.group(1) else name), False
+        for p in parties:
+            m = re.search(rf"(?:^|[^가-힣]){re.escape(p)}{_PARTY_ROLE}\s*[,:]?$", pre)
+            if m:
+                return clean_text(pre[m.start():].strip(" ,:")).lstrip("·, "), False
+
+    # 2) subject form: 'NAME(ROLE)은/는/이/가 <≤24 chars, no other named person> "…"'
+    for name in known:
+        for m in re.finditer(rf"(?:^|[^가-힣]){re.escape(name)}(?:\s?({_ROLE_RX}))?{_SUBJ}\s", pre + " "):
+            gap = (pre + " ")[m.end():]
+            if len(gap) <= _FILLER_MAX and not other_named(gap, name):
+                return (f"{name} {m.group(1)}" if m.group(1) else name), True
+    for p in parties:
+        for m in re.finditer(rf"(?:^|[^가-힣]){re.escape(p)}({_PARTY_ROLE}){_SUBJ}\s", pre + " "):
+            gap = (pre + " ")[m.end():]
+            if len(gap) <= _FILLER_MAX and not other_named(gap, p):
+                return clean_text(f"{p}{m.group(1)}"), True
+    # 3) '이 대통령은' / '대통령은' - the sitting president
+    if ctx.entities.president:
+        m = re.search(rf"(?:^|[^가-힣])(?:이\s?)?대통령{_SUBJ}\s", pre + " ")
+        if m and len((pre + " ")[m.end():]) <= _FILLER_MAX and not other_named((pre + " ")[m.end():], "이재명"):
+            return "이재명 대통령", True
+    return "", False
+
+
+def find_quotes(ctx: HookContext) -> list[Quote]:
+    """Every whole, attributable, short quote in the cluster's own text, best first."""
+    from .soften import SOFTEN
+
+    out: list[Quote] = []
+    seen: set[str] = set()
+    for sent in [*ctx.claims, *ctx.facts]:
+        s = clean_text(sent)
+        for a, b, inner in _spans(s):
+            q = inner.strip()
+            if q in seen:
+                continue
+            seen.add(q)
+            body = q.rstrip(" .")
+            if not (8 <= len(body) <= QUOTE_MAX):
+                continue
+            if re.search(r"[()\[\]]|…|\.\.\.", q):
+                continue                                  # edited for the print edition: not the words as said
+            if re.search(r"[‘’'\"“”]", q):
+                continue                                  # a quote inside the quote: the caption font (Jua) has no ‘ ’
+            if not _UTTERANCE_END.search(q) or _NEEDS_CONTEXT.match(q):
+                continue
+            if _TOO_HOT.search(q) or any(k in q for k in SOFTEN):
+                continue
+            who, subject_form = _speaker_before(s[:a], ctx)
+            if not who:
+                continue
+            # a subject-form attribution must be backed by a speech verb right after the quote; the headline
+            # form ('이재명 "…"') is the byline convention and needs none
+            if not _SAID.match(s[b:b + 24]):
+                continue
+            score = 0.0
+            score += 2.0 if who.split()[0] in ctx.headline else 0.0
+            score += 1.5 if ctx.actor and ctx.actor in who else 0.0
+            score += 1.0 if q.endswith("?") else 0.0
+            score -= abs(len(body) - 22) / 22.0           # short enough to take in at once, long enough to say something
+            out.append(Quote(text=q, speaker=who, score=score))
+    return sorted(out, key=lambda x: -x.score)
+
+
+def _quote(ctx: HookContext) -> Hook | None:
+    if not ctx.quote_first:
+        return None
+    found = find_quotes(ctx)
+    if not found:
+        return None
+    best = found[0]
+    q = best.text.strip(" ").rstrip(".")
+    who = best.speaker
+    return Hook(caption=f"“{q}” — {who}",
+                narration=f"“{q}” {josa(who, ('이', '가'))} 한 말입니다.",
+                kind="quote", speaker=who)
+
+
+_ORDER = (_quote, _surprise, _twist, _question, _outcome_first, _conflict, _number, _generic)
 
 
 def _gloss(h: Hook) -> Hook:

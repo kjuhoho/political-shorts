@@ -358,6 +358,12 @@ def _process_story(
                     rid = next((p["remote_id"] for p in out.publishes if p["status"] == "ok"), "")
                     record_topic(conn, signature_str(sig), script["headline"],
                                  script.get("frame", ""), rid, "youtube", actor)
+                    try:                      # which opener this video used, so its views can be compared by arm
+                        from . import variants
+                        _hook = next((s for s in script.get("segments", []) if s.get("role") == "hook"), {})
+                        variants.record(cfg, rid, hook=_hook.get("hook_kind", ""))
+                    except Exception as exc:
+                        log.debug("variant not recorded: %s", exc)
                     # the same event, reported from the other side, was folded into this video:
                     # it must not come back tomorrow as a separate "story" (actor left blank so the
                     # same-person rule cannot over-block)
@@ -521,8 +527,10 @@ def run_pipeline(
         # Re-rank so the story that's actually TRENDING on Google right now goes
         # first (best-effort; no-op if the trends feed is unreachable).
         try:
-            from .trending import rerank_by_trend
+            from .trending import prefer_quotable, rerank_by_trend
             cluster_ids = rerank_by_trend(cluster_ids, cfg)
+            if not focus_on:           # --focus is an explicit choice of story: never reorder it
+                cluster_ids = prefer_quotable(cluster_ids, cfg)
         except Exception as exc:  # never let ranking break a run
             log.warning("trend rerank skipped: %s", exc)
 

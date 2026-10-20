@@ -749,6 +749,8 @@ def rewrite_segments(
     _hk = _valid_hook(new.get("hook"), meta)
     if _hk:
         for s in cand:
+            if s.get("role") == "hook" and s.get("hook_kind") == "quote":
+                break              # a person's own words are not rewritten into a question
             if s.get("role") == "hook":
                 s["narration"] = _hk
                 s.pop("caption", None)
