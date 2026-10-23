@@ -1744,5 +1744,32 @@
   "frame": "generic",
   "remote_id": "_Bm7YFVRhFI",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1792738294,
+  "signature": "국민의힘 대법원 대법원장 민주당 반대 오차 이내 이재명 조희대 찬성 탄핵 한국갤럽",
+  "actor": "조희대",
+  "headline": "'조희대 대법원장 탄핵' 찬성 34%, 반대 39%...오차 이내[한국갤럽]",
+  "frame": "poll",
+  "remote_id": "jBX4Cf3NDJI",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1792738294,
+  "signature": "7주 9월 이후 조사 지지율 한국갤럽 회복",
+  "actor": "",
+  "headline": "이 대통령 지지율 40%대 회복...9월 조사 이후 7주 만 [한국갤럽]",
+  "frame": "poll",
+  "remote_id": "jBX4Cf3NDJI",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1792738294,
+  "signature": "vs 반대 복귀 이지지율 조희대 찬성 탄핵",
+  "actor": "",
+  "headline": "조희대 탄핵, 반대 39% vs 찬성 34%...이지지율 40%대 복귀",
+  "frame": "poll",
+  "remote_id": "jBX4Cf3NDJI",
+  "platform": "youtube"
  }
 ]
