@@ -2122,5 +2122,32 @@
   "frame": "generic",
   "remote_id": "NJJ5rpOO5aA",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1793581933,
+  "signature": "공급 국민의힘 민주당 수도권 영향 오른 이대통령 이재명 지지율 확대",
+  "actor": "이재명",
+  "headline": "이대통령 지지율 1.6%p 오른 36.9%...\"수도권 공급 확대 영향\"",
+  "frame": "poll",
+  "remote_id": "0BcRcgtCEoc",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1793581933,
+  "signature": "국힘 리얼미터 민주",
+  "actor": "",
+  "headline": "민주 38.3%·국민의힘 40.2%...민주 2.3%p↑· 국힘 2.4%p↓[리얼미터]",
+  "frame": "poll",
+  "remote_id": "0BcRcgtCEoc",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1793581933,
+  "signature": "국정지지율 대비 리얼미터 전주",
+  "actor": "",
+  "headline": "이 대통령 국정지지율 36.9%...전주 대비 1.6%p↑[리얼미터]",
+  "frame": "poll",
+  "remote_id": "0BcRcgtCEoc",
+  "platform": "youtube"
  }
 ]
