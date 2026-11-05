@@ -2311,5 +2311,23 @@
   "frame": "clash",
   "remote_id": "pO3cPnxJVlw",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1793843568,
+  "signature": "sns 소통채널 신설 유튜브 이어 이재명 확대",
+  "actor": "이재명",
+  "headline": "이, SNS ‘X’ 이어 유튜브 ‘Y’ 신설... 청와대 “소통채널 확대”",
+  "frame": "generic",
+  "remote_id": "Yjb3frU-6kQ",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1793843568,
+  "signature": "x에서 강화 늘렸다 소통 유튜브로 직접 하나",
+  "actor": "",
+  "headline": "X에서 하나 더 늘렸다, 대통령 유튜브로 '직접 소통' 강화",
+  "frame": "generic",
+  "remote_id": "Yjb3frU-6kQ",
+  "platform": "youtube"
  }
 ]
