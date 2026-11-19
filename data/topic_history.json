@@ -2941,5 +2941,23 @@
   "frame": "generic",
   "remote_id": "2LzEapJYatM",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1795073800,
+  "signature": "감사원 검찰 국민의힘 국회 민주당 본회의 순방 시행 이대통령 이재명 재가 조국 조국혁신당 조작기소 즉시 특검법",
+  "actor": "이재명",
+  "headline": "이대통령, 순방 중 조작기소 특검법 재가...즉시 시행",
+  "frame": "scandal",
+  "remote_id": "Y6OHT89k8ic",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1795073800,
+  "signature": "180일 공포 수사 시행 임명 조작기소 최장 특검 특검법",
+  "actor": "",
+  "headline": "'조작기소 특검법' 오늘 공포·시행...특검 임명 후 최장 180일 수사",
+  "frame": "scandal",
+  "remote_id": "Y6OHT89k8ic",
+  "platform": "youtube"
  }
 ]
