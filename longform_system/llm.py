@@ -8,6 +8,10 @@ from groq import Groq, RateLimitError, APIConnectionError
 
 
 class Writer:
+    # Per-run ceiling (calls and Groq tokens). Actual usage is read back from every response.
+    MAX_CALLS = 18
+    MAX_TOKENS = 55000
+
     def __init__(self, state_dir=None):
         self.client = Groq(api_key=os.environ['LONGFORM_GROQ_API_KEY'], max_retries=0, timeout=90)
         available = {m.id for m in self.client.models.list().data}
@@ -39,6 +43,18 @@ class Writer:
                 temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
                 temp.replace(path)
 
+    def estimate(self, prompt, limit):
+        """Tokens to set aside BEFORE a call: input estimate + system/framing allowance + the full completion cap.
+
+        The old estimate counted every UTF-8 byte as a token. Korean text is 3 bytes per character and the
+        gpt-oss tokenizer measured about 3.6 bytes per token (a 12.5 KB review prompt = ~3.5k tokens, reserved as
+        15.5k), so a review retry was refused with 15k tokens of real headroom and the whole day failed.
+        bytes/3 keeps ~20% margin over that measurement; other models tokenize Korean less compactly, so they
+        keep the stricter bytes/2.
+        """
+        per_token = 3 if getattr(self, 'model', '').startswith('openai/gpt-oss') else 2
+        return len(prompt.encode('utf-8')) // per_token + 512 + limit
+
     def ask(self, prompt, limit=1600):
         # Bump the version whenever the system instruction or request settings change.
         key = hashlib.sha256(json.dumps(['v1', self.model, prompt, limit], ensure_ascii=False).encode()).hexdigest()
@@ -46,10 +62,9 @@ class Writer:
             self.cache_hits += 1
             self.checkpoint()
             return self.cache[key]
-        # Conservative UTF-8 byte allowance for input, system message and framing;
-        # reserve completion capacity BEFORE calling, rather than checking only after.
-        reserve = len(prompt.encode('utf-8')) + 1024 + limit
-        if self.calls >= 18 or self.tokens + self.uncertain_tokens + reserve > 55000:
+        # Reserve completion capacity BEFORE calling, rather than checking only after.
+        reserve = self.estimate(prompt, limit)
+        if self.calls >= self.MAX_CALLS or self.tokens + self.uncertain_tokens + reserve > self.MAX_TOKENS:
             raise RuntimeError('Longform API budget exhausted; no paid fallback')
         time.sleep(max(0, 65 - (time.monotonic() - self.last)))
         self.calls += 1

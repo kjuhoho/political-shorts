@@ -19,6 +19,30 @@ class PublicationGuards(unittest.TestCase):
         self.assertIn('findings[0].script_quote', correction_prompt)
         self.assertIn('findings[0].source_quote', correction_prompt)
 
+    def test_review_prompt_ends_with_one_complete_output_shape(self):
+        # 2026-11-20: a passing review was rejected only because the model returned the rubric's base shape and
+        # left out the separately described `editorial` object; the retry then hit the budget.
+        writer = Mock()
+        writer.json.return_value = dict(score=98, facts_ok=True, dates_ok=True, balance_ok=True, safety_ok=True,
+                                        issues=[], findings=[], editorial=dict(
+                                            question_quote='', explanation_quote='', payoff_quote='', source_quote='',
+                                            question_answered=False, adds_understanding=False,
+                                            non_repetitive=False, reason='x'))
+        review(writer, '대본입니다.', '원문입니다.')
+        script_prompt = writer.json.call_args.args[0]
+        tail = script_prompt[script_prompt.rindex('[최종 출력 형식]'):]
+        for key in ('score', 'facts_ok', 'dates_ok', 'balance_ok', 'safety_ok', 'issues', 'findings', 'editorial'):
+            self.assertIn(key, tail)
+        self.assertNotIn('source_checks', tail)               # only when overseas sources are in the bundle
+        review(writer, '제목', '원문입니다.', kind='title')
+        title_tail = writer.json.call_args.args[0]
+        title_tail = title_tail[title_tail.rindex('[최종 출력 형식]'):]
+        self.assertNotIn('editorial', title_tail)             # titles are not held to the story structure
+        bundle = dict(sources=[dict(language='ko'), dict(language='en')])
+        review(writer, '대본입니다.', '원문입니다.', source_bundle=bundle)
+        overseas = writer.json.call_args.args[0]
+        self.assertIn('source_checks', overseas[overseas.rindex('[최종 출력 형식]'):])
+
     def test_partial_reviews_cannot_authorize_publication(self):
         passing = dict(score=100, facts_ok=True, dates_ok=True, balance_ok=True,
                        safety_ok=True, issues=[])

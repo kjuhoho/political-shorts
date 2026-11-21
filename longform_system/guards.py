@@ -101,6 +101,17 @@ def review(writer, text, sources, kind='script', source_bundle=None):
                    '"primary_quote":"첫 국내 원문의 정확한 20자 이상 연속 인용"}. '
                    '주제 유사성만으로 same_event=true 금지. 인물·행동·사건일이 같은 사건인지 '
                    '양쪽 인용으로 확인한 경우만 true. 확인 불가면 false. 새 사실을 만들지 마라.')
+    # The schema used to be described in two places (the rubric's closing line, then an "additional JSON" block),
+    # and the model often returned only the first, so a passing review was rejected for a missing `editorial`
+    # object and the retry cost a second call. State the full shape once, last, where it is read most closely.
+    keys = ['score', 'facts_ok', 'dates_ok', 'balance_ok', 'safety_ok', 'issues', 'findings']
+    if kind != 'title':
+        keys.append('editorial')
+    if source_bundle and any(s.get('language')=='en' for s in source_bundle['sources']):
+        keys.append('source_checks')
+    prompt += ('\n\n[최종 출력 형식] 위 요구를 모두 합쳐 JSON 객체 하나만 반환한다. 최상위 키는 반드시 '
+               + ', '.join(keys) + '를 모두 포함한다.'
+               + (' editorial 객체가 없으면 응답은 무효로 처리되어 다시 요청된다.' if kind != 'title' else ''))
     for attempt in range(2):
         report = writer.json(prompt, 2000)
         errors = grounding_errors(report, text, sources)

@@ -19,7 +19,7 @@ class UsageGuards(unittest.TestCase):
                 w.ask('prompt')
             self.assertEqual(w.calls, 2)
             self.assertEqual(w.connection_retries, 1)
-            self.assertEqual(w.uncertain_tokens, 2*(len('prompt')+1024+1600))
+            self.assertEqual(w.uncertain_tokens, 2*w.estimate('prompt', 1600))
 
     @patch('longform_system.llm.time.sleep')
     def test_successful_retry_does_not_repeat_completed_requests(self, _):
@@ -56,6 +56,42 @@ class UsageGuards(unittest.TestCase):
             self.assertEqual(w.cache_hits, 1)
             w.ask('changed')
             self.assertEqual(w.calls, 2)
+
+    @patch('longform_system.llm.time.sleep')
+    def test_review_retry_fits_where_the_byte_reserve_refused_it(self, _):
+        # 2026-11-20: 10 calls / 39,569 tokens used, then a review retry with a ~12.5 KB Korean prompt was refused
+        # ("API budget exhausted") although a review really costs ~3.8k tokens. The old reserve counted every byte
+        # as a token: 12,498 + 1,024 + 2,000 = 15,522 > the 15,431 left.
+        with tempfile.TemporaryDirectory() as folder:
+            w = self.writer(folder)
+            w.model = 'openai/gpt-oss-120b'
+            w.calls, w.tokens = 10, 39569
+            prompt = '가' * 4166                                   # 12,498 UTF-8 bytes
+            self.assertGreater(39569 + len(prompt.encode()) + 1024 + 2000, 55000)   # the old rule refused it
+            self.assertEqual(w.ask(prompt, 2000), 'answer')
+            w.client.chat.completions.create.assert_called_once()
+            self.assertEqual(w.uncertain_tokens, 0)
+
+    def test_cap_still_stops_a_call_that_could_exceed_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            w = self.writer(folder)
+            w.model = 'openai/gpt-oss-120b'
+            w.calls, w.tokens = 12, 50000
+            with self.assertRaises(RuntimeError):
+                w.ask('가' * 4166, 2000)                           # 50,000 + 6,678 > 55,000
+            w.client.chat.completions.create.assert_not_called()
+            w.calls, w.tokens = Writer.MAX_CALLS, 0                  # the call cap is independent of tokens
+            with self.assertRaises(RuntimeError):
+                w.ask('short', 100)
+
+    def test_estimate_is_still_conservative_for_korean_text(self):
+        # measured: ~3.6 UTF-8 bytes per token on gpt-oss; the estimate must stay above the real input cost
+        w = object.__new__(Writer)
+        w.model = 'openai/gpt-oss-120b'
+        measured_tokens = 12500 / 3.6
+        self.assertGreater(w.estimate('가' * 4166, 0) - 512, measured_tokens)
+        w.model = 'llama-3.3-70b-versatile'
+        self.assertEqual(w.estimate('가' * 4166, 2000), 4166 * 3 // 2 + 512 + 2000)   # weaker Korean tokenizer: bytes/2
 
     def test_budget_stops_before_provider_call(self):
         with tempfile.TemporaryDirectory() as folder:
