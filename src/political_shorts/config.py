@@ -94,6 +94,8 @@ class Settings:
     tts_provider: str = "edge"          # edge | elevenlabs | azure | gcloud | openai | sapi
     tts_voice: str = ""                 # provider-specific voice name/id (blank = provider default)
     tts_rate: int = 175                 # SAPI words-per-minute-ish; also nudges edge rate
+    tts_providers: str = ""             # "gcloud,edge": tried in this order (blank = TTS_PROVIDER); see tts.py
+    tts_caps: str = ""                  # "gcloud:600000,azure:none": monthly character caps (tts_usage.DEFAULT_CAPS)
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     elevenlabs_model: str = "eleven_multilingual_v2"
@@ -102,6 +104,24 @@ class Settings:
     google_tts_api_key: str = ""
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "alloy"
+
+    # voice pipeline (Layer 1 normalize + Layer 3 post, around any engine)
+    voice_pipeline: bool = False        # master switch for the normalize/post wrapper
+    voice_lufs: float = -14.0           # loudness target for the narration track
+    voice_qa: bool = False              # Whisper read-back check (needs faster-whisper)
+    voice_qa_model: str = "small"
+    voice_qa_threshold: float = 0.72
+    # "my voice" engines — TTS_PROVIDER=piper | myvoice
+    piper_bin: str = ""                 # path to the piper binary (blank = "piper" on PATH)
+    piper_model: str = ""               # path to your trained .onnx voice model
+    piper_length_scale: float = 1.0     # global tempo (>1 slower); role hints multiply this
+    piper_noise_scale: float = 0.667
+    piper_noise_w: float = 0.8
+    voice_myvoice_backend: str = "piper"   # piper | xtts_api
+    xtts_api_url: str = ""              # self-hosted zero-shot clone endpoint (pre-training)
+    xtts_api_token: str = ""
+    xtts_speaker_wav_url: str = ""
+    xtts_speaker_id: str = ""
 
     # video
     video_width: int = 1080
@@ -136,8 +156,10 @@ class Settings:
     # cost) and only adds generic stock (flags, assembly, city, ballots).
     # OFF by default — enable once validated so it can't destabilise the live run.
     broll_enabled: bool = False
-    # Research stage: extra news / web+official statements / YouTube gathered after a
-    # story is picked, so the script is an analysis, not a re-telling. Best-effort.
+    # Research stage: after a story is picked, gather extra material (more news,
+    # web/official statements, YouTube coverage + comments) so the script is an
+    # analysis rather than a re-telling of the seed articles. Best-effort — every
+    # source that is unavailable is simply skipped.
     research_enabled: bool = True
     youtube_api_key: str = ""         # YouTube Data API v3 key (search + comments)
     broll_max_count: int = 3
@@ -243,6 +265,8 @@ def load_settings() -> Settings:
         tts_provider=_get("TTS_PROVIDER", "edge").lower(),
         tts_voice=_get("TTS_VOICE", ""),
         tts_rate=_get_int("TTS_RATE", 175),
+        tts_providers=_get("TTS_PROVIDERS", "").lower(),
+        tts_caps=_get("TTS_CAPS", ""),
         elevenlabs_api_key=_get("ELEVENLABS_API_KEY", ""),
         elevenlabs_voice_id=_get("ELEVENLABS_VOICE_ID", ""),
         elevenlabs_model=_get("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
@@ -251,6 +275,21 @@ def load_settings() -> Settings:
         google_tts_api_key=_get("GOOGLE_TTS_API_KEY", ""),
         openai_tts_model=_get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
         openai_tts_voice=_get("OPENAI_TTS_VOICE", "alloy"),
+        voice_pipeline=_get_bool("VOICE_PIPELINE", False),
+        voice_lufs=_get_float("VOICE_LUFS", -14.0),
+        voice_qa=_get_bool("VOICE_QA", False),
+        voice_qa_model=_get("VOICE_QA_MODEL", "small"),
+        voice_qa_threshold=_get_float("VOICE_QA_THRESHOLD", 0.72),
+        piper_bin=_resolve(_get("PIPER_BIN", "")) if _get("PIPER_BIN", "") else "",
+        piper_model=_resolve(_get("PIPER_MODEL", "")) if _get("PIPER_MODEL", "") else "",
+        piper_length_scale=_get_float("PIPER_LENGTH_SCALE", 1.0),
+        piper_noise_scale=_get_float("PIPER_NOISE_SCALE", 0.667),
+        piper_noise_w=_get_float("PIPER_NOISE_W", 0.8),
+        voice_myvoice_backend=_get("VOICE_MYVOICE_BACKEND", "piper").lower(),
+        xtts_api_url=_get("XTTS_API_URL", ""),
+        xtts_api_token=_get("XTTS_API_TOKEN", ""),
+        xtts_speaker_wav_url=_get("XTTS_SPEAKER_WAV_URL", ""),
+        xtts_speaker_id=_get("XTTS_SPEAKER_ID", ""),
         video_width=_get_int("VIDEO_WIDTH", 1080),
         video_height=_get_int("VIDEO_HEIGHT", 1920),
         video_fps=_get_int("VIDEO_FPS", 30),

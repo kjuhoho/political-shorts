@@ -91,6 +91,8 @@ jobs:
           PS_GROQ_KEY: ${{ secrets.PS_GROQ_KEY }}
           PS_OPENAI_KEY: ${{ secrets.PS_OPENAI_KEY }}
           PS_YT_API_KEY: ${{ secrets.PS_YT_API_KEY }}
+          PS_GOOGLE_TTS_KEY: ${{ secrets.PS_GOOGLE_TTS_KEY }}
+          VOICE_PIPELINE: ${{ vars.VOICE_PIPELINE }}
         run: |
           mkdir -p secrets
           echo "$PS_ENV_B64"        | base64 -d > .env
@@ -123,6 +125,18 @@ jobs:
           [ -n "$PS_GEMINI_KEY" ] && echo "GEMINI_API_KEY=$PS_GEMINI_KEY" >> .env
           # research stage: YouTube coverage + comments (optional; skipped without the key)
           [ -n "$PS_YT_API_KEY" ]  && echo "YOUTUBE_API_KEY=$PS_YT_API_KEY" >> .env
+          # Narration: with a Google Cloud TTS key the chain is gcloud -> edge (tts.py: every video gets ONE voice, the
+          # monthly character cap is counted in data/tts_usage.json, edge is the free last stop). No secret -> edge only.
+          if [ -n "$PS_GOOGLE_TTS_KEY" ]; then
+            echo "GOOGLE_TTS_API_KEY=$PS_GOOGLE_TTS_KEY" >> .env
+            echo "TTS_PROVIDERS=gcloud,edge" >> .env
+          fi
+          # Narration polish (voice/: numbers and dates read as Korean words, role pacing, dead air trimmed, loudness
+          # levelled). Switched by the repo VARIABLE VOICE_PIPELINE (Settings > Secrets and variables > Variables):
+          # "true" = on, anything else / unset = the plain engine output as before. Flip it without a code change.
+          if [ "$VOICE_PIPELINE" = "true" ]; then
+            echo "VOICE_PIPELINE=true" >> .env
+          fi
           if [ -n "$PS_GEMINI_KEY" ]; then
             echo "LLM_PROVIDER=gemini" >> .env
           elif [ -n "$PS_GROQ_KEY" ]; then
@@ -158,6 +172,8 @@ jobs:
           git add -f data/asset_history.json || true
           # which opener each video used (variants.py), so the channel check can compare views by arm
           git add -f data/variant_history.json || true
+          # characters sent to each metered TTS engine this month (tts_usage.py), so the next run knows what is left
+          git add -f data/tts_usage.json || true
           if ! git diff --cached --quiet; then
             git commit -m "run: update topic history [skip ci]"
             # other bots push to main too (the longform workflow records its day); a rejected push would lose

@@ -7,7 +7,9 @@ from political_shorts import tts_providers
 
 
 def test_registry_has_all_providers():
-    assert set(tts_providers.REGISTRY) == {"edge", "elevenlabs", "azure", "gcloud", "openai"}
+    assert set(tts_providers.REGISTRY) == {
+        "edge", "elevenlabs", "azure", "gcloud", "openai", "piper", "myvoice",
+    }
 
 
 def test_rate_percent_mapping():

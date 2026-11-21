@@ -27,3 +27,11 @@ assets/cache/
 secrets/
 token_*.json
 client_secret*.json
+
+# Voice: private lexicon entries, raw recordings, built dataset, trained models
+config/voice_lexicon.local.yaml
+recordings/
+dataset/
+models/
+*.onnx
+*.onnx.json

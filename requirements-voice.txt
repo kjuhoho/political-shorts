@@ -1,0 +1,16 @@
+# Optional extras for the voice pipeline. The core (Layer 1 normalize + Layer 3
+# ffmpeg post) needs NOTHING beyond what requirements.txt already installs.
+#
+# These are only for the read-back QA check (VOICE_QA=true). faster-whisper has
+# no cp314 wheels yet, so install them into a SEPARATE Python 3.11 venv and set
+# VOICE_QA=true — tts.py imports faster-whisper lazily and just skips QA if it
+# isn't importable.
+#
+#   py -3.11 -m venv .venv-voice
+#   .venv-voice\Scripts\pip install -r requirements-voice.txt
+#
+faster-whisper>=1.0.3
+
+# piper itself is a standalone binary, not a pip package here — download it from
+# https://github.com/OHF-Voice/piper1-gpl/releases and point PIPER_BIN at it.
+# Training happens on Colab (tools/voice/finetune_piper.ipynb), not locally.

@@ -1,9 +1,17 @@
 """Step 7 (optional) — narration synthesis.
 
-Provider is chosen by ``TTS_PROVIDER`` (edge | elevenlabs | azure | gcloud |
-openai | sapi). The orchestrator tries that provider, then ``edge`` (free, no
-key), then Windows ``sapi``, then gives up and returns silent segments so the
-video still builds with caption-only cards.
+Engines are chosen by ``TTS_PROVIDERS`` (a list, tried in order: ``gcloud,azure,edge``) or, when that is blank,
+by the single ``TTS_PROVIDER`` (edge | elevenlabs | azure | gcloud | openai | piper | sapi). ``edge`` (free, no
+key) and Windows ``sapi`` are always appended as the last stops, and if nothing makes a sound the video still builds
+with caption-only cards.
+
+The hand-over between engines is automatic and keeps one voice per video:
+  * an engine must make EVERY segment of a video; otherwise its audio is thrown away and the next engine
+    narrates the whole video (a quota that ends halfway must not leave a hole or a second voice),
+  * metered engines (tts_usage.DEFAULT_CAPS: gcloud / azure / elevenlabs) are counted per month and skipped
+    once a video would pass their cap - Google keeps going and bills past its free tier, so it cannot be left to
+    stop on its own,
+  * an engine that answers with a quota / rate-limit / key refusal cools down for a few hours (tts_usage.py).
 
 ``synthesize_segments`` writes one audio file per segment (wav or mp3 — ffmpeg
 takes both) and returns their paths + measured durations so the video timeline
@@ -19,6 +27,7 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import tts_usage
 from .config import Settings, settings
 from .logging_setup import get_logger
 from .tts_providers import REGISTRY as _PROVIDERS
@@ -183,10 +192,98 @@ def _synth_sapi(texts: list[str], out_dir: Path, cfg: Settings) -> list[Path | N
 
 
 # --------------------------------------------------------------------------- #
+# engine chain
+# --------------------------------------------------------------------------- #
+def _chain(cfg: Settings) -> list[str]:
+    listed = [n.strip().lower() for n in (getattr(cfg, "tts_providers", "") or "").split(",") if n.strip()]
+    names: list[str] = []
+    for name in (*(listed or [cfg.tts_provider]), "edge", "sapi"):
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _is_complete(paths: list[Path | None], speak: list[str]) -> bool:
+    """Every segment that has words has audio (and there is at least one)."""
+    need = [p for p, t in zip(paths, speak) if (t or "").strip()]
+    return bool(need) and all(need)
+
+
+def _skip_reason(name: str, speak: list[str], caps: dict[str, int], ledger: tts_usage.Ledger, ssml: bool) -> str:
+    """Why a metered engine must not be tried for this video ('' = go ahead). Unmetered engines never skip."""
+    cap = caps.get(name)
+    if cap is None:
+        return ""
+    until = ledger.cooling_until(name)
+    if until:
+        return f"cooling down until {until:%m-%d %H:%M} UTC after a quota/key refusal"
+    need = sum(len(t) + (80 if ssml else 0) for t in speak)            # SSML wrapping counts on Google
+    used = ledger.used(name)
+    if used + need > cap:
+        return f"this month's cap of {cap:,} characters would be passed ({used:,} used, about {need:,} needed)"
+    return ""
+
+
+def _settle(name: str, att: tts_usage.Attempt, caps: dict[str, int], ledger: tts_usage.Ledger) -> None:
+    """Book what a metered engine accepted this attempt, and start a cooldown if it refused us."""
+    if name not in caps:
+        return
+    ledger.add(name, att.chars)
+    if att.hard:
+        until = ledger.start_cooldown(name)
+        log.warning("tts %s refused (quota / rate limit / key) - skipping it until %s UTC",
+                    name, until.strftime("%m-%d %H:%M"))
+    ledger.save()
+
+
+def _run_chain(speak: list[str], out_dir: Path, cfg: Settings, ssml: bool) -> tuple[list[Path | None], str]:
+    ledger = tts_usage.Ledger.load(cfg)
+    caps = tts_usage.caps(cfg)
+    best: tuple[int, str, list[Path | None]] | None = None
+    for name in _chain(cfg):
+        if name == "sapi" and best is not None:
+            break                           # robotic last resort: only when no other engine made a sound
+        why = _skip_reason(name, speak, caps, ledger, ssml)
+        if why:
+            log.info("tts %s skipped: %s", name, why)
+            continue
+        tts_usage.begin()
+        try:
+            if name == "sapi":
+                got = _synth_sapi(speak, out_dir, cfg)
+            else:
+                fn = _PROVIDERS.get(name)
+                if fn is None:
+                    log.warning("unknown TTS provider %r, skipping", name)
+                    tts_usage.end()
+                    continue
+                got = fn(speak, out_dir, cfg)
+        except Exception as exc:
+            log.warning("tts provider %r unavailable: %s", name, tts_usage.scrub(exc))
+            tts_usage.end()
+            continue
+        _settle(name, tts_usage.end(), caps, ledger)
+        if _is_complete(got, speak):
+            return got, name
+        made = sum(1 for p in got if p)
+        if made:
+            log.warning("tts %s made %d/%d segments - not using a half-narrated video, trying the next engine",
+                        name, made, len(speak))
+            if best is None or made > best[0]:
+                best = (made, name, got)
+    if best is not None:
+        log.warning("no engine made every segment - using %s's %d/%d (the rest stay caption-only)",
+                    best[1], best[0], len(speak))
+        return best[2], best[1]
+    return [None] * len(speak), "none"
+
+
+# --------------------------------------------------------------------------- #
 # public API
 # --------------------------------------------------------------------------- #
 def synthesize_segments(
-    texts: list[str], out_dir: Path, cfg: Settings | None = None
+    texts: list[str], out_dir: Path, cfg: Settings | None = None,
+    *, roles: list[str | None] | None = None,
 ) -> list[Narration]:
     cfg = cfg or settings
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -195,45 +292,60 @@ def synthesize_segments(
         log.info("tts disabled -> silent cards")
         return [Narration(i, t, None, 0.0) for i, t in enumerate(texts)]
 
-    engine_used = "none"
-    paths: list[Path | None] = [None] * len(texts)
-
-    # Fallback chain: configured provider -> edge (free) -> Windows SAPI -> silent.
-    chain: list[str] = []
-    for name in (cfg.tts_provider, "edge", "sapi"):
-        if name and name not in chain:
-            chain.append(name)
-
-    for name in chain:
-        if any(paths):
-            break
+    # --- Layer 1: normalise numbers / names / acronyms, attach role prosody ---
+    prepared = None
+    speak = list(texts)
+    if getattr(cfg, "voice_pipeline", False):
         try:
-            if name == "sapi":
-                paths = _synth_sapi(texts, out_dir, cfg)
-            else:
-                fn = _PROVIDERS.get(name)
-                if fn is None:
-                    log.warning("unknown TTS_PROVIDER %r, skipping", name)
-                    continue
-                paths = fn(texts, out_dir, cfg)
-            if any(paths):
-                engine_used = name
+            from .voice import prepare as _vprepare
+
+            prepared = [
+                _vprepare(t, roles[i] if roles and i < len(roles) else None)
+                for i, t in enumerate(texts)
+            ]
+            speak = [p.text for p in prepared]
         except Exception as exc:
-            log.warning("tts provider %r unavailable: %s", name, exc)
+            log.warning("voice layer-1 skipped: %s", exc)
+            prepared, speak = None, list(texts)
+
+    from .voice import context as _vctx
+
+    with _vctx.prepared(prepared):
+        paths, engine_used = _run_chain(speak, out_dir, cfg, ssml=prepared is not None)
 
     if not any(paths):
         engine_used = "silent"
         log.warning("no working TTS provider -> silent caption cards")
 
+    # --- Layer 3: loudness / compression / de-ess on the engine's output ------
+    if prepared is not None and any(paths):
+        try:
+            from .voice import post as _vpost
+
+            paths = [_vpost.process(p, cfg) if p else None for p in paths]
+        except Exception as exc:
+            log.warning("voice layer-3 skipped: %s", exc)
+
     narrations: list[Narration] = []
-    for i, (text, p) in enumerate(zip(texts, paths)):
+    for i, p in enumerate(paths):
         dur = _wav_duration(p) if p else 0.0
-        narrations.append(Narration(i, text, p, dur))
+        narrations.append(Narration(i, texts[i] if i < len(texts) else "", p, dur))
+
+    # optional Whisper read-back check — logs mismatches, never blocks
+    if prepared is not None and getattr(cfg, "voice_qa", False):
+        try:
+            from .voice import qa as _vqa
+
+            _vqa.check([(n.wav_path, speak[i]) for i, n in enumerate(narrations)], cfg)
+        except Exception as exc:
+            log.debug("voice qa skipped: %s", exc)
+
     log.info(
-        "tts done engine=%s ok=%d/%d",
+        "tts done engine=%s ok=%d/%d%s",
         engine_used,
         sum(1 for n in narrations if n.wav_path),
         len(narrations),
+        " +voice" if prepared is not None else "",
     )
     return narrations
 

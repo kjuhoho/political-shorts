@@ -61,7 +61,7 @@ winget install --id Gyan.FFmpeg -e
 | 4 | `analyze.py`    | 문장 단위로 **FACT / CLAIM / INTERPRETATION** 태깅 (인용동사·수치·날짜·전망표현 단서) |
 | 5 | `script_gen.py` | 훅 → 사실 최대 3 → 인용 최대 2 → 해석 1(라벨 표시) → 출처 안내. LLM은 훅/아웃트로 문장 다듬기만 |
 | 6 | `safety.py`     | **BLOCK**: 유해·비하 표현, 출처 없는 단정, 단일 출처 사실, 무출처 절대표현 / **WARN**: 한쪽 정당만 언급, 편향된 매체 구성, 자극적 표현 |
-| 7 | `tts.py` + `tts_providers.py` | `TTS_PROVIDER`로 음성 엔진 선택: **edge**(무료·무키·MS 신경망), elevenlabs, azure, gcloud, openai, sapi. 실패 시 edge→SAPI→무음 자동 폴백 |
+| 7 | `tts.py` + `tts_providers.py` + `voice/` | `TTS_PROVIDER`로 음성 엔진 선택: **edge**(무료·무키), elevenlabs, azure, gcloud, openai, sapi, **piper/myvoice**(내 목소리). 실패 시 edge→SAPI→무음 폴백. `VOICE_PIPELINE=true`면 엔진 앞뒤로 숫자·고유명사 정규화 + 라우드니스 후처리([VOICE.md](VOICE.md)) |
 | 8 | `video.py`      | Pillow 카드 PNG → ffmpeg 클립화 → concat → (선택) BGM 믹싱. moviepy 불필요 |
 | 9 | `metadata.py`   | 중립 제목/설명(전체 출처 목록·고지문)/태그/고정댓글 → `<video>.meta.json` |
 | 10| `publishers/`   | YouTube(OAuth 재개형 업로드) · Instagram(Graph API, 공개 URL 필요) · TikTok(Content Posting API, 도메인 검증 필요). 전부 `ENABLE_PUBLISH` 게이트 |
@@ -83,10 +83,22 @@ winget install --id Gyan.FFmpeg -e
 | `gcloud` | 좋음 | 무료티어 | `GOOGLE_TTS_API_KEY` |
 | `openai` | 무난 | 유료 | `OPENAI_API_KEY` |
 | `sapi` | 낮음(로봇) | 무료 | 없음 (오프라인 폴백) |
+| `piper` | 내 목소리 | 무료·오프라인 | 학습된 `.onnx` (→ **[VOICE.md](VOICE.md)**) |
+| `myvoice` | 내 목소리 | piper 또는 클라우드 | `VOICE_MYVOICE_BACKEND` |
 
 한국어 음성 예: edge/azure `ko-KR-SunHiNeural`·`ko-KR-InJoonNeural`,
 gcloud `ko-KR-Neural2-A`. `TTS_VOICE`에 지정, 비우면 provider 기본값.
 설정한 provider가 실패하면 자동으로 `edge` → `sapi` → 무음 순으로 폴백합니다.
+
+### 자연스러움 파이프라인 — `VOICE_PIPELINE=true`
+
+엔진과 별개로, **숫자·고유명사 오독 / 로봇 억양 / 호흡** 문제를 엔진 앞뒤에서
+잡는 3단계(정규화·SSML 힌트 → 엔진 → 라우드니스·디에싱 후처리). `edge` 를 써도
+효과가 있고, 내 목소리(`piper`) 학습법까지 **[VOICE.md](VOICE.md)** 에 정리돼 있습니다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\voice_preview.py "국민의힘 108석, 27.3%p 격차" --all-roles
+```
 
 ## 배경음악(BGM)
 

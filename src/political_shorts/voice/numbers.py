@@ -152,8 +152,8 @@ _RULES: list[tuple[re.Pattern, callable]] = [
     # 3~4명 / 3-4석  (range)
     (re.compile(rf"(?<!\d)(?P<a>{_N})\s*[~〜–—]\s*(?P<b>{_N})\s*(?P<unit>[가-힣]{{0,3}})"), _rule_range),
     # 2026년 9월 8일 / 9월 8일
-    (re.compile(rf"(?:(?P<y>\d{{4}})\s*년)?\s*(?:(?P<mo>\d{{1,2}})\s*월)?\s*(?P<d>\d{{1,2}})\s*일(?!\w)"), _rule_date),
-    (re.compile(r"(?P<y>\d{4})\s*년(?!\s*\d)"), lambda m: f"{sino(_int(m.group('y')))} 년"),
+    (re.compile(rf"(?:(?P<y>\d{{4}})\s*년\s*)?(?:(?P<mo>\d{{1,2}})\s*월\s*)?(?P<d>\d{{1,2}})\s*일(?!\w)"), _rule_date),
+    (re.compile(r"(?<!\d)(?P<y>\d{4})\s*년"), lambda m: f"{sino(_int(m.group('y')))} 년"),
     (re.compile(r"(?<!\d)(?P<mo>\d{1,2})\s*월(?!\s*\d)(?!요일)"), lambda m: f"{sino(_int(m.group('mo')))} 월"),
     # 오후 3시 30분 / 3시
     (re.compile(r"(?<!\d)(?P<h>\d{1,2})\s*시(?:\s*(?P<mi>\d{1,2})\s*분)?"), _rule_clock),
