@@ -1,6 +1,7 @@
 """Independent adaptation of the shorts editor's 95-point rubric."""
 import re
 import json
+import difflib
 import hashlib
 from pathlib import Path
 from .research import blocked, now
@@ -35,6 +36,59 @@ source_quote(관련 원문의 정확한 연속 인용), reason(차이)을 반드
 반환: {"score":정수,"facts_ok":불리언,"dates_ok":불리언,"balance_ok":불리언,
 "safety_ok":불리언,"issues":["문장과 구체적 사유"],
 "findings":[{"script_quote":"정확한 대본 인용","source_quote":"정확한 원문 인용","reason":"차이"}]}'''
+
+
+MIN_QUOTE_SPAN = 20          # characters of a quote that must really be in the text for it to count as evidence
+MIN_QUOTE_SHARE = 0.5        # ...and that stretch must be at least this share of what the reviewer claimed
+
+
+def ground_quote(quote, original):
+    """The literal evidence behind a reviewer's quote, or None.
+
+    An exact continuous quote is returned unchanged. A reviewer often "completes" a real quote with words that
+    are not in the text (2026-11-21: a date prefix "2026년 11월 21일," in front of a sentence that starts with the
+    reporter byline), so a correct finding (script said the 22nd, source says the 21st) was thrown away. If the
+    quote is not literal, keep only the longest stretch that IS in the text, provided it is at least MIN_QUOTE_SPAN
+    characters and at least MIN_QUOTE_SHARE of the claim. The check never relies on the part that was not found.
+    """
+    if not isinstance(quote, str) or len(quote.strip()) < 4:
+        return None
+    norm = lambda value: ' '.join(value.split())
+    wanted, haystack = norm(quote), norm(original)
+    if wanted in haystack:
+        return quote
+    match = difflib.SequenceMatcher(None, haystack, wanted, autojunk=False).find_longest_match(
+        0, len(haystack), 0, len(wanted))
+    span = wanted[match.b:match.b + match.size].strip()
+    if len(span) >= MIN_QUOTE_SPAN and len(span) >= MIN_QUOTE_SHARE * len(wanted):
+        return span
+    return None
+
+
+def trim_quotes(report, text, sources):
+    """Replace near-literal quotes in the reviewer's report by their literal stretch (see ground_quote)."""
+    if not isinstance(report, dict):
+        return report
+    trimmed = []
+    items = [(f'findings[{i}]', item, (('script_quote', text), ('source_quote', sources)))
+             for i, item in enumerate(report.get('findings') if isinstance(report.get('findings'), list) else [])
+             if isinstance(item, dict)]
+    editorial = report.get('editorial')
+    if isinstance(editorial, dict):
+        items.append(('editorial', editorial, (('question_quote', text), ('explanation_quote', text),
+                                               ('payoff_quote', text), ('source_quote', sources))))
+    for label, item, fields in items:
+        for key, original in fields:
+            quote = item.get(key)
+            if not isinstance(quote, str) or not quote.strip():
+                continue
+            literal = ground_quote(quote, original)
+            if literal is not None and literal != quote:
+                item[key] = literal
+                trimmed.append(f'{label}.{key}')
+    if trimmed:
+        report['quotes_trimmed'] = trimmed
+    return report
 
 
 def grounding_errors(report, text, sources):
@@ -113,7 +167,7 @@ def review(writer, text, sources, kind='script', source_bundle=None):
                + ', '.join(keys) + '를 모두 포함한다.'
                + (' editorial 객체가 없으면 응답은 무효로 처리되어 다시 요청된다.' if kind != 'title' else ''))
     for attempt in range(2):
-        report = writer.json(prompt, 2000)
+        report = trim_quotes(writer.json(prompt, 2000), text, sources)
         errors = grounding_errors(report, text, sources)
         if kind != 'title':
             errors += audit(report,text,sources)

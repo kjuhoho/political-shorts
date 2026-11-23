@@ -2,10 +2,61 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-from longform_system.guards import accepted, grounded, review, publication_reviews_ok
+from longform_system.guards import accepted, grounded, ground_quote, review, publication_reviews_ok
 from longform_system.ledger import Ledger
 from longform_system.renderer import clean_script
 from longform_system.research import blocked
+
+# 2026-11-21 (run 44919004464): the reviewer found a REAL date error but "completed" its source quote with a date
+# prefix that is not in the article, so the finding was thrown out as ungrounded and the day failed.
+SOURCE = ('(서울=연합뉴스) 김정진 기자 = 국회 예산결산특별위원회 예산안조정소위는 21일 내년도 지역사랑상품권 예산을 '
+          '놓고 공방을 벌인 끝에 심사를 일단 보류키로 했다. 더불어민주당은 정부 원안 유지 필요성을 강조했다.')
+SCRIPT = '2026년 11월 22일, 국회 예산소위가 내년도 지역사랑상품권 예산을 심사 보류한 뒤 양당이 격돌했습니다.'
+PADDED = ('2026년 11월 21일, 국회 예산결산특별위원회 예산안조정소위는 21일 내년도 지역사랑상품권 예산을 '
+          '놓고 공방을 벌인 끝에 심사를 일단 보류키로 했다.')
+
+
+def failing_review(source_quote):
+    return dict(score=78, facts_ok=True, dates_ok=False, balance_ok=True, safety_ok=True,
+                issues=['사건일 불일치'], findings=[dict(
+                    script_quote='2026년 11월 22일, 국회 예산소위가 내년도 지역사랑상품권 예산을 심사 보류한 뒤',
+                    source_quote=source_quote, reason='대본은 22일, 원문은 21일')])
+
+
+class QuoteGrounding(unittest.TestCase):
+    def test_real_finding_survives_a_quote_padded_with_words_not_in_the_source(self):
+        report = failing_review(PADDED)
+        writer = Mock()
+        writer.json.return_value = dict(report, editorial=dict(
+            question_quote='', explanation_quote='', payoff_quote='', source_quote='',
+            question_answered=False, adds_understanding=False, non_repetitive=True, reason='x'))
+        result = review(writer, SCRIPT, SOURCE)                    # used to raise "did not ground its findings"
+        self.assertEqual(writer.json.call_count, 1)
+        quote = result['findings'][0]['source_quote']
+        self.assertIn(quote, SOURCE)                               # now literal, so the repair step gets real evidence
+        self.assertNotIn('2026년 11월 21일,', quote)
+        self.assertEqual(result['quotes_trimmed'], ['findings[0].source_quote'])
+        self.assertFalse(accepted(result))                         # the date error itself still blocks the script
+
+    def test_exact_quotes_are_returned_unchanged(self):
+        exact = '국회 예산결산특별위원회 예산안조정소위는 21일 내년도'
+        self.assertEqual(ground_quote(exact, SOURCE), exact)
+
+    def test_invented_or_short_quotes_are_still_rejected(self):
+        self.assertIsNone(ground_quote('원문 어디에도 없는 문장입니다. 전혀 다른 내용입니다.', SOURCE))
+        self.assertIsNone(ground_quote('예산을 놓고', 'x ' + SOURCE[:5]))                  # under 4 usable characters of proof
+        # only a 22-character stretch is real, inside a 120-character claim: below the 50% share
+        claim = '국회 예산결산특별위원회 예산안조정소위는 21일 ' + '전혀 다른 내용을 길게 덧붙여 만든 문장입니다. ' * 5
+        self.assertIsNone(ground_quote(claim, SOURCE))
+        # a real stretch under 20 characters is not enough
+        self.assertIsNone(ground_quote('내년도 지역사랑상품권 예산 그리고 없는 말', SOURCE))
+
+    def test_an_ungrounded_review_still_fails_after_two_attempts(self):
+        writer = Mock()
+        writer.json.return_value = failing_review('원문에 전혀 없는 인용문입니다. 지어낸 문장입니다.')
+        with self.assertRaises(RuntimeError):
+            review(writer, SCRIPT, SOURCE)
+        self.assertEqual(writer.json.call_count, 2)
 
 
 class PublicationGuards(unittest.TestCase):
