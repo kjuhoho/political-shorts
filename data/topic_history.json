@@ -3067,5 +3067,32 @@
   "frame": "personnel",
   "remote_id": "QuBrqvnA2dA",
   "platform": "youtube"
+ },
+ {
+  "published_ts": 1795399398,
+  "signature": "2주연속 개혁신당 국민의힘 리얼미터 민주당 소폭상승 이대통령 이재명 조국 조국혁신당 중후반 지지율 진보당 횡보",
+  "actor": "이재명",
+  "headline": "이대통령 지지율 37.3%로 2주연속 소폭상승...30%대 중후반 횡보[리얼미터]",
+  "frame": "poll",
+  "remote_id": "lZYXb5MYWHA",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1795399398,
+  "signature": "국정지지율 대비 리얼미터 전주",
+  "actor": "",
+  "headline": "이 대통령 국정지지율 37.3%...전주 대비 0.9%p↑[리얼미터]",
+  "frame": "poll",
+  "remote_id": "lZYXb5MYWHA",
+  "platform": "youtube"
+ },
+ {
+  "published_ts": 1795399398,
+  "signature": "국힘 리얼미터 민주",
+  "actor": "",
+  "headline": "민주 35.6% 국힘 42.5%...민주 1.0%p↑ 국힘 0.5%p↓[리얼미터]",
+  "frame": "poll",
+  "remote_id": "lZYXb5MYWHA",
+  "platform": "youtube"
  }
 ]
