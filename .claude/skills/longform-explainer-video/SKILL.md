@@ -16,6 +16,7 @@ description: 오늘의엔터 롱폼(5분 정치 브리핑)의 상황 설명 화�
 - 화면에 새 사실을 만들지 않는다. 글자는 검수를 통과한 대본 문장과 원문 인용에서만 가져온다. 설명용 구조화(타임라인·비교)는 실제 대본에서 해당 문장이 영상당 1건 안팎이라 만들지 않기로 했다.
 - LLM·TTS 호출을 늘리지 않는다. Groq 하루 한도가 빠듯하다(정상 한 번이 약 13호출, 5만 토큰). 시각 작업은 전부 오프라인으로 검증한다.
 - 사람이 눈으로 확인하지 않은 그림을 등록하지 않는다(`visually_checked`는 사람의 확인을 뜻한다).
+- 사용자 PC에 파일을 쌓지 않는다. 임시 파일(내려받은 아티팩트, 미리보기, worktree)은 작업이 끝나면 직접 지우고, 사용자 소유의 오래된 산출물(`output/` 등)은 묻지 않고 지우지 않는다.
 - 로컬 작업 트리에 Codex가 남긴 수정(`state/uploads` 삭제, `last_success_date.txt` 등)이 있다. 커밋에 섞지 않는다. 항상 `origin/main`에서 새 worktree를 만들어 거기서 작업·푸시한다.
 
 ## 코드 지도
@@ -32,13 +33,15 @@ description: 오늘의엔터 롱폼(5분 정치 브리핑)의 상황 설명 화�
 
 ## 작업별 절차
 
-### 1. 그림 추가
-1. `python -m longform_system.register_illustrations --write-prompts longform_system/illustrations/PACK_PROMPTS.md`
-2. 이미지 도구(Codex built-in image_gen)가 `<id>.png`를 `longform_system/illustrations/`에 저장한다. 사용자가 맡기거나 직접 한다.
-3. `python -m longform_system.register_illustrations --check --sheet <모음.png>` 로 크기·비율·빈 이미지·6MB 초과를 거른다.
+### 1. 그림 추가 (사용자 PC에 용량이 쌓이지 않게)
+사용자는 PC에 파일이 쌓이는 것을 원하지 않는다. 그림은 **저장소 밖 임시 받는 폴더**(기본 `D:\illustration-inbox`)에서만 받고, 저장소 반영이 끝나면 지운다. 로컬 작업 트리에는 그림을 두지 않는다(오래됐고 Codex 수정이 섞여 있어 나중에 pull이 충돌한다).
+1. `python -m longform_system.register_illustrations --write-prompts D:\illustration-inbox\PACK_PROMPTS.md` (폴더가 없으면 만든다)
+2. 이미지 도구(Codex built-in image_gen)가 `<id>.png`를 그 폴더에 저장한다. 이미지 도구는 사용자가 Codex에서 돌린다. 나는 이미지 생성 도구가 없으니 만들었다고 말하지 않는다.
+3. `origin/main`에서 새 worktree를 만들고 `python -m longform_system.register_illustrations --check --sheet <모음.png> --inbox D:\illustration-inbox` 로 크기·비율·빈 이미지·3.5MB 초과를 거른다.
 4. **모음 이미지를 직접 열어 한 장씩 본다.** 체크리스트: 사람/얼굴 없음, 글자·숫자·로고·깃발 없음, 실제 장소처럼 보이지 않음, 기존 6장과 색감·질감이 맞음, 주제가 캡션과 맞음, 가운데 피사체가 잘리지 않음. 하나라도 어긋나면 그 id는 다시 생성한다.
-5. 통과한 것만 `--approve id id ...`. 키워드를 손볼 일이 있으면 `pack_spec.json`을 고친다(너무 흔한 단어 금지: 보도, 정부, 정책, 발표 등).
-6. 테스트 → 커밋 → 푸시. 저장소 용량 때문에 한 장 6MB를 넘기지 않는다.
+5. 통과한 것만 `--approve id id ... --inbox D:\illustration-inbox` (받는 폴더에서 worktree로 복사 후 등록). 키워드를 손볼 일이 있으면 `pack_spec.json`을 고친다(너무 흔한 단어 금지: 보도, 정부, 정책, 발표 등).
+6. 롱폼 테스트 → 커밋 → 푸시 → `origin/main`에 파일이 올라갔는지 확인.
+7. **정리:** `--clean-inbox --inbox D:\illustration-inbox` 는 저장소 복사본과 바이트가 같은 등록 그림만 지우고, 아무것도 안 남으면 폴더까지 지운다(미등록·수정된 그림은 남긴다). 이어서 worktree(`git worktree remove --force`)와 scratchpad의 내려받은 아티팩트·미리보기를 지운다. 사용자에게 정리한 것과 남긴 것을 알린다.
 
 ### 2. 장면 규칙 바꾸기
 `visuals.py`를 고치고 `plan()` 결과의 `version`을 올린다. 테스트는 숫자를 모듈 상수에서 읽지 말고 문자 그대로 쓴다(모듈 값을 읽으면 상수를 바꿔도 통과한다). 변이 테스트로 새 테스트가 실제로 실패하는지 확인한다.

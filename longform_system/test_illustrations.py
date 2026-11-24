@@ -201,6 +201,52 @@ class Registration(unittest.TestCase):
         self.assertNotEqual(before, (self.root / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(len(json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))), 7)
 
+    def test_inbox_pictures_are_copied_in_and_only_verified_ones_are_deleted_afterwards(self):
+        inbox = Path(tempfile.mkdtemp(prefix='inbox-'))
+        self.addCleanup(shutil.rmtree, inbox, True)
+        (inbox / 'PACK_PROMPTS.md').write_text('prompts', encoding='utf-8')
+        for name in ('court', 'budget', 'election'):
+            synthetic(inbox / f'{name}.png')
+        self.assertEqual(reg.present(self.root, inbox), ['budget', 'court', 'election'])
+        self.assertEqual(reg.present(self.root), [])                   # nothing is in the repository folder yet
+        # 1. approved pictures are copied next to the manifest and registered; the inbox is untouched
+        reg.main(['--root', str(self.root), '--inbox', str(inbox), '--approve', 'court', 'budget'])
+        self.assertTrue((self.root / 'court.png').exists() and (inbox / 'court.png').exists())
+        self.assertFalse((self.root / 'election.png').exists())        # not approved -> never copied
+        # 2. cleaning keeps what is not registered, keeps what changed, deletes what matches the repository copy
+        synthetic(inbox / 'budget.png', size=(1700, 956))               # edited after registration
+        removed = reg.clean_inbox(inbox, self.root)
+        self.assertEqual(removed, ['court.png'])
+        self.assertTrue((inbox / 'budget.png').exists() and (inbox / 'election.png').exists())
+        self.assertTrue(inbox.exists())
+        # 3. once everything left is verified, the prompt file and the folder itself go too
+        (inbox / 'budget.png').unlink()
+        (inbox / 'election.png').unlink()
+        reg.clean_inbox(inbox, self.root)
+        self.assertFalse(inbox.exists())
+        self.assertTrue((self.root / 'court.png').exists())            # the repository copies are never touched
+
+    def test_clean_refuses_when_the_repository_copy_is_missing_or_the_folders_overlap(self):
+        inbox = Path(tempfile.mkdtemp(prefix='inbox-'))
+        self.addCleanup(shutil.rmtree, inbox, True)
+        synthetic(inbox / 'court.png')
+        reg.main(['--root', str(self.root), '--inbox', str(inbox), '--approve', 'court'])
+        (self.root / 'court.png').unlink()                             # e.g. the push never happened
+        self.assertEqual(reg.clean_inbox(inbox, self.root), [])
+        self.assertTrue((inbox / 'court.png').exists())
+        for bad in (self.root, self.root / 'sub', self.root.parent):
+            with self.assertRaises(ValueError):
+                reg.clean_inbox(bad, self.root)
+        self.assertEqual(reg.clean_inbox(inbox / 'missing', self.root), [])
+
+    def test_oversized_pictures_are_refused(self):
+        from PIL import Image
+        import random
+        rnd = random.Random(1)
+        noisy = Image.frombytes('RGB', (1672, 941), bytes(rnd.getrandbits(8) for _ in range(1672 * 941 * 3)))
+        noisy.save(self.root / 'big.png')
+        self.assertTrue(any('3.5 MB' in p for p in reg.problems(self.root / 'big.png')))
+
     def test_a_changed_file_after_registration_is_caught_by_the_library(self):
         synthetic(self.root / 'court.png')
         reg.register(self.root, ['court'])
