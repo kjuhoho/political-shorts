@@ -16,27 +16,44 @@ def stories():
 
 class VisualTests(unittest.TestCase):
     def test_generated_illustrations_are_not_evidence(self):
-        from .illustrations import choose, library
-        self.assertEqual(len(library()),6)
+        from .illustrations import TOPICS, choose, library
+        self.assertTrue(set(TOPICS) <= set(library()))        # the six originals are always present
         self.assertEqual(choose('관세와 수출을 논의합니다.')['id'],'trade')
         self.assertEqual(choose('알 수 없는 주제입니다.')['id'],'evidence')
         board = plan([('핵심 1','첫 문장입니다.'),('핵심 1','외교 회담을 논의합니다.')],stories())
         row = board['scenes'][1]
-        self.assertEqual(row['kind'],'motion')
+        self.assertEqual(row['kind'],'illustration')
+        self.assertEqual(row['illustration']['id'],'diplomacy')
+        self.assertNotIn('motion',row)                          # the still artwork moves in the render step
         self.assertIsNone(row['media'])
+        self.assertIn('AI 생성',row['disclosure'])
         self.assertIn('실제 사건 현장 아님',row['disclosure'])
-        self.assertIn('모션그래픽',credits(board['scenes']))
+        self.assertIn('AI 생성 일러스트',credits(board['scenes']))
+        self.assertNotIn('모션그래픽',credits(board['scenes']))
 
     def test_all_illustrations_draw_without_clipping(self):
         from .illustrations import library
         font = Path(__file__).resolve().parents[1]/'assets/fonts/DoHyeon-Regular.ttf'
         row = plan([('핵심 1','첫 문장입니다.'),('핵심 1','자료를 확인합니다.')],stories())['scenes'][1]
-        row['kind'] = 'illustration'
-        row.pop('motion',None)
         with tempfile.TemporaryDirectory() as tmp:
             for asset in library().values():
-                row['illustration'] = asset
-                draw_scene(row,Path(tmp)/'art.png',Path(tmp)/'overlay.png',font)
+                draw_scene({**row,'illustration':asset,'caption':asset['caption']},
+                           Path(tmp)/'art.png',Path(tmp)/'overlay.png',font)
+
+    def test_caption_is_neutral_and_the_raw_headline_is_not_drawn(self):
+        # The raw article headline carries quotes and slogans; the picture's caption must be the topic title.
+        from PIL import Image
+        font = Path(__file__).resolve().parents[1]/'assets/fonts/DoHyeon-Regular.ttf'
+        rows = stories()
+        rows[0]['headline'] = "국힘, 與 '曺탄핵 당론'에 \"국헌 문란\" 꼼수"
+        row = plan([('핵심 1','첫 문장입니다.'),('핵심 1','국회에서 법안을 논의합니다.')],rows)['scenes'][1]
+        self.assertEqual(row['caption'],'법안과 입법 논의')
+        with tempfile.TemporaryDirectory() as tmp:
+            art, overlay = Path(tmp)/'art.png', Path(tmp)/'overlay.png'
+            draw_scene(row,art,overlay,font)
+            # right-hand text area: empty in the moving artwork, filled in the still overlay
+            self.assertEqual(len(Image.open(art).convert('RGB').crop((1180,230,1780,640)).getcolors(100)),1)
+            self.assertIsNotNone(Image.open(overlay).convert('RGBA').crop((1180,230,1780,640)).getbbox())
 
     def test_source_mapping_not_global_keyword(self):
         result = plan([('핵심 3','국회에서 논의했습니다.'),('훅','세 이슈입니다.')],stories())

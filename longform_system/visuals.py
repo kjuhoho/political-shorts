@@ -163,11 +163,49 @@ def plan(scenes, stories, registry=None):
         else:
             row.update(visual_priority='foreground',selection_reason='evidence-number-media-or-recap')
         result.append(row)
-    return dict(version=6, generated_without_llm=True, scenes=result,
+    attach_illustrations(result, stories)
+    return dict(version=7, generated_without_llm=True, scenes=result,
                 motion_scenes=sum(r['kind']=='motion' for r in result),
                 illustration_scenes=sum(r['kind']=='illustration' for r in result),
                 media_scenes=sum(r['kind']=='media' for r in result),
                 notice='No unlicensed article images or guessed politician portraits are collected.')
+
+
+def illustration_seed(stories):
+    """Same episode -> same picks; a different day's stories rotate ties differently."""
+    urls = '|'.join(src['url'] for story in stories for src in story['sources'])
+    return int(hashlib.sha256(urls.encode('utf-8')).hexdigest()[:8], 16)
+
+
+def attach_illustrations(rows, stories):
+    """Turn ordinary background narration into short runs of one topic-matched AI picture.
+
+    Source cards, numbers, explanations, cleared media and the first recap stay as they are, and
+    the supply-chain motion keeps its explicit rule. A picture is held for at most HOLD sentences of
+    the same section so the image changes with the subject, not with every sentence.
+    """
+    from .illustrations import HOLD, pick
+    def eligible(row):
+        return row['kind'] == 'motion' and row.get('motion') != 'supply-chain'
+    seed, used, last, i, number = illustration_seed(stories), {}, None, 0, 0
+    while i < len(rows):
+        if not eligible(rows[i]):
+            i += 1
+            continue
+        run = [rows[i]]
+        while (len(run) < HOLD and i + len(run) < len(rows) and eligible(rows[i + len(run)])
+               and rows[i + len(run)]['label'] == run[0]['label']):
+            run.append(rows[i + len(run)])
+        asset = pick([r['narration'] for r in run], run[0].get('headline', ''), used, last, seed)
+        number += 1
+        for row in run:
+            row.pop('motion', None)
+            row.update(kind='illustration', illustration=asset, caption=asset['caption'], illustration_run=number,
+                       disclosure='AI 생성 설명용 이미지 · 실제 사건 현장 아님', visual_priority='background',
+                       selection_reason='topic-matched-illustration-run')
+        used[asset['id']] = used.get(asset['id'], 0) + 1
+        last = asset['id']
+        i += len(run)
 
 
 def credits(scenes):
@@ -201,9 +239,6 @@ def draw_scene(row, background, overlay, font_path):
         with Image.open(row['illustration']['resolved_path']) as src:
             fitted = ImageOps.contain(src.convert('RGB'), (1030, 550))
             image.paste(fitted, (100+(1030-fitted.width)//2,190+(550-fitted.height)//2))
-        text_block(d,row.get('headline') or '오늘의 흐름을 살펴봅니다',
-                   (1180,270),font_path,590,315,48)
-        text_block(d,'설명용 일러스트',(1180,650),font_path,590,65,30,'#48d4c0')
     elif kind == 'overview':
         for n, title in enumerate(row['headlines']):
             x = 120+n*575
@@ -268,6 +303,16 @@ def draw_scene(row, background, overlay, font_path):
         disclosure += ' | '+row['media']['credit']+' / '+row['media']['license']
     text_block(d,disclosure,(100,985),font_path,1660,78,26,'#b9ccd8')
     text_block(d,f"{row['index']:02d}",(1790,1010),font_path,75,50,28,'#48d4c0')
+    if kind == 'illustration':
+        # Text stays on the still layer: only the artwork zooms and pans. A neutral topic caption is
+        # used on purpose; the raw article headline carries quotes and slogans that are not ours to repeat.
+        y = 235
+        if row.get('issue'):
+            text_block(d,f"쟁점 {row['issue']} / 3",(1180,y),font_path,590,50,32,'#48d4c0')
+            y += 75
+        text_block(d,row.get('caption') or row['illustration'].get('caption') or '설명을 돕는 그림',
+                   (1180,y),font_path,590,300,50)
+        text_block(d,'AI 생성 설명용 일러스트',(1180,650),font_path,590,60,28,'#b9ccd8')
     front.save(overlay)
 
 

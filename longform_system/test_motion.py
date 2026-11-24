@@ -20,16 +20,19 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(board['scenes'][1]['motion'],'supply-chain')
         self.assertIsNone(board['scenes'][1]['media'])
         self.assertNotIn('illustration',board['scenes'][1])
-        self.assertEqual(board['scenes'][3]['motion'],'evidence')
+        # ordinary narration now gets a topic picture; only the explicit supply-chain rule keeps its motion
+        self.assertEqual(board['scenes'][3]['kind'],'illustration')
+        self.assertEqual(board['scenes'][3]['illustration']['id'],'evidence')
         self.assertIn('모션그래픽',credits(board['scenes']))
-        self.assertEqual(board['motion_scenes'],2)
+        self.assertEqual(board['motion_scenes'],1)
+        self.assertEqual(board['illustration_scenes'],1)
 
-    def test_all_ordinary_scenes_move_and_recap_is_preserved(self):
+    def test_all_ordinary_scenes_get_a_picture_and_recap_is_preserved(self):
         board = plan([('훅','오늘 소식입니다.'),('맥락','배경입니다.'),
                       ('시사점','내일 확인합니다.'),('요약+예고','세 가지입니다.'),
                       ('요약+예고','후속을 확인합니다.')],stories())
-        self.assertEqual([r['kind'] for r in board['scenes']],['motion']*3+['overview','motion'])
-        self.assertTrue(all(r['visual_priority']=='background' for r in board['scenes'] if r['kind']=='motion'))
+        self.assertEqual([r['kind'] for r in board['scenes']],['illustration']*3+['overview','illustration'])
+        self.assertTrue(all(r['visual_priority']=='background' for r in board['scenes'] if r['kind']=='illustration'))
 
     def test_every_theme_moves_and_unknown_falls_back(self):
         font = Path('assets/fonts/DoHyeon-Regular.ttf')

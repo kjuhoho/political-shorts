@@ -197,6 +197,12 @@ organization from secret names. No paid fallback is enabled.
 
 이 시스템은 영상 렌더링 품질 검사까지 통과한 결과만 업로드 대상으로 넘깁니다.
 
+### 설명 그림 (visual version 7)
+
+일반 장면은 같은 섹션의 문장 3개 이내마다 주제에 맞는 AI 그림 한 장을 유지합니다(`illustrations/pack_spec.json`의
+키워드로 선택, 같은 그림 반복 감점). 출처·수치·요약 카드는 그대로입니다. 그림 추가 방법은
+`register_illustrations.py`의 도움말과 AGENTS.md의 2026-11-24 항목을 보세요. 아래 version 3 설명은 이력입니다.
+
 ### 연속 설명 화면 (visual version 3)
 
 `illustrations/manifest.json`에 built-in image_gen으로 만든 6개 원본(외교, 입법,

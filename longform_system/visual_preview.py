@@ -33,7 +33,7 @@ def main():
         offset += row['duration_s']
     selected, kinds = [], set()
     for i,row in enumerate(board['scenes']):
-        key = row.get('motion') or row['kind']
+        key = row.get('motion') or (row.get('illustration') or {}).get('id') or row['kind']
         if args.all_scenes or key not in kinds:
             selected.append(i)
             kinds.add(key)
